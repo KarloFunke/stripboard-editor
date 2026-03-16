@@ -110,11 +110,20 @@ export interface User {
   date_joined: string;
 }
 
+async function hashPassword(password: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(password);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 export async function register(username: string, password: string): Promise<User> {
-  csrfToken = null; // Reset CSRF after auth change
+  csrfToken = null;
+  const hashedPassword = await hashPassword(password);
   const res = await apiFetch("/auth/register/", {
     method: "POST",
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ username, password: hashedPassword }),
   });
   if (!res.ok) {
     const err = await res.json();
@@ -126,9 +135,10 @@ export async function register(username: string, password: string): Promise<User
 
 export async function login(username: string, password: string): Promise<User> {
   csrfToken = null;
+  const hashedPassword = await hashPassword(password);
   const res = await apiFetch("/auth/login/", {
     method: "POST",
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ username, password: hashedPassword }),
   });
   if (!res.ok) {
     const err = await res.json();

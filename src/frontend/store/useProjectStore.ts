@@ -106,6 +106,7 @@ interface ProjectActions {
   removeCustomTag: (tag: string) => void;
 
   // Project persistence
+  setProjectName: (name: string) => void;
   exportProject: () => Project;
   loadProject: (data: Project) => void;
 }
@@ -502,6 +503,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       activeTag: s.activeTag === tag ? null : s.activeTag,
     })),
 
+  setProjectName: (name) => set({ name }),
+
   exportProject: (): Project => {
     const s = get();
     return {
@@ -518,13 +521,19 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   loadProject: (data) =>
     set({
-      id: data.id,
-      name: data.name,
-      componentDefs: data.componentDefs,
-      components: data.components,
-      nets: data.nets,
-      netAssignments: data.netAssignments,
-      board: data.board,
+      id: data.id ?? generateId(),
+      name: data.name ?? "Untitled Project",
+      componentDefs: data.componentDefs ?? [...DEFAULT_COMPONENTS],
+      components: data.components ?? [],
+      nets: data.nets ?? [],
+      netAssignments: data.netAssignments ?? [],
+      board: {
+        rows: data.board?.rows ?? 20,
+        cols: data.board?.cols ?? 20,
+        cuts: data.board?.cuts ?? [],
+        jumpers: data.board?.jumpers ?? [],
+        wires: data.board?.wires ?? [],
+      },
       customTags: data.customTags ?? [],
       activeNetId: null,
       activeTag: null,

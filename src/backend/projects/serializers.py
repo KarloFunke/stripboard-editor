@@ -1,6 +1,11 @@
+import re
+
 from django.contrib.auth.models import User
 from rest_framework import serializers
 from .models import Project
+
+# SHA-256 hex digest: exactly 64 lowercase hex characters
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 
 class ProjectListSerializer(serializers.ModelSerializer):
@@ -55,17 +60,27 @@ class ProjectCreateSerializer(serializers.Serializer):
 
 class UserRegistrationSerializer(serializers.Serializer):
     username = serializers.CharField(max_length=150)
-    password = serializers.CharField(write_only=True, min_length=8)
+    password = serializers.CharField(write_only=True)
 
     def validate_username(self, value):
         if User.objects.filter(username=value).exists():
             raise serializers.ValidationError("Username already taken.")
         return value
 
+    def validate_password(self, value):
+        if not SHA256_PATTERN.match(value):
+            raise serializers.ValidationError("Invalid credentials.")
+        return value
+
 
 class UserLoginSerializer(serializers.Serializer):
     username = serializers.CharField()
     password = serializers.CharField()
+
+    def validate_password(self, value):
+        if not SHA256_PATTERN.match(value):
+            raise serializers.ValidationError("Invalid credentials.")
+        return value
 
 
 class UserSerializer(serializers.ModelSerializer):

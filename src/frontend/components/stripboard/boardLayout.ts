@@ -3,7 +3,7 @@ import { ComponentDef, Component, Cut, BodyCell } from "@/types";
 // Grid constants
 export const HOLE_SPACING = 30;
 export const HOLE_RADIUS = 4.5;
-export const BOARD_PADDING = 40;
+export const BOARD_PADDING = 60;
 export const STRIP_HEIGHT = 6;
 export const LABEL_FONT_SIZE = 11;
 

@@ -502,8 +502,8 @@ export default function StripboardCanvas() {
             return (
               <text
                 key={`rl-${row}`}
-                x={center.x - 14}
-                y={center.y + 3}
+                x={center.x - 30}
+                y={center.y + 4}
                 textAnchor="end"
                 fontSize={LABEL_FONT_SIZE}
                 fill="#737373"
@@ -520,7 +520,7 @@ export default function StripboardCanvas() {
               <text
                 key={`cl-${col}`}
                 x={center.x}
-                y={center.y - 12}
+                y={center.y - 28}
                 textAnchor="middle"
                 fontSize={LABEL_FONT_SIZE}
                 fill="#737373"
