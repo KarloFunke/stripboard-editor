@@ -55,12 +55,12 @@ export default function NetPanel() {
         <div
           className={`flex items-center gap-1.5 px-2 py-1 rounded text-sm cursor-pointer transition-colors ${
             isAutoNew
-              ? "bg-purple-100 ring-1 ring-purple-400 text-purple-700"
+              ? "bg-[#113768]/10 ring-1 ring-[#113768]/30 text-[#113768]"
               : "text-neutral-600 hover:bg-neutral-100"
           }`}
           onClick={() => setActiveNet(isAutoNew ? null : AUTO_NET_ID)}
         >
-          <span className="inline-block h-3 w-3 rounded-full flex-shrink-0 border border-dashed border-purple-400 bg-purple-50 text-[8px] text-center leading-3 font-bold text-purple-400">
+          <span className="inline-flex items-center justify-center h-3 w-3 rounded-full flex-shrink-0 border border-dashed border-[#113768]/50 bg-[#113768]/5 text-[8px] font-bold text-[#113768]/60 leading-none">
             +
           </span>
           <span className="flex-1 text-xs italic">Auto New</span>
@@ -74,7 +74,7 @@ export default function NetPanel() {
               key={net.id}
               className={`flex items-center gap-1.5 px-2 py-1 rounded text-sm text-neutral-900 cursor-pointer transition-colors ${
                 activeNetId === net.id
-                  ? "bg-blue-100 ring-1 ring-blue-400"
+                  ? "bg-[#113768]/10 ring-1 ring-[#113768]/30"
                   : "hover:bg-neutral-100"
               }`}
               onClick={() =>
@@ -159,7 +159,7 @@ export default function NetPanel() {
         <button
           onClick={handleAdd}
           disabled={!newName.trim()}
-          className="w-full bg-blue-500 text-white text-xs py-1 rounded hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          className="w-full bg-[#113768] text-white text-xs py-1 rounded hover:bg-[#0d2a50] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
           Add Net
         </button>

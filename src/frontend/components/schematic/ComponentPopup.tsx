@@ -219,7 +219,7 @@ export default function ComponentPopup({ component, onClose }: Props) {
       <div className="flex gap-1.5 mb-2">
         <button
           onClick={handleSave}
-          className="flex-1 bg-blue-500 text-white text-xs py-1.5 rounded hover:bg-blue-600 transition-colors"
+          className="flex-1 bg-[#113768] text-white text-xs py-1.5 rounded hover:bg-[#0d2a50] transition-colors"
         >
           Save
         </button>

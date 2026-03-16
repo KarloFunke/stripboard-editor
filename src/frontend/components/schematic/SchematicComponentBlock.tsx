@@ -103,7 +103,7 @@ export default function SchematicComponentBlock({
         height={blockHeight}
         rx={4}
         fill="white"
-        stroke={isSelected ? "#3b82f6" : "#404040"}
+        stroke={isSelected ? "#113768" : "#404040"}
         strokeWidth={isSelected ? 2 : 1.5}
       />
 
@@ -119,7 +119,7 @@ export default function SchematicComponentBlock({
               if (e.key === "Enter") commitLabel();
               if (e.key === "Escape") setEditingLabel(false);
             }}
-            className="w-full bg-white border border-blue-400 rounded px-1 text-xs text-center text-neutral-900 outline-none"
+            className="w-full bg-white border border-[#113768] rounded px-1 text-xs text-center text-neutral-900 outline-none"
             onClick={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
           />

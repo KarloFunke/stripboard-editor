@@ -448,7 +448,7 @@ export default function StripboardCanvas() {
         </div>
       )}
       {selectedIds.length > 0 && (
-        <div className="bg-blue-50 border-b border-blue-200 px-4 py-1 text-xs text-blue-700">
+        <div className="bg-[#113768]/5 border-b border-[#113768]/20 px-4 py-1 text-xs text-[#113768]">
           {selectedIds.length} components selected — arrow keys to move, Escape to deselect
         </div>
       )}
@@ -589,7 +589,7 @@ export default function StripboardCanvas() {
               y1={holeCenter(wirePlacementFrom.row, wirePlacementFrom.col).y}
               x2={wireMousePos.x}
               y2={wireMousePos.y}
-              stroke="#3b82f6"
+              stroke="#113768"
               strokeWidth={2}
               strokeDasharray="4 3"
               strokeLinecap="round"
@@ -602,7 +602,7 @@ export default function StripboardCanvas() {
               cx={holeCenter(wirePlacementFrom.row, wirePlacementFrom.col).x}
               cy={holeCenter(wirePlacementFrom.row, wirePlacementFrom.col).y}
               r={5}
-              fill="#3b82f6"
+              fill="#113768"
               opacity={0.6}
               pointerEvents="none"
             />
@@ -632,8 +632,8 @@ export default function StripboardCanvas() {
                   width={(ghostBounds.maxCol - ghostBounds.minCol) * HOLE_SPACING + ghostPad * 2}
                   height={(ghostBounds.maxRow - ghostBounds.minRow) * HOLE_SPACING + ghostPad * 2}
                   rx={3}
-                  fill="rgba(59, 130, 246, 0.1)"
-                  stroke="#3b82f6"
+                  fill="rgba(17, 55, 104, 0.1)"
+                  stroke="#113768"
                   strokeWidth={1.5}
                   strokeDasharray="4 3"
                 />
@@ -645,7 +645,7 @@ export default function StripboardCanvas() {
                       cx={center.x}
                       cy={center.y}
                       r={5}
-                      fill="#3b82f6"
+                      fill="#113768"
                       stroke="white"
                       strokeWidth={1.5}
                     />
@@ -662,8 +662,8 @@ export default function StripboardCanvas() {
               y={Math.min(selectionRect.startY, selectionRect.currentY)}
               width={Math.abs(selectionRect.currentX - selectionRect.startX)}
               height={Math.abs(selectionRect.currentY - selectionRect.startY)}
-              fill="rgba(59, 130, 246, 0.08)"
-              stroke="#3b82f6"
+              fill="rgba(17, 55, 104, 0.08)"
+              stroke="#113768"
               strokeWidth={1}
               strokeDasharray="4 2"
               pointerEvents="none"

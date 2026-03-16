@@ -41,7 +41,7 @@ export default function SchematicEditor() {
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
-      <div className="border-b border-neutral-300 bg-neutral-100 px-4 h-10 font-semibold text-sm text-neutral-800 flex items-center justify-between">
+      <div className="border-b border-neutral-300 bg-white px-4 h-10 font-semibold text-sm text-[#113768] flex items-center justify-between">
         <span>Schematic / Net Editor</span>
         <div className="flex items-center gap-3 text-xs font-normal">
 {null}
@@ -58,7 +58,7 @@ export default function SchematicEditor() {
       </div>
 
       {/* Tag selector bar */}
-      <div className="border-b border-neutral-200 bg-neutral-50 px-4 py-1 flex items-center gap-1 flex-wrap">
+      <div className="border-b border-neutral-200 bg-white/70 px-4 py-1 flex items-center gap-1 flex-wrap">
         <span className="text-[10px] text-neutral-400 uppercase tracking-wide mr-1">Tags</span>
         {allTags.map((tag) => {
           const isCustom = customTags.includes(tag);

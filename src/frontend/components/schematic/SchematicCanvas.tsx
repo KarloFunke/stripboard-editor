@@ -304,8 +304,8 @@ export default function SchematicCanvas() {
           y={Math.min(selectionRect.startY, selectionRect.currentY)}
           width={Math.abs(selectionRect.currentX - selectionRect.startX)}
           height={Math.abs(selectionRect.currentY - selectionRect.startY)}
-          fill="rgba(59, 130, 246, 0.08)"
-          stroke="#3b82f6"
+          fill="rgba(17, 55, 104, 0.08)"
+          stroke="#113768"
           strokeWidth={1}
           strokeDasharray="4 2"
           pointerEvents="none"

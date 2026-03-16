@@ -284,7 +284,7 @@ export default function FootprintEditor() {
             </div>
             <button
               onClick={commitPin}
-              className="bg-blue-500 text-white text-sm px-3 py-1 rounded hover:bg-blue-600"
+              className="bg-[#113768] text-white text-sm px-3 py-1 rounded hover:bg-[#0d2a50]"
             >
               Set
             </button>
@@ -295,7 +295,7 @@ export default function FootprintEditor() {
         <div className="flex gap-2">
           <button
             onClick={handleSave}
-            className="flex-1 bg-blue-500 text-white text-sm py-2 rounded hover:bg-blue-600 transition-colors"
+            className="flex-1 bg-[#113768] text-white text-sm py-2 rounded hover:bg-[#0d2a50] transition-colors"
           >
             Save Footprint
           </button>

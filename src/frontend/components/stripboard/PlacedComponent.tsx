@@ -39,8 +39,8 @@ export default function PlacedComponent({ component, isSelected, onMouseDown }: 
         width={(bounds.maxCol - bounds.minCol) * HOLE_SPACING + pad * 2}
         height={(bounds.maxRow - bounds.minRow) * HOLE_SPACING + pad * 2}
         rx={3}
-        fill={isSelected ? "rgba(59, 130, 246, 0.15)" : "rgba(255, 255, 255, 0.85)"}
-        stroke={isSelected ? "#3b82f6" : "#a3a3a3"}
+        fill={isSelected ? "rgba(17, 55, 104, 0.1)" : "rgba(255, 255, 255, 0.85)"}
+        stroke={isSelected ? "#113768" : "#a3a3a3"}
         strokeWidth={isSelected ? 1.5 : 1}
         strokeDasharray="4 3"
       />
