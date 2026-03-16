@@ -104,6 +104,10 @@ interface ProjectActions {
   setActiveTag: (tag: string | null) => void;
   addCustomTag: (tag: string) => void;
   removeCustomTag: (tag: string) => void;
+
+  // Project persistence
+  exportProject: () => Project;
+  loadProject: (data: Project) => void;
 }
 
 interface UIState {
@@ -160,7 +164,7 @@ const initialProject: Project = {
   customTags: [],
 };
 
-export const useProjectStore = create<ProjectStore>((set) => ({
+export const useProjectStore = create<ProjectStore>((set, get) => ({
   ...initialProject,
   activeNetId: null,
   activeTag: null,
@@ -497,4 +501,35 @@ export const useProjectStore = create<ProjectStore>((set) => ({
       customTags: s.customTags.filter((t) => t !== tag),
       activeTag: s.activeTag === tag ? null : s.activeTag,
     })),
+
+  exportProject: (): Project => {
+    const s = get();
+    return {
+      id: s.id,
+      name: s.name,
+      componentDefs: s.componentDefs,
+      components: s.components,
+      nets: s.nets,
+      netAssignments: s.netAssignments,
+      board: s.board,
+      customTags: s.customTags,
+    };
+  },
+
+  loadProject: (data) =>
+    set({
+      id: data.id,
+      name: data.name,
+      componentDefs: data.componentDefs,
+      components: data.components,
+      nets: data.nets,
+      netAssignments: data.netAssignments,
+      board: data.board,
+      customTags: data.customTags ?? [],
+      activeNetId: null,
+      activeTag: null,
+      editingFootprintComponentId: null,
+      wirePlacementMode: false,
+      wirePlacementFrom: null,
+    }),
 }));
