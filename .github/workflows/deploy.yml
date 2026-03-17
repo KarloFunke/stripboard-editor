@@ -16,3 +16,4 @@ jobs:
         run: |
           docker compose -p stripboard-editor build
           docker compose -p stripboard-editor up -d
+          docker compose -p stripboard-editor exec nginx nginx -s reload

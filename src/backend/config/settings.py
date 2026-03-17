@@ -88,6 +88,10 @@ STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+AUTHENTICATION_BACKENDS = [
+    "projects.auth_backend.SHA256PreHashBackend",
+]
+
 NUM_PROXIES = 2  # global reverse proxy + nginx container
 
 REST_FRAMEWORK = {
