@@ -1,6 +1,8 @@
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
+from django.contrib.sessions.models import Session
 from django.middleware.csrf import get_token
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -10,6 +12,7 @@ from .models import Project
 from .serializers import (
     ProjectListSerializer,
     ProjectDetailSerializer,
+    ProjectViewSerializer,
     ProjectCreateSerializer,
     UserRegistrationSerializer,
     UserLoginSerializer,
@@ -79,7 +82,7 @@ def project_view(request, view_uuid):
     except Project.DoesNotExist:
         return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    return Response(ProjectDetailSerializer(project).data)
+    return Response(ProjectViewSerializer(project).data)
 
 
 @api_view(["POST"])
@@ -104,19 +107,22 @@ def project_fork(request, view_uuid):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def project_claim(request, edit_uuid):
-    try:
-        project = Project.objects.get(edit_uuid=edit_uuid)
-    except Project.DoesNotExist:
-        return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+    # Atomic: only claim if currently unowned
+    updated = Project.objects.filter(
+        edit_uuid=edit_uuid,
+        owner__isnull=True,
+    ).update(owner=request.user)
 
-    if project.owner is not None:
+    if updated == 0:
+        # Either doesn't exist or already owned
+        if not Project.objects.filter(edit_uuid=edit_uuid).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
         return Response(
             {"error": "Project already has an owner"},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    project.owner = request.user
-    project.save(update_fields=["owner"])
+    project = Project.objects.get(edit_uuid=edit_uuid)
     return Response(ProjectDetailSerializer(project).data)
 
 
@@ -180,13 +186,27 @@ def auth_logout(request):
     return Response({"ok": True})
 
 
+def _clear_user_sessions(user_id, exclude_session_key=None):
+    """Delete all active sessions for a user, optionally keeping one."""
+    for session in Session.objects.filter(expire_date__gte=timezone.now()):
+        try:
+            data = session.get_decoded()
+        except Exception:
+            continue
+        if str(data.get("_auth_user_id")) == str(user_id):
+            if exclude_session_key and session.session_key == exclude_session_key:
+                continue
+            session.delete()
+
+
 @api_view(["DELETE"])
 @permission_classes([IsAuthenticated])
 @throttle_classes([AuthThrottle])
 def auth_delete_account(request):
     user = request.user
+    _clear_user_sessions(user.id)
     logout(request)
-    user.delete()  # Projects kept via SET_NULL on FK
+    user.delete()
     return Response({"ok": True}, status=status.HTTP_204_NO_CONTENT)
 
 
@@ -201,6 +221,8 @@ def auth_change_password(request):
 
     request.user.set_password(new_password)
     request.user.save()
+    # Invalidate all other sessions, keep current
+    _clear_user_sessions(request.user.id, exclude_session_key=request.session.session_key)
     login(request, request.user)
     return Response({"ok": True})
 

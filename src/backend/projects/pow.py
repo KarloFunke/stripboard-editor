@@ -43,17 +43,17 @@ def verify_and_consume(challenge: str, nonce: str) -> bool:
     if not challenge or not nonce:
         return False
 
+    # Verify the hash BEFORE consuming the challenge
+    digest = hashlib.sha256((challenge + nonce).encode()).hexdigest()
+    if digest[:DIFFICULTY] != "0" * DIFFICULTY:
+        return False  # invalid solution, challenge stays available for retry
+
     from .models import PowChallenge
 
-    # Atomically fetch and delete the challenge
+    # Atomically consume the challenge (one-time use)
     deleted_count, _ = PowChallenge.objects.filter(
         challenge=challenge,
         expires_at__gt=timezone.now(),
     ).delete()
 
-    if deleted_count == 0:
-        return False  # unknown, already consumed, or expired
-
-    # Verify the hash
-    digest = hashlib.sha256((challenge + nonce).encode()).hexdigest()
-    return digest[:DIFFICULTY] == "0" * DIFFICULTY
+    return deleted_count > 0  # False if unknown, already consumed, or expired

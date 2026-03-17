@@ -80,6 +80,26 @@ class ProjectDetailSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
+
+class ProjectViewSerializer(serializers.ModelSerializer):
+    """Read-only serializer for view-only access. Does NOT expose edit_uuid."""
+    fork_count = serializers.IntegerField(source="forks.count", read_only=True)
+    owner_name = serializers.CharField(source="owner.username", read_only=True, default=None)
+
+    class Meta:
+        model = Project
+        fields = [
+            "view_uuid",
+            "name",
+            "data",
+            "owner_name",
+            "fork_of",
+            "fork_count",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
     def validate_name(self, value):
         return sanitize_name(value)
 
