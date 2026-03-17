@@ -4,6 +4,7 @@ import { useRef, useState, useCallback, useMemo, useEffect } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { usePanZoom } from "@/hooks/usePanZoom";
+import { useCanvasSelection } from "@/hooks/useCanvasSelection";
 import SchematicComponentBlock from "./SchematicComponentBlock";
 import ComponentPopup from "./ComponentPopup";
 import { getBlockSize } from "./blockLayout";
@@ -33,14 +34,15 @@ export default function SchematicCanvas() {
     [showNetLines, nets, netAssignments, components, componentDefs]
   );
 
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [selectionRect, setSelectionRect] = useState<{
-    startX: number;
-    startY: number;
-    currentX: number;
-    currentY: number;
-  } | null>(null);
+  const {
+    selectedId, setSelectedId,
+    selectedIds, setSelectedIds,
+    selectionRect,
+    startSelectionRect, updateSelectionRect, finalizeSelectionRect, cancelSelectionRect,
+    checkDragThreshold, shouldSuppressClick, markDragComplete,
+    clearSelection,
+  } = useCanvasSelection();
+
   const [dragging, setDragging] = useState<{
     componentId: string;
     offsetX: number;
@@ -49,8 +51,6 @@ export default function SchematicCanvas() {
     startY: number;
     didDrag: boolean;
   } | null>(null);
-
-  const justDraggedRef = useRef(false);
 
   const selectedComponent = selectedId
     ? components.find((c) => c.id === selectedId) ?? null
@@ -134,11 +134,9 @@ export default function SchematicCanvas() {
         target.getAttribute("fill") === "url(#grid)";
       if (!isBackground) return;
 
-      const pt = getSVGPoint(e);
-      setSelectionRect({ startX: pt.x, startY: pt.y, currentX: pt.x, currentY: pt.y });
-      setSelectedIds([]);
+      startSelectionRect(getSVGPoint(e));
     },
-    [getSVGPoint]
+    [getSVGPoint, startSelectionRect]
   );
 
   const handleMouseMove = useCallback(
@@ -146,14 +144,11 @@ export default function SchematicCanvas() {
       if (panZoom.handlePanMove(e)) return;
 
       if (selectionRect) {
-        const pt = getSVGPoint(e);
-        setSelectionRect({ ...selectionRect, currentX: pt.x, currentY: pt.y });
+        updateSelectionRect(getSVGPoint(e));
       }
 
       if (!dragging) return;
-      const dx = e.clientX - dragging.startX;
-      const dy = e.clientY - dragging.startY;
-      if (!dragging.didDrag && Math.sqrt(dx * dx + dy * dy) > 4) {
+      if (!dragging.didDrag && checkDragThreshold(e.clientX, e.clientY, dragging)) {
         setDragging({ ...dragging, didDrag: true });
       }
       const pt = getSVGPoint(e);
@@ -162,41 +157,31 @@ export default function SchematicCanvas() {
         y: pt.y - dragging.offsetY,
       });
     },
-    [dragging, selectionRect, getSVGPoint, updateSchematicPos, panZoom.handlePanMove]
+    [dragging, selectionRect, getSVGPoint, updateSchematicPos, panZoom.handlePanMove, updateSelectionRect, checkDragThreshold]
   );
 
   const handleMouseUp = useCallback(() => {
     panZoom.handlePanEnd();
 
     // Finalize selection rectangle
-    if (selectionRect) {
-      const x1 = Math.min(selectionRect.startX, selectionRect.currentX);
-      const y1 = Math.min(selectionRect.startY, selectionRect.currentY);
-      const x2 = Math.max(selectionRect.startX, selectionRect.currentX);
-      const y2 = Math.max(selectionRect.startY, selectionRect.currentY);
-
-      if (x2 - x1 > 10 || y2 - y1 > 10) {
-        const selected: string[] = [];
-        for (const comp of components) {
-          const def = resolveComponentDef(comp, componentDefs);
-          if (!def) continue;
-          const { blockWidth, blockHeight } = getBlockSize(def);
-          const cx = comp.schematicPos.x;
-          const cy = comp.schematicPos.y;
-          if (cx + blockWidth >= x1 && cx <= x2 && cy + blockHeight >= y1 && cy <= y2) {
-            selected.push(comp.id);
-          }
+    const rectHandled = finalizeSelectionRect((x1, y1, x2, y2) => {
+      const selected: string[] = [];
+      for (const comp of components) {
+        const def = resolveComponentDef(comp, componentDefs);
+        if (!def) continue;
+        const { blockWidth, blockHeight } = getBlockSize(def);
+        const cx = comp.schematicPos.x;
+        const cy = comp.schematicPos.y;
+        if (cx + blockWidth >= x1 && cx <= x2 && cy + blockHeight >= y1 && cy <= y2) {
+          selected.push(comp.id);
         }
-        setSelectedIds(selected);
-        setSelectedId(null);
-        justDraggedRef.current = true;
       }
-      setSelectionRect(null);
-      return;
-    }
+      return selected;
+    });
+    if (rectHandled) return;
 
     if (dragging) {
-      justDraggedRef.current = true;
+      markDragComplete();
       if (!dragging.didDrag) {
         setSelectedId((prev) =>
           prev === dragging.componentId ? null : dragging.componentId
@@ -204,21 +189,17 @@ export default function SchematicCanvas() {
       }
     }
     setDragging(null);
-  }, [dragging, selectionRect, components, componentDefs]);
+  }, [dragging, components, componentDefs, finalizeSelectionRect, markDragComplete, setSelectedId]);
 
   const handleCanvasClick = useCallback((e: React.MouseEvent) => {
-    if (justDraggedRef.current) {
-      justDraggedRef.current = false;
-      return;
-    }
+    if (shouldSuppressClick()) return;
     if (e.target === svgRef.current || (e.target as Element).tagName === "rect") {
       const isGridRect = (e.target as Element).getAttribute("fill") === "url(#grid)";
       if (e.target === svgRef.current || isGridRect) {
-        setSelectedId(null);
-        setSelectedIds([]);
+        clearSelection();
       }
     }
-  }, []);
+  }, [shouldSuppressClick, clearSelection]);
 
   // Drag-and-drop from component library
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -307,7 +288,7 @@ export default function SchematicCanvas() {
       onMouseLeave={() => {
         panZoom.handlePanEnd();
         setDragging(null);
-        setSelectionRect(null);
+        cancelSelectionRect();
       }}
       onWheel={panZoom.handleWheel}
       onContextMenu={panZoom.handleContextMenu}
@@ -347,7 +328,6 @@ export default function SchematicCanvas() {
           component={comp}
           isSelected={comp.id === selectedId || selectedIds.includes(comp.id)}
           onMouseDown={(e) => handleMouseDown(comp.id, e)}
-          onSelect={() => {}}
         />
       ))}
 

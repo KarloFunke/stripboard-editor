@@ -4,7 +4,6 @@ import { useMemo } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useStripSegments } from "@/hooks/useStripSegments";
 import { checkNetCompleteness } from "./netCompleteness";
-import { setTrayDragComponentId } from "./trayDragState";
 
 export default function ComponentTray() {
   const components = useProjectStore((s) => s.components);
@@ -26,6 +25,8 @@ export default function ComponentTray() {
       ),
     [nets, netAssignments, segments, connectivity, components, componentDefs]
   );
+
+  const setTrayDragComponentId = useProjectStore((s) => s.setTrayDragComponentId);
 
   const handleDragStart = (e: React.DragEvent, componentId: string) => {
     e.dataTransfer.setData("text/plain", componentId);

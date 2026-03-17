@@ -41,6 +41,19 @@ export default function ComponentPopup({ component, onClose }: Props) {
   });
   const [showTagPresets, setShowTagPresets] = useState(false);
 
+  // Reset local state when component or def changes
+  useEffect(() => {
+    setLabel(component.label);
+    setTag(component.tag);
+    if (def) {
+      const names: Record<string, string> = {};
+      for (const pin of def.pins) {
+        names[pin.id] = pin.name;
+      }
+      setPinNames(names);
+    }
+  }, [component.id, component.label, component.tag, def]);
+
   const containerRef = useRef<HTMLDivElement>(null);
 
   const saveChanges = useCallback(() => {

@@ -16,14 +16,12 @@ interface Props {
   component: Component;
   isSelected: boolean;
   onMouseDown: (e: React.MouseEvent) => void;
-  onSelect: () => void;
 }
 
 export default function SchematicComponentBlock({
   component,
   isSelected,
   onMouseDown,
-  onSelect,
 }: Props) {
   const componentDefs = useProjectStore((s) => s.componentDefs);
   const netAssignments = useProjectStore((s) => s.netAssignments);
@@ -62,9 +60,6 @@ export default function SchematicComponentBlock({
   };
 
   const handleMouseUp = () => {
-    if (mouseDownPos.current) {
-      onSelect();
-    }
     mouseDownPos.current = null;
   };
 

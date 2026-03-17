@@ -5,6 +5,7 @@ import { useProjectStore } from "@/store/useProjectStore";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { useStripSegments } from "@/hooks/useStripSegments";
 import { usePanZoom } from "@/hooks/usePanZoom";
+import { useCanvasSelection } from "@/hooks/useCanvasSelection";
 import { checkNetCompleteness } from "./netCompleteness";
 import {
   HOLE_SPACING,
@@ -28,7 +29,6 @@ import { StripSegment } from "./stripSegments";
 import PlacedComponent from "./PlacedComponent";
 import CutMark from "./CutMark";
 import WireLine from "./WireLine";
-import { trayDragComponentId } from "./trayDragState";
 
 export default function StripboardCanvas() {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -60,6 +60,7 @@ export default function StripboardCanvas() {
   const setWirePlacementFrom = useProjectStore((s) => s.setWirePlacementFrom);
   const cancelWirePlacement = useProjectStore((s) => s.cancelWirePlacement);
   const startWirePlacement = useProjectStore((s) => s.startWirePlacement);
+  const trayDragComponentId = useProjectStore((s) => s.trayDragComponentId);
 
   const nets = useProjectStore((s) => s.nets);
   const netAssignments = useProjectStore((s) => s.netAssignments);
@@ -76,16 +77,17 @@ export default function StripboardCanvas() {
   );
   const allDone = allPlaced && allNetsUsed && conflictCount === 0 && incompleteNets.length === 0;
 
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const {
+    selectedId, setSelectedId,
+    selectedIds, setSelectedIds,
+    selectionRect,
+    startSelectionRect, updateSelectionRect, finalizeSelectionRect, cancelSelectionRect,
+    checkDragThreshold, shouldSuppressClick, markDragComplete,
+    clearSelection,
+  } = useCanvasSelection();
+
   const [selectedWireIds, setSelectedWireIds] = useState<string[]>([]);
   const [selectedCuts, setSelectedCuts] = useState<{ row: number; col: number }[]>([]);
-  const [selectionRect, setSelectionRect] = useState<{
-    startX: number;
-    startY: number;
-    currentX: number;
-    currentY: number;
-  } | null>(null);
   const [trayGhost, setTrayGhost] = useState<{
     row: number;
     col: number;
@@ -102,9 +104,6 @@ export default function StripboardCanvas() {
     col: number;
   } | null>(null);
   const [wireMousePos, setWireMousePos] = useState<{ x: number; y: number } | null>(null);
-
-  // Track whether a drag just completed to suppress the click event
-  const justDraggedRef = useRef(false);
 
   const rotateComponent = useProjectStore((s) => s.rotateComponent);
   const pushSnapshot = useProjectStore((s) => s.pushSnapshot);
@@ -251,7 +250,7 @@ export default function StripboardCanvas() {
         setTrayGhost(null);
       }
     },
-    [getSVGPoint, board.rows, board.cols]
+    [getSVGPoint, board.rows, board.cols, trayDragComponentId]
   );
 
   const handleDrop = useCallback(
@@ -314,8 +313,7 @@ export default function StripboardCanvas() {
         if (dist <= HOLE_RADIUS + 2) return;
       }
 
-      setSelectionRect({ startX: pt.x, startY: pt.y, currentX: pt.x, currentY: pt.y });
-      setSelectedIds([]);
+      startSelectionRect(pt);
       setSelectedWireIds([]);
       setSelectedCuts([]);
     },
@@ -334,87 +332,74 @@ export default function StripboardCanvas() {
       // Selection rectangle
       if (selectionRect) {
         const pt = getSVGPoint(e);
-        setSelectionRect({ ...selectionRect, currentX: pt.x, currentY: pt.y });
+        updateSelectionRect(pt);
       }
 
       if (!dragging) return;
-      const dx = e.clientX - dragging.startX;
-      const dy = e.clientY - dragging.startY;
-      if (!dragging.didDrag && Math.sqrt(dx * dx + dy * dy) > 4) {
+      if (!dragging.didDrag && checkDragThreshold(e.clientX, e.clientY, dragging)) {
         setDragging({ ...dragging, didDrag: true });
       }
       const pt = getSVGPoint(e);
       setDragPreviewPos(nearestHole(pt.x, pt.y, board.rows, board.cols));
     },
-    [dragging, selectionRect, getSVGPoint, board.rows, board.cols, wirePlacementFrom]
+    [dragging, selectionRect, getSVGPoint, board.rows, board.cols, wirePlacementFrom, updateSelectionRect, checkDragThreshold]
   );
 
   const handleMouseUp = useCallback(() => {
     panZoom.handlePanEnd();
 
     // Finalize selection rectangle
-    if (selectionRect) {
-      const x1 = Math.min(selectionRect.startX, selectionRect.currentX);
-      const y1 = Math.min(selectionRect.startY, selectionRect.currentY);
-      const x2 = Math.max(selectionRect.startX, selectionRect.currentX);
-      const y2 = Math.max(selectionRect.startY, selectionRect.currentY);
-
-      // Only select if rect is big enough (not a click)
-      if (x2 - x1 > 10 || y2 - y1 > 10) {
-        const selected: string[] = [];
-        for (const comp of components) {
-          if (!comp.boardPos) continue;
-          const def = resolveComponentDef(comp, componentDefs);
-          if (!def) continue;
-          const bounds = getComponentBounds(def, comp.boardPos, comp.rotation);
-          const compTopLeft = holeCenter(bounds.minRow, bounds.minCol);
-          const compBottomRight = holeCenter(bounds.maxRow, bounds.maxCol);
-          if (compTopLeft.x <= x2 && compBottomRight.x >= x1 &&
-              compTopLeft.y <= y2 && compBottomRight.y >= y1) {
-            selected.push(comp.id);
-          }
+    const rectHandled = finalizeSelectionRect((x1, y1, x2, y2) => {
+      const selected: string[] = [];
+      for (const comp of components) {
+        if (!comp.boardPos) continue;
+        const def = resolveComponentDef(comp, componentDefs);
+        if (!def) continue;
+        const bounds = getComponentBounds(def, comp.boardPos, comp.rotation);
+        const compTopLeft = holeCenter(bounds.minRow, bounds.minCol);
+        const compBottomRight = holeCenter(bounds.maxRow, bounds.maxCol);
+        if (compTopLeft.x <= x2 && compBottomRight.x >= x1 &&
+            compTopLeft.y <= y2 && compBottomRight.y >= y1) {
+          selected.push(comp.id);
         }
-
-        // Select wires within rect
-        const selWires: string[] = [];
-        for (const wire of board.wires) {
-          const fromPt = holeCenter(wire.from.row, wire.from.col);
-          const toPt = holeCenter(wire.to.row, wire.to.col);
-          if (fromPt.x >= x1 && fromPt.x <= x2 && fromPt.y >= y1 && fromPt.y <= y2 &&
-              toPt.x >= x1 && toPt.x <= x2 && toPt.y >= y1 && toPt.y <= y2) {
-            selWires.push(wire.id);
-          }
-        }
-
-        // Select cuts within rect
-        const selCuts: { row: number; col: number }[] = [];
-        for (const cut of board.cuts) {
-          const cutX = (holeCenter(cut.row, cut.col).x + holeCenter(cut.row, cut.col + 1).x) / 2;
-          const cutY = holeCenter(cut.row, cut.col).y;
-          if (cutX >= x1 && cutX <= x2 && cutY >= y1 && cutY <= y2) {
-            selCuts.push({ row: cut.row, col: cut.col });
-          }
-        }
-
-        setSelectedIds(selected);
-        setSelectedWireIds(selWires);
-        setSelectedCuts(selCuts);
-        setSelectedId(null);
-        justDraggedRef.current = true;
       }
-      setSelectionRect(null);
-      return;
-    }
+
+      // Select wires within rect
+      const selWires: string[] = [];
+      for (const wire of board.wires) {
+        const fromPt = holeCenter(wire.from.row, wire.from.col);
+        const toPt = holeCenter(wire.to.row, wire.to.col);
+        if (fromPt.x >= x1 && fromPt.x <= x2 && fromPt.y >= y1 && fromPt.y <= y2 &&
+            toPt.x >= x1 && toPt.x <= x2 && toPt.y >= y1 && toPt.y <= y2) {
+          selWires.push(wire.id);
+        }
+      }
+
+      // Select cuts within rect
+      const selCuts: { row: number; col: number }[] = [];
+      for (const cut of board.cuts) {
+        const cutX = (holeCenter(cut.row, cut.col).x + holeCenter(cut.row, cut.col + 1).x) / 2;
+        const cutY = holeCenter(cut.row, cut.col).y;
+        if (cutX >= x1 && cutX <= x2 && cutY >= y1 && cutY <= y2) {
+          selCuts.push({ row: cut.row, col: cut.col });
+        }
+      }
+
+      setSelectedWireIds(selWires);
+      setSelectedCuts(selCuts);
+      return selected;
+    });
+    if (rectHandled) return;
 
     if (dragging) {
-      justDraggedRef.current = true;
+      markDragComplete();
       if (dragging.didDrag && dragPreviewPos && isValidPlacement(dragging.componentId, dragPreviewPos)) {
         placeOnBoard(dragging.componentId, dragPreviewPos);
       }
     }
     setDragging(null);
     setDragPreviewPos(null);
-  }, [dragging, dragPreviewPos, selectionRect, components, componentDefs, isValidPlacement, placeOnBoard]);
+  }, [dragging, dragPreviewPos, components, componentDefs, board.wires, board.cuts, isValidPlacement, placeOnBoard, finalizeSelectionRect, markDragComplete]);
 
   // ── Canvas click ────────────────────────────────────────
   // Priority: skip if just dragged → wire drawing → cut toggle → deselect
@@ -422,10 +407,7 @@ export default function StripboardCanvas() {
   const handleCanvasClick = useCallback(
     (e: React.MouseEvent) => {
       // Suppress click after drag release
-      if (justDraggedRef.current) {
-        justDraggedRef.current = false;
-        return;
-      }
+      if (shouldSuppressClick()) return;
 
       const pt = getSVGPoint(e);
 
@@ -472,14 +454,14 @@ export default function StripboardCanvas() {
         return;
       }
 
-      setSelectedId(null);
-      setSelectedIds([]);
+      clearSelection();
       setSelectedWireIds([]);
       setSelectedCuts([]);
     },
     [
       getSVGPoint, board, placeCut, removeCut,
       wirePlacementFrom, setWirePlacementFrom, addWire, startWirePlacement,
+      shouldSuppressClick, clearSelection, setSelectedId, findComponentAtHole,
     ]
   );
 
@@ -519,7 +501,6 @@ export default function StripboardCanvas() {
           ].filter(Boolean).join(", ")} selected — arrow keys to move, Escape to deselect
         </div>
       )}
-{null}
       <div ref={containerRef} className="flex-1 overflow-hidden relative">
         <svg
           ref={svgRef}
@@ -540,7 +521,7 @@ export default function StripboardCanvas() {
             setDragging(null);
             setDragPreviewPos(null);
             setWireMousePos(null);
-            setSelectionRect(null);
+            cancelSelectionRect();
           }}
           onWheel={panZoom.handleWheel}
           onContextMenu={panZoom.handleContextMenu}

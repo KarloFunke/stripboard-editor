@@ -14,6 +14,8 @@ import {
   Wire,
 } from "@/types";
 import { DEFAULT_COMPONENTS } from "@/data/defaultComponents";
+import { resolveComponentDef } from "@/utils/resolveComponentDef";
+import { getComponentBounds } from "@/components/stripboard/boardLayout";
 
 export const AUTO_NET_ID = "__auto_new__";
 
@@ -102,6 +104,7 @@ interface ProjectActions {
   setWirePlacementFrom: (pos: BoardPosition) => void;
   setShowNetLines: (show: boolean) => void;
   setActiveTag: (tag: string | null) => void;
+  setTrayDragComponentId: (id: string | null) => void;
   addCustomTag: (tag: string) => void;
   removeCustomTag: (tag: string) => void;
 
@@ -126,6 +129,7 @@ interface UIState {
   wirePlacementMode: boolean;
   wirePlacementFrom: BoardPosition | null;
   showNetLines: boolean;
+  trayDragComponentId: string | null;
 }
 
 interface HistoryState {
@@ -214,6 +218,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   wirePlacementMode: false,
   wirePlacementFrom: null,
   showNetLines: true,
+  trayDragComponentId: null,
   _history: [],
   _redoStack: [],
   canUndo: false,
@@ -408,12 +413,25 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   rotateComponent: (id) => {
+    const s = get();
+    const comp = s.components.find((c) => c.id === id);
+    if (!comp) return;
+    const newRotation = ((comp.rotation + 90) % 360) as Component["rotation"];
+    // Bounds check if placed on board
+    if (comp.boardPos) {
+      const def = resolveComponentDef(comp, s.componentDefs);
+      if (def) {
+        const bounds = getComponentBounds(def, comp.boardPos, newRotation);
+        if (bounds.minRow < 0 || bounds.minCol < 0 ||
+            bounds.maxRow >= s.board.rows || bounds.maxCol >= s.board.cols) {
+          return; // Would go out of bounds
+        }
+      }
+    }
     get().pushSnapshot();
-    set((s) => ({
-      components: s.components.map((c) =>
-        c.id === id
-          ? { ...c, rotation: ((c.rotation + 90) % 360) as Component["rotation"] }
-          : c
+    set((s2) => ({
+      components: s2.components.map((c) =>
+        c.id === id ? { ...c, rotation: newRotation } : c
       ),
     }));
   },
@@ -437,6 +455,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set((s) => ({
       nets: s.nets.filter((n) => n.id !== id),
       netAssignments: s.netAssignments.filter((a) => a.netId !== id),
+      activeNetId: s.activeNetId === id ? null : s.activeNetId,
     }));
   },
 
@@ -571,7 +590,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       }
 
       // Normal paint mode: toggle assignment to active net
-      if (s.activeNetId) {
+      if (s.activeNetId && s.nets.some((n) => n.id === s.activeNetId)) {
         if (existing && existing.netId === s.activeNetId) {
           return {
             netAssignments: s.netAssignments.filter(
@@ -605,6 +624,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   setShowNetLines: (show) => set({ showNetLines: show }),
   setActiveTag: (tag) => set({ activeTag: tag }),
+  setTrayDragComponentId: (id) => set({ trayDragComponentId: id }),
 
   addCustomTag: (tag) =>
     set((s) => {

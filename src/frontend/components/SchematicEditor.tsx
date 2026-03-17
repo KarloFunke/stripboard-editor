@@ -45,7 +45,6 @@ export default function SchematicEditor() {
       <div className="border-b border-neutral-300 bg-white px-5 h-12 font-semibold text-sm text-[#113768] flex items-center justify-between">
         <span>Schematic / Net Editor</span>
         <div className="flex items-center gap-3 text-sm font-normal">
-{null}
           <label className="flex items-center gap-1.5 text-neutral-600 cursor-pointer select-none">
             <input
               type="checkbox"
