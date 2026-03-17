@@ -4,6 +4,7 @@ import { useRef, useState, useCallback, useEffect, useMemo } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { useStripSegments } from "@/hooks/useStripSegments";
+import { usePanZoom } from "@/hooks/usePanZoom";
 import { checkNetCompleteness } from "./netCompleteness";
 import {
   HOLE_SPACING,
@@ -31,6 +32,20 @@ import { trayDragComponentId } from "./trayDragState";
 
 export default function StripboardCanvas() {
   const svgRef = useRef<SVGSVGElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const panZoom = usePanZoom(1.3);
+  const [containerSize, setContainerSize] = useState({ width: 1000, height: 800 });
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const obs = new ResizeObserver((entries) => {
+      const { width, height } = entries[0].contentRect;
+      setContainerSize({ width, height });
+    });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
 
   const board = useProjectStore((s) => s.board);
   const components = useProjectStore((s) => s.components);
@@ -60,6 +75,8 @@ export default function StripboardCanvas() {
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [selectedWireIds, setSelectedWireIds] = useState<string[]>([]);
+  const [selectedCuts, setSelectedCuts] = useState<{ row: number; col: number }[]>([]);
   const [selectionRect, setSelectionRect] = useState<{
     startX: number;
     startY: number;
@@ -100,13 +117,16 @@ export default function StripboardCanvas() {
         }
         if (selectedIds.length > 0) {
           setSelectedIds([]);
+          setSelectedWireIds([]);
+          setSelectedCuts([]);
         }
         return;
       }
 
-      // Arrow keys: move selected components
+      // Arrow keys: move selected components, wires, and cuts
       const moveIds = selectedIds.length > 0 ? selectedIds : selectedId ? [selectedId] : [];
-      if (moveIds.length > 0 && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
+      const hasSelection = moveIds.length > 0 || selectedWireIds.length > 0 || selectedCuts.length > 0;
+      if (hasSelection && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
         e.preventDefault();
         const delta = {
           ArrowUp: { row: -1, col: 0 },
@@ -114,7 +134,13 @@ export default function StripboardCanvas() {
           ArrowLeft: { row: 0, col: -1 },
           ArrowRight: { row: 0, col: 1 },
         }[e.key]!;
-        moveComponentsOnBoard(moveIds, delta.row, delta.col);
+        moveComponentsOnBoard(moveIds, delta.row, delta.col, selectedWireIds, selectedCuts);
+        // Update tracked cut positions after move
+        if (selectedCuts.length > 0) {
+          setSelectedCuts((prev) =>
+            prev.map((c) => ({ row: c.row + delta.row, col: c.col + delta.col }))
+          );
+        }
         return;
       }
 
@@ -129,7 +155,7 @@ export default function StripboardCanvas() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [wirePlacementFrom, cancelWirePlacement, selectedId, selectedIds, rotateComponent, removeFromBoard, moveComponentsOnBoard]);
+  }, [wirePlacementFrom, cancelWirePlacement, selectedId, selectedIds, selectedWireIds, selectedCuts, rotateComponent, removeFromBoard, moveComponentsOnBoard]);
 
   const svgWidth = BOARD_PADDING * 2 + (board.cols - 1) * HOLE_SPACING;
   const svgHeight = BOARD_PADDING * 2 + (board.rows - 1) * HOLE_SPACING;
@@ -137,12 +163,8 @@ export default function StripboardCanvas() {
   const getSVGPoint = useCallback((e: React.MouseEvent | React.DragEvent) => {
     const svg = svgRef.current;
     if (!svg) return { x: 0, y: 0 };
-    const rect = svg.getBoundingClientRect();
-    return {
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top,
-    };
-  }, []);
+    return panZoom.screenToSvg(e.clientX, e.clientY, svg);
+  }, [panZoom.screenToSvg]);
 
   const getSegmentColor = useCallback(
     (segment: StripSegment, segIndex: number): string => {
@@ -250,6 +272,7 @@ export default function StripboardCanvas() {
 
   const handleComponentMouseDown = useCallback(
     (componentId: string, e: React.MouseEvent) => {
+      if (e.button === 2) return; // right-click is pan
       if (wirePlacementMode || wirePlacementFrom) return;
       e.stopPropagation();
       e.preventDefault();
@@ -267,6 +290,7 @@ export default function StripboardCanvas() {
   // Start selection rectangle on mouseDown on empty SVG area
   const handleSvgMouseDown = useCallback(
     (e: React.MouseEvent) => {
+      if (e.button === 2) return; // right-click is pan
       if (wirePlacementFrom || wirePlacementMode) return;
       // Only start selection rect if clicking directly on SVG background elements
       const target = e.target as Element;
@@ -286,12 +310,16 @@ export default function StripboardCanvas() {
 
       setSelectionRect({ startX: pt.x, startY: pt.y, currentX: pt.x, currentY: pt.y });
       setSelectedIds([]);
+      setSelectedWireIds([]);
+      setSelectedCuts([]);
     },
     [getSVGPoint, board.rows, board.cols, wirePlacementFrom, wirePlacementMode]
   );
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
+      if (panZoom.handlePanMove(e)) return;
+
       // Wire preview line
       if (wirePlacementFrom) {
         setWireMousePos(getSVGPoint(e));
@@ -316,6 +344,8 @@ export default function StripboardCanvas() {
   );
 
   const handleMouseUp = useCallback(() => {
+    panZoom.handlePanEnd();
+
     // Finalize selection rectangle
     if (selectionRect) {
       const x1 = Math.min(selectionRect.startX, selectionRect.currentX);
@@ -333,13 +363,36 @@ export default function StripboardCanvas() {
           const bounds = getComponentBounds(def, comp.boardPos, comp.rotation);
           const compTopLeft = holeCenter(bounds.minRow, bounds.minCol);
           const compBottomRight = holeCenter(bounds.maxRow, bounds.maxCol);
-          // Check intersection
           if (compTopLeft.x <= x2 && compBottomRight.x >= x1 &&
               compTopLeft.y <= y2 && compBottomRight.y >= y1) {
             selected.push(comp.id);
           }
         }
+
+        // Select wires within rect
+        const selWires: string[] = [];
+        for (const wire of board.wires) {
+          const fromPt = holeCenter(wire.from.row, wire.from.col);
+          const toPt = holeCenter(wire.to.row, wire.to.col);
+          if (fromPt.x >= x1 && fromPt.x <= x2 && fromPt.y >= y1 && fromPt.y <= y2 &&
+              toPt.x >= x1 && toPt.x <= x2 && toPt.y >= y1 && toPt.y <= y2) {
+            selWires.push(wire.id);
+          }
+        }
+
+        // Select cuts within rect
+        const selCuts: { row: number; col: number }[] = [];
+        for (const cut of board.cuts) {
+          const cutX = (holeCenter(cut.row, cut.col).x + holeCenter(cut.row, cut.col + 1).x) / 2;
+          const cutY = holeCenter(cut.row, cut.col).y;
+          if (cutX >= x1 && cutX <= x2 && cutY >= y1 && cutY <= y2) {
+            selCuts.push({ row: cut.row, col: cut.col });
+          }
+        }
+
         setSelectedIds(selected);
+        setSelectedWireIds(selWires);
+        setSelectedCuts(selCuts);
         setSelectedId(null);
         justDraggedRef.current = true;
       }
@@ -415,6 +468,8 @@ export default function StripboardCanvas() {
 
       setSelectedId(null);
       setSelectedIds([]);
+      setSelectedWireIds([]);
+      setSelectedCuts([]);
     },
     [
       getSVGPoint, board, placeCut, removeCut,
@@ -429,7 +484,9 @@ export default function StripboardCanvas() {
     return comp.boardPos;
   };
 
-  const cursorStyle = wirePlacementFrom
+  const cursorStyle = panZoom.isPanning.current
+    ? "grabbing"
+    : wirePlacementFrom
     ? "crosshair"
     : dragging?.didDrag
     ? "grabbing"
@@ -447,29 +504,40 @@ export default function StripboardCanvas() {
           {conflictCount} connectivity conflict{conflictCount > 1 ? "s" : ""} — place cuts or rearrange components
         </div>
       )}
-      {selectedIds.length > 0 && (
+      {(selectedIds.length > 0 || selectedWireIds.length > 0 || selectedCuts.length > 0) && (
         <div className="bg-[#113768]/5 border-b border-[#113768]/20 px-4 py-1 text-xs text-[#113768]">
-          {selectedIds.length} components selected — arrow keys to move, Escape to deselect
+          {[
+            selectedIds.length > 0 && `${selectedIds.length} component${selectedIds.length > 1 ? "s" : ""}`,
+            selectedWireIds.length > 0 && `${selectedWireIds.length} wire${selectedWireIds.length > 1 ? "s" : ""}`,
+            selectedCuts.length > 0 && `${selectedCuts.length} cut${selectedCuts.length > 1 ? "s" : ""}`,
+          ].filter(Boolean).join(", ")} selected — arrow keys to move, Escape to deselect
         </div>
       )}
 {null}
-      <div className="flex-1 overflow-auto">
+      <div ref={containerRef} className="flex-1 overflow-hidden relative">
         <svg
           ref={svgRef}
-          width={svgWidth}
-          height={svgHeight}
+          width="100%"
+          height="100%"
+          viewBox={panZoom.getViewBox(containerSize.width, containerSize.height)}
           className="bg-white"
           style={{ cursor: cursorStyle }}
-          onMouseDown={handleSvgMouseDown}
+          onMouseDown={(e) => {
+            panZoom.handlePanStart(e);
+            handleSvgMouseDown(e);
+          }}
           onClick={handleCanvasClick}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={() => {
+            panZoom.handlePanEnd();
             setDragging(null);
             setDragPreviewPos(null);
             setWireMousePos(null);
             setSelectionRect(null);
           }}
+          onWheel={panZoom.handleWheel}
+          onContextMenu={panZoom.handleContextMenu}
           onDragOver={handleDragOver}
           onDrop={handleDrop}
           onDragLeave={handleDragLeave}
@@ -571,14 +639,29 @@ export default function StripboardCanvas() {
           {/* Wires */}
           {board.wires.map((wire) => {
             const { color, isConflict } = getWireColor(wire.id);
+            const isSelected = selectedWireIds.includes(wire.id);
             return (
-              <WireLine
-                key={wire.id}
-                wire={wire}
-                color={color}
-                isConflict={isConflict}
-                onClick={() => removeWire(wire.id)}
-              />
+              <g key={wire.id}>
+                {isSelected && (
+                  <line
+                    x1={holeCenter(wire.from.row, wire.from.col).x}
+                    y1={holeCenter(wire.from.row, wire.from.col).y}
+                    x2={holeCenter(wire.to.row, wire.to.col).x}
+                    y2={holeCenter(wire.to.row, wire.to.col).y}
+                    stroke="#113768"
+                    strokeWidth={6}
+                    strokeOpacity={0.25}
+                    strokeLinecap="round"
+                    pointerEvents="none"
+                  />
+                )}
+                <WireLine
+                  wire={wire}
+                  color={color}
+                  isConflict={isConflict}
+                  onClick={() => removeWire(wire.id)}
+                />
+              </g>
             );
           })}
 
@@ -609,9 +692,24 @@ export default function StripboardCanvas() {
           )}
 
           {/* Cut marks */}
-          {board.cuts.map((cut, i) => (
-            <CutMark key={`cut-${i}`} cut={cut} />
-          ))}
+          {board.cuts.map((cut, i) => {
+            const isSelected = selectedCuts.some((sc) => sc.row === cut.row && sc.col === cut.col);
+            return (
+              <g key={`cut-${i}`}>
+                {isSelected && (
+                  <circle
+                    cx={(holeCenter(cut.row, cut.col).x + holeCenter(cut.row, cut.col + 1).x) / 2}
+                    cy={holeCenter(cut.row, cut.col).y}
+                    r={10}
+                    fill="#113768"
+                    opacity={0.15}
+                    pointerEvents="none"
+                  />
+                )}
+                <CutMark cut={cut} />
+              </g>
+            );
+          })}
 
           {/* Ghost preview for tray drag — render as component outline */}
           {trayGhost && (() => {
@@ -670,6 +768,16 @@ export default function StripboardCanvas() {
             />
           )}
         </svg>
+        {/* Zoom controls overlay */}
+        <div className="absolute bottom-3 right-3 flex items-center gap-1 bg-white/90 border border-neutral-200 rounded-md px-1.5 py-1 shadow-sm text-xs text-neutral-600">
+          <button
+            onClick={() => panZoom.resetView()}
+            className="px-1.5 py-0.5 hover:bg-neutral-100 rounded transition-colors"
+            title="Reset view"
+          >
+            {Math.round(panZoom.zoom * 100)}%
+          </button>
+        </div>
       </div>
     </div>
   );

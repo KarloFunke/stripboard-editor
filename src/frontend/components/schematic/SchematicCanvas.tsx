@@ -3,6 +3,7 @@
 import { useRef, useState, useCallback, useMemo, useEffect } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
+import { usePanZoom } from "@/hooks/usePanZoom";
 import SchematicComponentBlock from "./SchematicComponentBlock";
 import ComponentPopup from "./ComponentPopup";
 import { getBlockSize } from "./blockLayout";
@@ -15,6 +16,8 @@ const MOVE_STEP = 20; // pixels per arrow key press
 
 export default function SchematicCanvas() {
   const svgRef = useRef<SVGSVGElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const panZoom = usePanZoom(1.3);
   const components = useProjectStore((s) => s.components);
   const componentDefs = useProjectStore((s) => s.componentDefs);
   const nets = useProjectStore((s) => s.nets);
@@ -94,15 +97,12 @@ export default function SchematicCanvas() {
   const getSVGPoint = useCallback((e: React.MouseEvent) => {
     const svg = svgRef.current;
     if (!svg) return { x: 0, y: 0 };
-    const rect = svg.getBoundingClientRect();
-    return {
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top,
-    };
-  }, []);
+    return panZoom.screenToSvg(e.clientX, e.clientY, svg);
+  }, [panZoom.screenToSvg]);
 
   const handleMouseDown = useCallback(
     (componentId: string, e: React.MouseEvent) => {
+      if (e.button === 2) return; // right-click is pan
       if ((e.target as Element).closest("[data-pin]")) return;
       e.preventDefault();
 
@@ -124,6 +124,7 @@ export default function SchematicCanvas() {
 
   const handleSvgMouseDown = useCallback(
     (e: React.MouseEvent) => {
+      if (e.button === 2) return; // right-click is pan
       const target = e.target as Element;
       const isBackground = target.tagName === "svg" ||
         target.getAttribute("fill") === "url(#grid)";
@@ -138,6 +139,8 @@ export default function SchematicCanvas() {
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
+      if (panZoom.handlePanMove(e)) return;
+
       if (selectionRect) {
         const pt = getSVGPoint(e);
         setSelectionRect({ ...selectionRect, currentX: pt.x, currentY: pt.y });
@@ -155,10 +158,12 @@ export default function SchematicCanvas() {
         y: pt.y - dragging.offsetY,
       });
     },
-    [dragging, selectionRect, getSVGPoint, updateSchematicPos]
+    [dragging, selectionRect, getSVGPoint, updateSchematicPos, panZoom.handlePanMove]
   );
 
   const handleMouseUp = useCallback(() => {
+    panZoom.handlePanEnd();
+
     // Finalize selection rectangle
     if (selectionRect) {
       const x1 = Math.min(selectionRect.startX, selectionRect.currentX);
@@ -247,18 +252,45 @@ export default function SchematicCanvas() {
     return { x, y };
   };
 
+  // Get container size for viewBox calculation
+  const [containerSize, setContainerSize] = useState({ width: 1000, height: 800 });
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const obs = new ResizeObserver((entries) => {
+      const { width, height } = entries[0].contentRect;
+      setContainerSize({ width, height });
+    });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
+
+  const cursorStyle = panZoom.isPanning.current
+    ? "grabbing"
+    : dragging
+    ? "grabbing"
+    : "default";
+
   return (
+    <div ref={containerRef} className="h-full w-full overflow-hidden relative">
     <svg
       ref={svgRef}
       className="h-full w-full bg-white"
-      style={{ cursor: dragging ? "grabbing" : "default" }}
-      onMouseDown={handleSvgMouseDown}
+      viewBox={panZoom.getViewBox(containerSize.width, containerSize.height)}
+      style={{ cursor: cursorStyle }}
+      onMouseDown={(e) => {
+        panZoom.handlePanStart(e);
+        handleSvgMouseDown(e);
+      }}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={() => {
+        panZoom.handlePanEnd();
         setDragging(null);
         setSelectionRect(null);
       }}
+      onWheel={panZoom.handleWheel}
+      onContextMenu={panZoom.handleContextMenu}
       onClick={handleCanvasClick}
     >
       {/* Grid dots */}
@@ -267,7 +299,7 @@ export default function SchematicCanvas() {
           <circle cx="10" cy="10" r="0.5" fill="#e5e5e5" />
         </pattern>
       </defs>
-      <rect width="100%" height="100%" fill="url(#grid)" />
+      <rect x="-10000" y="-10000" width="20000" height="20000" fill="url(#grid)" />
 
       {/* Net lines (MST edges) */}
       {netLines.map((netLine) =>
@@ -328,5 +360,16 @@ export default function SchematicCanvas() {
         </foreignObject>
       )}
     </svg>
+      {/* Zoom controls overlay */}
+      <div className="absolute bottom-3 right-3 flex items-center gap-1 bg-white/90 border border-neutral-200 rounded-md px-1.5 py-1 shadow-sm text-xs text-neutral-600">
+        <button
+          onClick={() => panZoom.resetView()}
+          className="px-1.5 py-0.5 hover:bg-neutral-100 rounded transition-colors"
+          title="Reset view"
+        >
+          {Math.round(panZoom.zoom * 100)}%
+        </button>
+      </div>
+    </div>
   );
 }

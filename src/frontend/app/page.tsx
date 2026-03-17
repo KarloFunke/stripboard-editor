@@ -27,6 +27,7 @@ export default function HomePage() {
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
 
   useEffect(() => {
     getMe()
@@ -51,10 +52,11 @@ export default function HomePage() {
     }
   };
 
-  const handleDelete = async (editUuid: string) => {
-    if (!confirm("Delete this project?")) return;
-    await deleteProject(editUuid);
-    setProjects((prev) => prev.filter((p) => p.edit_uuid !== editUuid));
+  const handleDelete = async () => {
+    if (!deleteConfirm) return;
+    await deleteProject(deleteConfirm);
+    setProjects((prev) => prev.filter((p) => p.edit_uuid !== deleteConfirm));
+    setDeleteConfirm(null);
   };
 
   const handleAuth = async (e: React.FormEvent) => {
@@ -170,7 +172,7 @@ export default function HomePage() {
                       </p>
                     </div>
                     <button
-                      onClick={() => handleDelete(project.edit_uuid)}
+                      onClick={() => setDeleteConfirm(project.edit_uuid)}
                       className="text-neutral-400 hover:text-red-500 text-sm px-2"
                       title="Delete project"
                     >
@@ -183,6 +185,42 @@ export default function HomePage() {
           </div>
         )}
       </div>
+
+      {/* Delete confirmation modal */}
+      {deleteConfirm && (
+        <div
+          className="fixed inset-0 bg-black/30 flex items-center justify-center z-50"
+          onClick={() => setDeleteConfirm(null)}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl p-6 w-80"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-semibold text-neutral-900 mb-2">Delete Project</h2>
+            <p className="text-sm text-neutral-600 mb-5">
+              Are you sure you want to delete{" "}
+              <span className="font-medium">
+                {projects.find((p) => p.edit_uuid === deleteConfirm)?.name ?? "this project"}
+              </span>
+              ? This cannot be undone.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setDeleteConfirm(null)}
+                className="px-4 py-2 text-sm rounded border border-neutral-300 text-neutral-700 hover:bg-neutral-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDelete}
+                className="px-4 py-2 text-sm rounded bg-red-500 text-white font-medium hover:bg-red-600 transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Auth modal */}
       {showAuth && (

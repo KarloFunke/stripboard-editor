@@ -69,7 +69,7 @@ interface ProjectActions {
   updateComponentFootprint: (componentId: string, override: FootprintOverride) => void;
   updateSchematicPos: (id: string, pos: { x: number; y: number }) => void;
   placeOnBoard: (id: string, pos: { row: number; col: number }) => void;
-  moveComponentsOnBoard: (ids: string[], deltaRow: number, deltaCol: number) => void;
+  moveComponentsOnBoard: (ids: string[], deltaRow: number, deltaCol: number, wireIds?: string[], cutPositions?: { row: number; col: number }[]) => void;
   removeFromBoard: (id: string) => void;
   rotateComponent: (id: string) => void;
 
@@ -299,9 +299,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       ),
     })),
 
-  moveComponentsOnBoard: (ids, deltaRow, deltaCol) =>
-    set((s) => ({
-      components: s.components.map((c) => {
+  moveComponentsOnBoard: (ids, deltaRow, deltaCol, wireIds, cutPositions) =>
+    set((s) => {
+      const newComponents = s.components.map((c) => {
         if (!ids.includes(c.id) || !c.boardPos) return c;
         return {
           ...c,
@@ -310,8 +310,34 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
             col: c.boardPos.col + deltaCol,
           },
         };
-      }),
-    })),
+      });
+
+      let newWires = s.board.wires;
+      if (wireIds && wireIds.length > 0) {
+        newWires = newWires.map((w) => {
+          if (!wireIds.includes(w.id)) return w;
+          return {
+            ...w,
+            from: { row: w.from.row + deltaRow, col: w.from.col + deltaCol },
+            to: { row: w.to.row + deltaRow, col: w.to.col + deltaCol },
+          };
+        });
+      }
+
+      let newCuts = s.board.cuts;
+      if (cutPositions && cutPositions.length > 0) {
+        newCuts = newCuts.map((c) => {
+          const match = cutPositions.find((cp) => cp.row === c.row && cp.col === c.col);
+          if (!match) return c;
+          return { row: c.row + deltaRow, col: c.col + deltaCol };
+        });
+      }
+
+      return {
+        components: newComponents,
+        board: { ...s.board, wires: newWires, cuts: newCuts },
+      };
+    }),
 
   removeFromBoard: (id) =>
     set((s) => ({
