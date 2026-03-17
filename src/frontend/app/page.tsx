@@ -18,6 +18,7 @@ import { useProjectStore } from "@/store/useProjectStore";
 export default function HomePage() {
   const router = useRouter();
   const exportProject = useProjectStore((s) => s.exportProject);
+  const resetProject = useProjectStore((s) => s.resetProject);
 
   const [user, setUser] = useState<User | null>(null);
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
@@ -43,6 +44,7 @@ export default function HomePage() {
   const handleNewProject = async () => {
     setCreating(true);
     try {
+      resetProject();
       const data = exportProject();
       const project = await createProject("Untitled Project", data as unknown as Record<string, unknown>);
       router.push(`/project/${project.edit_uuid}`);

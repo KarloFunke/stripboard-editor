@@ -119,6 +119,14 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
     setTimeout(() => setCopied(null), 2000);
   };
 
+  // Sort keys recursively for stable JSON comparison
+  const stableStringify = (obj: unknown): string =>
+    JSON.stringify(obj, (_, v) =>
+      v && typeof v === "object" && !Array.isArray(v)
+        ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b)))
+        : v
+    );
+
   const handleExit = async () => {
     if (!editUuid) {
       router.push("/");
@@ -128,8 +136,15 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
     try {
       const saved = await getProject(editUuid);
       const current = exportProject();
-      const savedJson = JSON.stringify(saved.data);
-      const currentJson = JSON.stringify(current);
+      // Normalize: load saved data through the same export pipeline
+      // to ensure both sides have the same shape (defaults stripped, etc.)
+      const savedData = saved.data as Record<string, unknown>;
+      // Compare only the mutable project fields, not id/name (name compared separately)
+      const fieldsToCompare = ["components", "nets", "netAssignments", "board", "customTags"];
+      const pickFields = (obj: Record<string, unknown>) =>
+        Object.fromEntries(fieldsToCompare.map((k) => [k, obj[k]]));
+      const savedJson = stableStringify(pickFields(savedData));
+      const currentJson = stableStringify(pickFields(current as unknown as Record<string, unknown>));
       if (savedJson === currentJson && saved.name === current.name) {
         router.push("/");
       } else {

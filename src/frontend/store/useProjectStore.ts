@@ -109,6 +109,7 @@ interface ProjectActions {
   setProjectName: (name: string) => void;
   exportProject: () => Project;
   loadProject: (data: Project) => void;
+  resetProject: () => void;
 }
 
 interface UIState {
@@ -577,4 +578,23 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       wirePlacementFrom: null,
     });
   },
+
+  resetProject: () => set({
+    id: generateId(),
+    name: "Untitled Project",
+    componentDefs: [...DEFAULT_COMPONENTS],
+    components: [],
+    nets: [
+      { id: generateId(), name: "VCC", color: "#ef4444" },
+      { id: generateId(), name: "GND", color: "#171717" },
+    ],
+    netAssignments: [],
+    board: { rows: 20, cols: 20, cuts: [], jumpers: [], wires: [] },
+    customTags: [],
+    activeNetId: null,
+    activeTag: null,
+    editingFootprintComponentId: null,
+    wirePlacementMode: false,
+    wirePlacementFrom: null,
+  }),
 }));
