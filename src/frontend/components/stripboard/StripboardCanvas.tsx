@@ -61,6 +61,7 @@ export default function StripboardCanvas() {
   const cancelWirePlacement = useProjectStore((s) => s.cancelWirePlacement);
   const startWirePlacement = useProjectStore((s) => s.startWirePlacement);
   const trayDragComponentId = useProjectStore((s) => s.trayDragComponentId);
+  const highlightedNetId = useProjectStore((s) => s.highlightedNetId);
 
   const nets = useProjectStore((s) => s.nets);
   const netAssignments = useProjectStore((s) => s.netAssignments);
@@ -192,7 +193,7 @@ export default function StripboardCanvas() {
     (wireId: string): { color: string; isConflict: boolean } => {
       const group = getGroupForWire(connectivity, wireId);
       if (!group) return { color: "#a3a3a3", isConflict: false };
-      if (group.hasConflict) return { color: "#ef4444", isConflict: true };
+      if (group.hasConflict) return { color: STRIP_CONFLICT_COLOR, isConflict: true };
       if (group.netIds.length === 1) {
         const net = nets.find((n) => n.id === group.netIds[0]);
         return { color: net?.color ?? "#a3a3a3", isConflict: false };
@@ -536,18 +537,32 @@ export default function StripboardCanvas() {
             const color = getSegmentColor(seg, i);
             const group = getGroupForSegment(connectivity, i);
             const hasNets = group ? group.netIds.length > 0 : seg.netIds.length > 0;
+            const segNetIds = group ? group.netIds : seg.netIds;
+            const isHighlighted = highlightedNetId !== null && segNetIds.includes(highlightedNetId);
 
             return (
-              <rect
-                key={`seg-${i}`}
-                x={startCenter.x - HOLE_SPACING * 0.4}
-                y={startCenter.y - STRIP_HEIGHT / 2}
-                width={endCenter.x - startCenter.x + HOLE_SPACING * 0.8}
-                height={STRIP_HEIGHT}
-                fill={color}
-                opacity={group?.hasConflict ? 0.6 : hasNets ? 0.5 : 0.4}
-                rx={1}
-              />
+              <g key={`seg-${i}`}>
+                {(isHighlighted || group?.hasConflict) && (
+                  <rect
+                    x={startCenter.x - HOLE_SPACING * 0.5}
+                    y={startCenter.y - STRIP_HEIGHT}
+                    width={endCenter.x - startCenter.x + HOLE_SPACING}
+                    height={STRIP_HEIGHT * 2}
+                    fill={group?.hasConflict ? STRIP_CONFLICT_COLOR : color}
+                    opacity={0.3}
+                    rx={2}
+                  />
+                )}
+                <rect
+                  x={startCenter.x - HOLE_SPACING * 0.4}
+                  y={startCenter.y - STRIP_HEIGHT / 2}
+                  width={endCenter.x - startCenter.x + HOLE_SPACING * 0.8}
+                  height={STRIP_HEIGHT}
+                  fill={color}
+                  opacity={isHighlighted ? 0.9 : group?.hasConflict ? 0.8 : hasNets ? 0.5 : 0.4}
+                  rx={1}
+                />
+              </g>
             );
           })}
 

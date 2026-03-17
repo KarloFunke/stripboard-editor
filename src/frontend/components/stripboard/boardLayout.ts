@@ -9,7 +9,7 @@ export const LABEL_FONT_SIZE = 11;
 
 // Copper strip color
 export const STRIP_COLOR = "#D4A853";
-export const STRIP_CONFLICT_COLOR = "#ef4444";
+export const STRIP_CONFLICT_COLOR = "#dc2626";
 
 /** Convert grid coordinates to SVG pixel coordinates */
 export function holeCenter(row: number, col: number): { x: number; y: number } {

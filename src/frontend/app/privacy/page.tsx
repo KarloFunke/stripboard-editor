@@ -1,3 +1,11 @@
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Privacy Policy",
+  description: "Privacy policy for the Stripboard Editor — what data is collected and how it is used.",
+  alternates: { canonical: "https://stripboard-editor.com/privacy" },
+};
+
 export default function PrivacyPage() {
   return (
     <div className="min-h-screen bg-[#fafafa]">

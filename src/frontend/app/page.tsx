@@ -97,6 +97,31 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-[#fafafa] flex flex-col">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify({
+            "@context": "https://schema.org",
+            "@type": "WebApplication",
+            name: "Stripboard Editor",
+            url: "https://stripboard-editor.com",
+            description:
+              "Free online stripboard layout editor with live strip colouring. Copper strips light up in your net colours so you can instantly see what's connected.",
+            applicationCategory: "DesignApplication",
+            operatingSystem: "Any",
+            offers: {
+              "@type": "Offer",
+              price: "0",
+              priceCurrency: "EUR",
+            },
+            author: {
+              "@type": "Person",
+              name: "Karl Funke",
+              url: "https://karl-funke.com",
+            },
+          }),
+        }}
+      />
       {/* Header */}
       <div className="h-12 bg-[#113768] text-white flex items-center px-6 justify-between">
         <span className="font-semibold text-lg tracking-wide">Stripboard Editor</span>
@@ -137,7 +162,7 @@ export default function HomePage() {
             Design Stripboard Layouts
           </h1>
           <p className="text-neutral-600 text-lg">
-            Create schematics, define nets, and layout components on a virtual stripboard. This Website is made to help quickly desing simple Stripboards. Designed for PC only, not mobile.
+            Create schematics, define nets, and layout components on a virtual stripboard. Copper strips light up in your net colours so you can instantly see what's connected. No more tracing strips by hand.
           </p>
         </div>
 
@@ -197,7 +222,7 @@ export default function HomePage() {
             <div className="bg-white border border-neutral-200 rounded-lg p-4 text-center">
               <div className="text-2xl mb-2 text-[#113768] font-bold">3</div>
               <p className="text-sm font-medium text-neutral-800">Layout on Board</p>
-              <p className="text-xs text-neutral-500 mt-1">Place components, wires and cuts. Get real-time conflict and completeness feedback.</p>
+              <p className="text-xs text-neutral-500 mt-1">Place components, wires and cuts. Strips colour-code to your nets in real time — conflicts turn red instantly.</p>
             </div>
           </div>
         </div>
@@ -216,7 +241,7 @@ export default function HomePage() {
             </div>
             <div className="flex items-start gap-2">
               <span className="text-[#113768] mt-0.5">-</span>
-              <span>Automatic conflict and net completeness checking</span>
+              <span>Live strip colouring — see net connectivity at a glance</span>
             </div>
             <div className="flex items-start gap-2">
               <span className="text-[#113768] mt-0.5">-</span>

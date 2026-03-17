@@ -1,3 +1,12 @@
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Tutorial",
+  description:
+    "Step-by-step guide to building a stripboard layout — from adding components to resolving conflicts.",
+  alternates: { canonical: "https://stripboard-editor.com/tutorial" },
+};
+
 export default function TutorialPage() {
   const steps = [
     {

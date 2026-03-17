@@ -13,9 +13,54 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const siteUrl = "https://stripboard-editor.com";
+
 export const metadata: Metadata = {
-  title: "Stripboard Editor",
-  description: "Design and layout stripboard circuits",
+  metadataBase: new URL(siteUrl),
+  title: {
+    default: "Stripboard Editor — Design Stripboard Layouts Online",
+    template: "%s | Stripboard Editor",
+  },
+  description:
+    "Free online stripboard layout editor. Copper strips colour-code to your nets in real time so you can instantly see what's connected. Design, place, and verify — no more tracing strips by hand.",
+  keywords: [
+    "stripboard",
+    "veroboard",
+    "circuit layout",
+    "stripboard editor",
+    "electronics",
+    "PCB layout",
+    "through-hole",
+    "prototype",
+    "schematic editor",
+  ],
+  openGraph: {
+    type: "website",
+    locale: "en_US",
+    url: siteUrl,
+    siteName: "Stripboard Editor",
+    title: "Stripboard Editor — Design Stripboard Layouts Online",
+    description:
+      "Free online stripboard editor with live strip colouring. See net connectivity at a glance — strips light up in your net colours.",
+    images: [
+      {
+        url: "/stripboard-editor-example.png",
+        width: 1920,
+        height: 1014,
+        alt: "Stripboard Editor — layout view",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Stripboard Editor — Design Stripboard Layouts Online",
+    description:
+      "Free online stripboard editor with live strip colouring. See net connectivity at a glance.",
+    images: ["/stripboard-editor-example.png"],
+  },
+  alternates: {
+    canonical: siteUrl,
+  },
 };
 
 export default function RootLayout({

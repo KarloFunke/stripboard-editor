@@ -27,6 +27,7 @@ export default function ComponentTray() {
   );
 
   const setTrayDragComponentId = useProjectStore((s) => s.setTrayDragComponentId);
+  const setHighlightedNetId = useProjectStore((s) => s.setHighlightedNetId);
 
   const handleDragStart = (e: React.DragEvent, componentId: string) => {
     e.dataTransfer.setData("text/plain", componentId);
@@ -111,7 +112,9 @@ export default function ComponentTray() {
             {incompleteNets.map((net) => (
               <div
                 key={net.netId}
-                className="px-2.5 py-2 mb-1.5 rounded text-sm bg-red-50 border border-red-100"
+                className="px-2.5 py-2 mb-1.5 rounded text-sm bg-red-50 border border-red-100 cursor-pointer hover:bg-red-100 transition-colors"
+                onMouseEnter={() => setHighlightedNetId(net.netId)}
+                onMouseLeave={() => setHighlightedNetId(null)}
               >
                 <div className="flex items-center gap-2 mb-1">
                   <span

@@ -105,6 +105,7 @@ interface ProjectActions {
   setShowNetLines: (show: boolean) => void;
   setActiveTag: (tag: string | null) => void;
   setTrayDragComponentId: (id: string | null) => void;
+  setHighlightedNetId: (id: string | null) => void;
   addCustomTag: (tag: string) => void;
   removeCustomTag: (tag: string) => void;
 
@@ -130,6 +131,7 @@ interface UIState {
   wirePlacementFrom: BoardPosition | null;
   showNetLines: boolean;
   trayDragComponentId: string | null;
+  highlightedNetId: string | null;
 }
 
 interface HistoryState {
@@ -219,6 +221,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   wirePlacementFrom: null,
   showNetLines: true,
   trayDragComponentId: null,
+  highlightedNetId: null,
   _history: [],
   _redoStack: [],
   canUndo: false,
@@ -625,6 +628,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   setShowNetLines: (show) => set({ showNetLines: show }),
   setActiveTag: (tag) => set({ activeTag: tag }),
   setTrayDragComponentId: (id) => set({ trayDragComponentId: id }),
+  setHighlightedNetId: (id) => set({ highlightedNetId: id }),
 
   addCustomTag: (tag) =>
     set((s) => {
