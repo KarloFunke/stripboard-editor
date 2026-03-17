@@ -59,6 +59,10 @@ export default function SchematicCanvas() {
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Ignore shortcuts when typing in an input or textarea
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+
       if (e.key === "Escape" && selectedIds.length > 0) {
         setSelectedIds([]);
         return;
@@ -88,7 +92,7 @@ export default function SchematicCanvas() {
       }
 
       // Delete selected component
-      if (selectedId && (e.key === "Delete" || e.key === "Backspace")) {
+      if (selectedId && e.key === "Delete") {
         removeComponent(selectedId);
         setSelectedId(null);
       }

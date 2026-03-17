@@ -114,6 +114,10 @@ export default function StripboardCanvas() {
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Ignore shortcuts when typing in an input or textarea
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+
       if (e.key === "Escape") {
         if (wirePlacementFrom) {
           cancelWirePlacement();
@@ -140,7 +144,6 @@ export default function StripboardCanvas() {
           ArrowRight: { row: 0, col: 1 },
         }[e.key]!;
         moveComponentsOnBoard(moveIds, delta.row, delta.col, selectedWireIds, selectedCuts);
-        // Update tracked cut positions after move
         if (selectedCuts.length > 0) {
           setSelectedCuts((prev) =>
             prev.map((c) => ({ row: c.row + delta.row, col: c.col + delta.col }))
@@ -152,7 +155,7 @@ export default function StripboardCanvas() {
       if (selectedId) {
         if (e.key === "r" || e.key === "R") {
           rotateComponent(selectedId);
-        } else if (e.key === "Delete" || e.key === "Backspace") {
+        } else if (e.key === "Delete") {
           removeFromBoard(selectedId);
           setSelectedId(null);
         }
