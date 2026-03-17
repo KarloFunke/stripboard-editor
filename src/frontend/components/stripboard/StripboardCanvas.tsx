@@ -30,7 +30,7 @@ import PlacedComponent from "./PlacedComponent";
 import CutMark from "./CutMark";
 import WireLine from "./WireLine";
 
-export default function StripboardCanvas() {
+export default function StripboardCanvas({ readOnly = false }: { readOnly?: boolean }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const panZoom = usePanZoom();
@@ -114,7 +114,7 @@ export default function StripboardCanvas() {
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      // Ignore shortcuts when typing in an input or textarea
+      if (readOnly) return;
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
 
@@ -244,6 +244,7 @@ export default function StripboardCanvas() {
 
   const handleDragOver = useCallback(
     (e: React.DragEvent) => {
+      if (readOnly) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
       const pt = getSVGPoint(e);
@@ -259,6 +260,7 @@ export default function StripboardCanvas() {
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
+      if (readOnly) return;
       e.preventDefault();
       const componentId = e.dataTransfer.getData("text/plain");
       if (!componentId) return;
@@ -280,6 +282,7 @@ export default function StripboardCanvas() {
 
   const handleComponentMouseDown = useCallback(
     (componentId: string, e: React.MouseEvent) => {
+      if (readOnly) return;
       if (e.button === 2) return; // right-click is pan
       if (wirePlacementMode || wirePlacementFrom) return;
       e.stopPropagation();
@@ -299,6 +302,7 @@ export default function StripboardCanvas() {
   // Start selection rectangle on mouseDown on empty SVG area
   const handleSvgMouseDown = useCallback(
     (e: React.MouseEvent) => {
+      if (readOnly) return;
       if (e.button === 2) return; // right-click is pan
       if (wirePlacementFrom || wirePlacementMode) return;
       // Only start selection rect if clicking directly on SVG background elements
@@ -410,7 +414,7 @@ export default function StripboardCanvas() {
 
   const handleCanvasClick = useCallback(
     (e: React.MouseEvent) => {
-      // Suppress click after drag release
+      if (readOnly) return;
       if (shouldSuppressClick()) return;
 
       const pt = getSVGPoint(e);
@@ -664,7 +668,7 @@ export default function StripboardCanvas() {
                   wire={wire}
                   color={color}
                   isConflict={isConflict}
-                  onClick={() => { if (!wirePlacementFrom) removeWire(wire.id); }}
+                  onClick={() => { if (!readOnly && !wirePlacementFrom) removeWire(wire.id); }}
                 />
               </g>
             );

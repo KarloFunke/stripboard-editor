@@ -13,7 +13,7 @@ const PRESET_TAGS = [
   "IC", "LED", "Regulator", "Relay", "Resistor",
 ];
 
-export default function SchematicEditor() {
+export default function SchematicEditor({ readOnly = false }: { readOnly?: boolean }) {
   const editingFootprintComponentId = useProjectStore((s) => s.editingFootprintComponentId);
   const showNetLines = useProjectStore((s) => s.showNetLines);
   const activeTag = useProjectStore((s) => s.activeTag);
@@ -44,21 +44,23 @@ export default function SchematicEditor() {
       {/* Header */}
       <div className="border-b border-neutral-300 bg-white px-5 h-12 font-semibold text-sm text-[#113768] flex items-center justify-between">
         <span>Schematic / Net Editor</span>
-        <div className="flex items-center gap-3 text-sm font-normal">
-          <label className="flex items-center gap-1.5 text-neutral-600 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={showNetLines}
-              onChange={(e) => setShowNetLines(e.target.checked)}
-              className="rounded"
-            />
-            Lines
-          </label>
-        </div>
+        {!readOnly && (
+          <div className="flex items-center gap-3 text-sm font-normal">
+            <label className="flex items-center gap-1.5 text-neutral-600 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={showNetLines}
+                onChange={(e) => setShowNetLines(e.target.checked)}
+                className="rounded"
+              />
+              Lines
+            </label>
+          </div>
+        )}
       </div>
 
       {/* Tag selector bar */}
-      <div className="border-b border-neutral-200 bg-white/70 px-5 py-1.5 flex items-center gap-1.5 flex-wrap">
+      {!readOnly && <div className="border-b border-neutral-200 bg-white/70 px-5 py-1.5 flex items-center gap-1.5 flex-wrap">
         <span className="text-xs text-neutral-400 uppercase tracking-wide mr-1">Tags</span>
         {allTags.map((tag) => {
           const isCustom = customTags.includes(tag);
@@ -113,20 +115,22 @@ export default function SchematicEditor() {
             Clear
           </button>
         )}
-      </div>
+      </div>}
 
       <div className="flex flex-1 min-h-0">
-        <ResizableSidebar defaultWidth={220} minWidth={160} maxWidth={400}>
-          <div className="flex flex-col h-full overflow-hidden border-r border-neutral-200">
-            <ComponentLibrary />
-            <NetPanel />
-          </div>
-        </ResizableSidebar>
+        {!readOnly && (
+          <ResizableSidebar defaultWidth={220} minWidth={160} maxWidth={400}>
+            <div className="flex flex-col h-full overflow-hidden border-r border-neutral-200">
+              <ComponentLibrary />
+              <NetPanel />
+            </div>
+          </ResizableSidebar>
+        )}
         <div className="flex-1 min-w-0">
-          <SchematicCanvas />
+          <SchematicCanvas readOnly={readOnly} />
         </div>
       </div>
-      {editingFootprintComponentId && <FootprintEditor />}
+      {!readOnly && editingFootprintComponentId && <FootprintEditor />}
     </div>
   );
 }

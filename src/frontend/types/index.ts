@@ -101,7 +101,6 @@ export interface Board {
 // ── Project (top-level, serializable to JSON) ──────────
 
 export interface Project {
-  id: string;
   name: string;
   componentDefs: ComponentDef[];
   components: Component[];

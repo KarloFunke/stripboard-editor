@@ -15,7 +15,7 @@ const POPUP_HEIGHT_ESTIMATE = 250;
 const POPUP_GAP = 8;
 const MOVE_STEP = 20; // pixels per arrow key press
 
-export default function SchematicCanvas() {
+export default function SchematicCanvas({ readOnly = false }: { readOnly?: boolean }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const panZoom = usePanZoom();
@@ -59,7 +59,7 @@ export default function SchematicCanvas() {
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      // Ignore shortcuts when typing in an input or textarea
+      if (readOnly) return;
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
 
@@ -109,6 +109,7 @@ export default function SchematicCanvas() {
 
   const handleMouseDown = useCallback(
     (componentId: string, e: React.MouseEvent) => {
+      if (readOnly) return;
       if (e.button === 2) return; // right-click is pan
       if ((e.target as Element).closest("[data-pin]")) return;
       e.preventDefault();
@@ -132,6 +133,7 @@ export default function SchematicCanvas() {
 
   const handleSvgMouseDown = useCallback(
     (e: React.MouseEvent) => {
+      if (readOnly) return;
       if (e.button === 2) return; // right-click is pan
       const target = e.target as Element;
       const isBackground = target.tagName === "svg" ||
@@ -214,6 +216,7 @@ export default function SchematicCanvas() {
   }, []);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
+    if (readOnly) return;
     const defId = e.dataTransfer.getData("application/schematic-component");
     if (!defId || !svgRef.current) return;
     e.preventDefault();
@@ -351,7 +354,7 @@ export default function SchematicCanvas() {
       )}
 
       {/* Popup rendered last = always on top */}
-      {selectedComponent && (
+      {!readOnly && selectedComponent && (
         <foreignObject
           x={getPopupPos().x}
           y={getPopupPos().y}

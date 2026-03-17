@@ -165,7 +165,6 @@ function nextNetName(nets: Net[]): string {
 }
 
 const initialProject: Project = {
-  id: generateId(),
   name: "Untitled Project",
   componentDefs: [...DEFAULT_COMPONENTS],
   components: [],
@@ -188,7 +187,6 @@ const MAX_HISTORY = 80;
 
 function snapshotProject(s: Project): Project {
   return JSON.parse(JSON.stringify({
-    id: s.id,
     name: s.name,
     componentDefs: s.componentDefs,
     components: s.components,
@@ -201,7 +199,6 @@ function snapshotProject(s: Project): Project {
 
 function restoreProject(snapshot: Project): Partial<ProjectStore> {
   return {
-    id: snapshot.id,
     name: snapshot.name,
     componentDefs: snapshot.componentDefs,
     components: snapshot.components,
@@ -650,7 +647,6 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const defaultIds = new Set(DEFAULT_COMPONENTS.map((d) => d.id));
     const customDefs = s.componentDefs.filter((d) => !defaultIds.has(d.id));
     return {
-      id: s.id,
       name: s.name,
       componentDefs: customDefs,
       components: s.components,
@@ -669,7 +665,6 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const mergedDefs = [...DEFAULT_COMPONENTS, ...customDefs];
 
     set({
-      id: data.id ?? generateId(),
       name: data.name ?? "Untitled Project",
       componentDefs: mergedDefs,
       components: data.components ?? [],
@@ -692,7 +687,6 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   resetProject: () => set({
-    id: generateId(),
     name: "Untitled Project",
     componentDefs: [...DEFAULT_COMPONENTS],
     components: [],

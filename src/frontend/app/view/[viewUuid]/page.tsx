@@ -86,12 +86,12 @@ export default function ProjectViewPage() {
           </a>
         </div>
       </div>
-      <div className="flex flex-1 min-h-0 pointer-events-none">
+      <div className="flex flex-1 min-h-0">
         <div className="w-1/2 border-r-2 border-[#113768]/20">
-          <SchematicEditor />
+          <SchematicEditor readOnly />
         </div>
         <div className="w-1/2">
-          <StripboardEditor />
+          <StripboardEditor readOnly />
         </div>
       </div>
     </div>
