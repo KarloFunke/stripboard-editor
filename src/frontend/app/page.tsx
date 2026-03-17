@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  createProject,
   getUserProjects,
   deleteProject,
   deleteAccount,
@@ -21,7 +20,6 @@ import { track } from "@/lib/track";
 
 export default function HomePage() {
   const router = useRouter();
-  const exportProject = useProjectStore((s) => s.exportProject);
   const resetProject = useProjectStore((s) => s.resetProject);
 
   const [user, setUser] = useState<User | null>(null);
@@ -32,7 +30,6 @@ export default function HomePage() {
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
-  const [creating, setCreating] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [showAccountDelete, setShowAccountDelete] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
@@ -51,18 +48,10 @@ export default function HomePage() {
       .finally(() => setLoading(false));
   }, []);
 
-  const handleNewProject = async () => {
-    setCreating(true);
-    try {
-      resetProject();
-      const data = exportProject();
-      const project = await createProject("Untitled Project", data as unknown as Record<string, unknown>);
-      track("project-create");
-      router.push(`/project/${project.edit_uuid}`);
-    } catch {
-      alert("Failed to create project.");
-      setCreating(false);
-    }
+  const handleNewProject = () => {
+    resetProject();
+    track("project-create");
+    router.push("/project/new");
   };
 
   const handleDelete = async () => {
@@ -156,10 +145,9 @@ export default function HomePage() {
         <div className="flex gap-3 mb-10">
           <button
             onClick={handleNewProject}
-            disabled={creating}
-            className="flex-1 bg-[#113768] text-white py-3 rounded-lg text-sm font-medium hover:bg-[#0d2a50] transition-colors disabled:opacity-50"
+            className="flex-1 bg-[#113768] text-white py-3 rounded-lg text-sm font-medium hover:bg-[#0d2a50] transition-colors"
           >
-          {creating ? "Creating..." : "+ New Project"}
+            + New Project
           </button>
           <a
             href="/tutorial"
