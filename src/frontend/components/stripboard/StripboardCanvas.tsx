@@ -245,7 +245,7 @@ export default function StripboardCanvas() {
       const pt = getSVGPoint(e);
       const hole = nearestHole(pt.x, pt.y, board.rows, board.cols);
       if (hole) {
-        setTrayGhost({ ...hole, componentId: trayDragComponentId });
+        setTrayGhost({ ...hole, componentId: trayDragComponentId ?? "" });
       } else {
         setTrayGhost(null);
       }

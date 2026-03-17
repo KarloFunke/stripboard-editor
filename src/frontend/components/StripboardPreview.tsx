@@ -23,16 +23,16 @@ interface Props {
 
 export default function StripboardPreview({ data, maxWidth = 280, maxHeight = 160 }: Props) {
   const preview = useMemo(() => {
-    const components = (data.components ?? []) as Component[];
-    const savedDefs = (data.componentDefs ?? []) as ComponentDef[];
+    const components = (data.components ?? []) as unknown as Component[];
+    const savedDefs = (data.componentDefs ?? []) as unknown as ComponentDef[];
     const defaultIds = new Set(DEFAULT_COMPONENTS.map((d) => d.id));
     const customDefs = savedDefs.filter((d) => !defaultIds.has(d.id));
     const componentDefs = [...DEFAULT_COMPONENTS, ...customDefs];
-    const nets = (data.nets ?? []) as Net[];
-    const netAssignments = (data.netAssignments ?? []) as NetAssignment[];
-    const board = data.board as { rows?: number; cols?: number; wires?: Wire[]; cuts?: Cut[] };
-    const wires = (board.wires ?? []) as Wire[];
-    const cuts = (board.cuts ?? []) as Cut[];
+    const nets = (data.nets ?? []) as unknown as Net[];
+    const netAssignments = (data.netAssignments ?? []) as unknown as NetAssignment[];
+    const board = data.board as unknown as { rows?: number; cols?: number; wires?: Wire[]; cuts?: Cut[] };
+    const wires = (board.wires ?? []) as unknown as Wire[];
+    const cuts = (board.cuts ?? []) as unknown as Cut[];
 
     const placed = components.filter((c) => c.boardPos !== null);
     if (placed.length === 0) return null;
