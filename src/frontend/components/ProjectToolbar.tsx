@@ -4,6 +4,7 @@ import { useRef, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useProjectStore } from "@/store/useProjectStore";
 import { getProject, getMe, login, register, logout, claimProject, type User } from "@/lib/api";
+import { track } from "@/lib/track";
 
 interface Props {
   editUuid?: string;
@@ -90,6 +91,7 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
       const u = showAuth === "register"
         ? await register(username, password)
         : await login(username, password);
+      track(showAuth === "register" ? "account-register" : "account-login");
       setUser(u);
       setShowAuth(null);
       setUsername("");
@@ -138,6 +140,7 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
   };
 
   const handleExport = () => {
+    track("project-export");
     const data = exportProject();
     const json = JSON.stringify(data, null, 2);
     const blob = new Blob([json], { type: "application/json" });
@@ -157,6 +160,7 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
       try {
         const data = JSON.parse(ev.target?.result as string);
         loadProject(data);
+        track("project-import");
       } catch {
         alert("Invalid project file.");
       }
@@ -168,6 +172,7 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
   const handleSave = () => {
     if (onSave) {
       onSave();
+      track("project-save");
       setSaveFlash(true);
       setTimeout(() => setSaveFlash(false), 1500);
       if (!user && !hasShownSaveNotice.current) {
@@ -179,6 +184,7 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
 
   const copyToClipboard = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
+    track("share-link-copy", { type: label });
     setCopied(label);
     setTimeout(() => setCopied(null), 2000);
   };

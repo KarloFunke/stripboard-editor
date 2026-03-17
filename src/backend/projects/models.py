@@ -7,7 +7,7 @@ class Project(models.Model):
     edit_uuid = models.UUIDField(default=uuid.uuid4, unique=True, db_index=True)
     view_uuid = models.UUIDField(default=uuid.uuid4, unique=True, db_index=True)
     owner = models.ForeignKey(
-        User, null=True, blank=True, on_delete=models.SET_NULL, related_name="projects"
+        User, null=True, blank=True, on_delete=models.CASCADE, related_name="projects"
     )
     fork_of = models.ForeignKey(
         "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="forks"

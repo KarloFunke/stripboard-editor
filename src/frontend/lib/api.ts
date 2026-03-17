@@ -199,6 +199,25 @@ export async function logout(): Promise<void> {
   csrfToken = null;
 }
 
+export async function deleteAccount(): Promise<void> {
+  const res = await apiFetch("/auth/delete-account/", { method: "DELETE" });
+  if (!res.ok) throw new Error("Failed to delete account");
+  csrfToken = null;
+}
+
+export async function changePassword(newPassword: string): Promise<void> {
+  const newHash = await hashPassword(newPassword);
+  const res = await apiFetch("/auth/change-password/", {
+    method: "POST",
+    body: JSON.stringify({ new_password: newHash }),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error ?? "Failed to change password");
+  }
+  csrfToken = null;
+}
+
 export async function getMe(): Promise<User | null> {
   const res = await apiFetch("/auth/me/");
   if (!res.ok) return null;

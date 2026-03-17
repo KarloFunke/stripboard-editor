@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useProjectStore } from "@/store/useProjectStore";
 import { getProjectView, forkProject } from "@/lib/api";
+import { track } from "@/lib/track";
 import { Project } from "@/types";
 import SchematicEditor from "@/components/SchematicEditor";
 import StripboardEditor from "@/components/StripboardEditor";
@@ -36,6 +37,7 @@ export default function ProjectViewPage() {
   const handleFork = async () => {
     try {
       const forked = await forkProject(viewUuid);
+      track("project-fork");
       router.push(`/project/${forked.edit_uuid}`);
     } catch {
       alert("Failed to fork project.");

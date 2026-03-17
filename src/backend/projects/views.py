@@ -178,6 +178,31 @@ def auth_logout(request):
     return Response({"ok": True})
 
 
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated])
+@throttle_classes([AuthThrottle])
+def auth_delete_account(request):
+    user = request.user
+    logout(request)
+    user.delete()  # Projects kept via SET_NULL on FK
+    return Response({"ok": True}, status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@throttle_classes([AuthThrottle])
+def auth_change_password(request):
+    new_password = request.data.get("new_password", "")
+
+    if len(new_password) != 64 or not all(c in "0123456789abcdef" for c in new_password):
+        return Response({"error": "Invalid credentials"}, status=status.HTTP_400_BAD_REQUEST)
+
+    request.user.set_password(new_password)
+    request.user.save()
+    login(request, request.user)
+    return Response({"ok": True})
+
+
 @api_view(["GET"])
 def auth_me(request):
     if not request.user.is_authenticated:

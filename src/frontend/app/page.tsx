@@ -6,6 +6,8 @@ import {
   createProject,
   getUserProjects,
   deleteProject,
+  deleteAccount,
+  changePassword,
   getMe,
   login,
   register,
@@ -15,6 +17,7 @@ import {
 } from "@/lib/api";
 import { useProjectStore } from "@/store/useProjectStore";
 import StripboardPreview from "@/components/StripboardPreview";
+import { track } from "@/lib/track";
 
 export default function HomePage() {
   const router = useRouter();
@@ -31,6 +34,11 @@ export default function HomePage() {
   const [authLoading, setAuthLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [showAccountDelete, setShowAccountDelete] = useState(false);
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [newPw, setNewPw] = useState("");
+  const [pwError, setPwError] = useState<string | null>(null);
+  const [pwSuccess, setPwSuccess] = useState(false);
 
   useEffect(() => {
     getMe()
@@ -49,6 +57,7 @@ export default function HomePage() {
       resetProject();
       const data = exportProject();
       const project = await createProject("Untitled Project", data as unknown as Record<string, unknown>);
+      track("project-create");
       router.push(`/project/${project.edit_uuid}`);
     } catch {
       alert("Failed to create project.");
@@ -71,6 +80,7 @@ export default function HomePage() {
       const u = showAuth === "register"
         ? await register(username, password)
         : await login(username, password);
+      track(showAuth === "register" ? "account-register" : "account-login");
       setUser(u);
       setShowAuth(null);
       setUsername("");
@@ -97,7 +107,7 @@ export default function HomePage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#fafafa]">
+    <div className="min-h-screen bg-[#fafafa] flex flex-col">
       {/* Header */}
       <div className="h-12 bg-[#113768] text-white flex items-center px-6 justify-between">
         <span className="font-semibold text-lg tracking-wide">Stripboard Editor</span>
@@ -131,7 +141,7 @@ export default function HomePage() {
         </div>
       </div>
 
-      <div className="max-w-3xl mx-auto px-6 py-12">
+      <div className="max-w-3xl mx-auto px-6 py-12 flex-1">
         {/* Hero */}
         <div className="mb-10">
           <h1 className="text-3xl font-bold text-[#113768] mb-2">
@@ -275,6 +285,30 @@ export default function HomePage() {
           </div>
         )}
 
+        {/* Account settings */}
+        {user && (
+          <div className="mb-8">
+            <h2 className="text-lg font-semibold text-neutral-800 mb-3">Account</h2>
+            <div className="bg-white border border-neutral-200 rounded-lg px-4 py-3 flex items-center justify-between">
+              <span className="text-sm text-neutral-600">Logged in as <span className="font-medium text-neutral-900">{user.username}</span></span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => { setShowChangePassword(true); setPwError(null); setPwSuccess(false); setNewPw(""); }}
+                  className="text-sm text-[#113768] hover:underline"
+                >
+                  Change Password
+                </button>
+                <button
+                  onClick={() => setShowAccountDelete(true)}
+                  className="text-sm text-red-500 hover:underline"
+                >
+                  Delete Account
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* User projects */}
         {user && (
           <div>
@@ -316,7 +350,102 @@ export default function HomePage() {
             )}
           </div>
         )}
+
       </div>
+
+      {/* Change password modal */}
+      {showChangePassword && (
+        <div
+          className="fixed inset-0 bg-black/30 flex items-center justify-center z-50"
+          onClick={() => setShowChangePassword(false)}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl p-6 w-80"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-semibold text-neutral-900 mb-4">Change Password</h2>
+            {pwSuccess ? (
+              <div>
+                <p className="text-sm text-green-600 mb-4">Password changed successfully.</p>
+                <button
+                  onClick={() => setShowChangePassword(false)}
+                  className="w-full bg-[#113768] text-white py-2 rounded text-sm font-medium hover:bg-[#0d2a50] transition-colors"
+                >
+                  Done
+                </button>
+              </div>
+            ) : (
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  setPwError(null);
+                  try {
+                    await changePassword(newPw);
+                    setPwSuccess(true);
+                  } catch (err: unknown) {
+                    setPwError(err instanceof Error ? err.message : "Failed to change password");
+                  }
+                }}
+                className="flex flex-col gap-3"
+              >
+                <input
+                  type="password"
+                  value={newPw}
+                  onChange={(e) => setNewPw(e.target.value)}
+                  placeholder="New password"
+                  className="border border-neutral-300 rounded px-3 py-2 text-sm text-neutral-900 outline-none focus:border-[#113768]"
+                  autoFocus
+                />
+                {pwError && <p className="text-xs text-red-500">{pwError}</p>}
+                <button
+                  type="submit"
+                  disabled={!newPw}
+                  className="bg-[#113768] text-white py-2 rounded text-sm font-medium hover:bg-[#0d2a50] transition-colors disabled:opacity-60"
+                >
+                  Change Password
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Delete account modal */}
+      {showAccountDelete && (
+        <div
+          className="fixed inset-0 bg-black/30 flex items-center justify-center z-50"
+          onClick={() => setShowAccountDelete(false)}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl p-6 w-96"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-semibold text-neutral-900 mb-2">Delete Account</h2>
+            <p className="text-sm text-neutral-600 mb-5">
+              Are you sure? This will permanently delete your account and all your projects. This cannot be undone.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setShowAccountDelete(false)}
+                className="px-4 py-2 text-sm rounded border border-neutral-300 text-neutral-700 hover:bg-neutral-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  await deleteAccount();
+                  setUser(null);
+                  setProjects([]);
+                  setShowAccountDelete(false);
+                }}
+                className="px-4 py-2 text-sm rounded bg-red-500 text-white font-medium hover:bg-red-600 transition-colors"
+              >
+                Delete Account
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Delete confirmation modal */}
       {deleteConfirm && (
@@ -353,6 +482,7 @@ export default function HomePage() {
           </div>
         </div>
       )}
+
 
       {/* Auth modal */}
       {showAuth && (
@@ -405,6 +535,19 @@ export default function HomePage() {
           </div>
         </div>
       )}
+
+      {/* Footer */}
+      <div className="border-t border-neutral-200 mt-auto">
+        <div className="max-w-3xl mx-auto px-6 py-5 flex items-center justify-between text-xs text-neutral-400">
+          <span>
+            {"© " + new Date().getFullYear() + " "}
+            <a href="https://karl-funke.com?utm_source=stripboard-editor" className="text-neutral-500 hover:text-[#113768] transition-colors">Karl Funke</a>
+            {" · "}
+            <a href="https://indocu.de?utm_source=stripboard-editor" className="text-neutral-500 hover:text-[#113768] transition-colors">indocu.de</a>
+          </span>
+          <a href="/privacy" className="text-neutral-500 hover:text-[#113768] transition-colors">Privacy Policy</a>
+        </div>
+      </div>
     </div>
   );
 }
