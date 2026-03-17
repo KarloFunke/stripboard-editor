@@ -533,10 +533,13 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   exportProject: (): Project => {
     const s = get();
+    // Only export user-created component defs (not defaults)
+    const defaultIds = new Set(DEFAULT_COMPONENTS.map((d) => d.id));
+    const customDefs = s.componentDefs.filter((d) => !defaultIds.has(d.id));
     return {
       id: s.id,
       name: s.name,
-      componentDefs: s.componentDefs,
+      componentDefs: customDefs,
       components: s.components,
       nets: s.nets,
       netAssignments: s.netAssignments,
@@ -545,11 +548,17 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     };
   },
 
-  loadProject: (data) =>
+  loadProject: (data) => {
+    // Merge defaults with any user-created defs from the saved data
+    const savedDefs = data.componentDefs ?? [];
+    const defaultIds = new Set(DEFAULT_COMPONENTS.map((d) => d.id));
+    const customDefs = savedDefs.filter((d) => !defaultIds.has(d.id));
+    const mergedDefs = [...DEFAULT_COMPONENTS, ...customDefs];
+
     set({
       id: data.id ?? generateId(),
       name: data.name ?? "Untitled Project",
-      componentDefs: data.componentDefs ?? [...DEFAULT_COMPONENTS],
+      componentDefs: mergedDefs,
       components: data.components ?? [],
       nets: data.nets ?? [],
       netAssignments: data.netAssignments ?? [],
@@ -566,5 +575,6 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       editingFootprintComponentId: null,
       wirePlacementMode: false,
       wirePlacementFrom: null,
-    }),
+    });
+  },
 }));

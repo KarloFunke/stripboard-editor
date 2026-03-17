@@ -33,7 +33,7 @@ import { trayDragComponentId } from "./trayDragState";
 export default function StripboardCanvas() {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const panZoom = usePanZoom(1.3);
+  const panZoom = usePanZoom();
   const [containerSize, setContainerSize] = useState({ width: 1000, height: 800 });
 
   useEffect(() => {
@@ -71,7 +71,10 @@ export default function StripboardCanvas() {
   );
 
   const allPlaced = components.length >= 2 && components.every((c) => c.boardPos !== null);
-  const allDone = allPlaced && conflictCount === 0 && incompleteNets.length === 0;
+  const allNetsUsed = allPlaced && components.every((c) =>
+    netAssignments.some((a) => a.componentId === c.id)
+  );
+  const allDone = allPlaced && allNetsUsed && conflictCount === 0 && incompleteNets.length === 0;
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -495,17 +498,17 @@ export default function StripboardCanvas() {
   return (
     <div className="flex flex-col h-full">
       {allDone && (
-        <div className="bg-green-50 border-b border-green-200 px-4 py-1 text-xs text-green-700">
+        <div className="bg-green-50 border-b border-green-200 px-5 py-1.5 text-sm text-green-700">
           All done — all components placed, no conflicts, all nets connected
         </div>
       )}
       {conflictCount > 0 && (
-        <div className="bg-red-50 border-b border-red-200 px-4 py-1 text-xs text-red-700">
+        <div className="bg-red-50 border-b border-red-200 px-5 py-1.5 text-sm text-red-700">
           {conflictCount} connectivity conflict{conflictCount > 1 ? "s" : ""} — place cuts or rearrange components
         </div>
       )}
       {(selectedIds.length > 0 || selectedWireIds.length > 0 || selectedCuts.length > 0) && (
-        <div className="bg-[#113768]/5 border-b border-[#113768]/20 px-4 py-1 text-xs text-[#113768]">
+        <div className="bg-[#113768]/5 border-b border-[#113768]/20 px-5 py-1.5 text-sm text-[#113768]">
           {[
             selectedIds.length > 0 && `${selectedIds.length} component${selectedIds.length > 1 ? "s" : ""}`,
             selectedWireIds.length > 0 && `${selectedWireIds.length} wire${selectedWireIds.length > 1 ? "s" : ""}`,

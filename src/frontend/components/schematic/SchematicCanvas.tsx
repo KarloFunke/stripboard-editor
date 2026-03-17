@@ -17,7 +17,7 @@ const MOVE_STEP = 20; // pixels per arrow key press
 export default function SchematicCanvas() {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const panZoom = usePanZoom(1.3);
+  const panZoom = usePanZoom();
   const components = useProjectStore((s) => s.components);
   const componentDefs = useProjectStore((s) => s.componentDefs);
   const nets = useProjectStore((s) => s.nets);
@@ -25,6 +25,7 @@ export default function SchematicCanvas() {
   const showNetLines = useProjectStore((s) => s.showNetLines);
   const updateSchematicPos = useProjectStore((s) => s.updateSchematicPos);
   const removeComponent = useProjectStore((s) => s.removeComponent);
+  const addComponent = useProjectStore((s) => s.addComponent);
 
   const netLines = useMemo(
     () => showNetLines ? computeNetLines(nets, netAssignments, components, componentDefs) : [],
@@ -216,6 +217,22 @@ export default function SchematicCanvas() {
     }
   }, []);
 
+  // Drag-and-drop from component library
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes("application/schematic-component")) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    }
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    const defId = e.dataTransfer.getData("application/schematic-component");
+    if (!defId || !svgRef.current) return;
+    e.preventDefault();
+    const pos = panZoom.screenToSvg(e.clientX, e.clientY, svgRef.current);
+    addComponent(defId, { x: pos.x, y: pos.y });
+  }, [addComponent, panZoom.screenToSvg]);
+
   // Render selected component last so it's on top
   const sortedComponents = selectedId
     ? [
@@ -292,6 +309,8 @@ export default function SchematicCanvas() {
       onWheel={panZoom.handleWheel}
       onContextMenu={panZoom.handleContextMenu}
       onClick={handleCanvasClick}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
     >
       {/* Grid dots */}
       <defs>

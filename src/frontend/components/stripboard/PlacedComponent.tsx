@@ -78,17 +78,17 @@ export default function PlacedComponent({ component, isSelected, onMouseDown }: 
           (a) => a.componentId === component.id && a.pinId === pin.pinId
         );
         const net = assignment ? nets.find((n) => n.id === assignment.netId) : null;
-        const color = net?.color ?? "#404040";
+        const hasNet = !!net;
 
         return (
           <g key={pin.pinId} pointerEvents="none">
             <circle
               cx={center.x}
               cy={center.y}
-              r={5}
-              fill={color}
-              stroke="white"
-              strokeWidth={1.5}
+              r={hasNet ? 5 : 4.5}
+              fill={hasNet ? net.color : "white"}
+              stroke={hasNet ? "white" : "#d4d4d4"}
+              strokeWidth={hasNet ? 1.5 : 0.5}
             />
             <text
               x={center.x}

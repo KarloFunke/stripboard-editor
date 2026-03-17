@@ -1,12 +1,14 @@
 "use client";
 
 import { useRef, useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { useProjectStore } from "@/store/useProjectStore";
+import { getProject } from "@/lib/api";
 
 interface Props {
   editUuid?: string;
   viewUuid?: string | null;
-  onSave?: () => void;
+  onSave?: () => void | Promise<void>;
   saving?: boolean;
   lastSaved?: Date | null;
 }
@@ -36,7 +38,7 @@ function FeedbackButton({
     <button
       onClick={handleClick}
       disabled={disabled || feedback}
-      className={`px-3 py-1 rounded transition-all text-xs ${
+      className={`px-3.5 py-1.5 rounded transition-all text-sm ${
         feedback
           ? "bg-green-500/80 text-white"
           : "bg-white/10 hover:bg-white/20 text-white"
@@ -48,6 +50,7 @@ function FeedbackButton({
 }
 
 export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, lastSaved }: Props) {
+  const router = useRouter();
   const name = useProjectStore((s) => s.name);
   const setProjectName = useProjectStore((s) => s.setProjectName);
   const exportProject = useProjectStore((s) => s.exportProject);
@@ -58,6 +61,8 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState(name);
   const [saveFlash, setSaveFlash] = useState(false);
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
+  const [checkingChanges, setCheckingChanges] = useState(false);
 
   // Sync nameValue when name changes externally
   useEffect(() => {
@@ -114,15 +119,42 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
     setTimeout(() => setCopied(null), 2000);
   };
 
+  const handleExit = async () => {
+    if (!editUuid) {
+      router.push("/");
+      return;
+    }
+    setCheckingChanges(true);
+    try {
+      const saved = await getProject(editUuid);
+      const current = exportProject();
+      const savedJson = JSON.stringify(saved.data);
+      const currentJson = JSON.stringify(current);
+      if (savedJson === currentJson && saved.name === current.name) {
+        router.push("/");
+      } else {
+        setShowExitConfirm(true);
+      }
+    } catch {
+      // Can't reach API — assume unsaved
+      setShowExitConfirm(true);
+    }
+    setCheckingChanges(false);
+  };
+
   const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
 
   return (
     <>
-      <div className="h-11 bg-[#113768] text-white flex items-center px-4 justify-between text-xs">
+      <div className="h-12 bg-[#113768] text-white flex items-center px-5 justify-between text-sm">
         <div className="flex items-center gap-3">
-          <a href="/" className="font-semibold tracking-wide hover:opacity-80 transition-opacity">
-            Stripboard Editor
-          </a>
+          <button
+            onClick={handleExit}
+            disabled={checkingChanges}
+            className="font-semibold tracking-wide hover:opacity-80 transition-opacity disabled:opacity-60"
+          >
+            {checkingChanges ? "Checking..." : "Stripboard Editor"}
+          </button>
           <span className="opacity-40">|</span>
           {editingName ? (
             <input
@@ -134,7 +166,7 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
                 if (e.key === "Enter") commitName();
                 if (e.key === "Escape") { setNameValue(name); setEditingName(false); }
               }}
-              className="bg-white/10 border border-white/30 rounded px-2 py-0 text-xs text-white outline-none w-48"
+              className="bg-white/10 border border-white/30 rounded px-2.5 py-0.5 text-sm text-white outline-none w-52"
             />
           ) : (
             <span
@@ -156,7 +188,7 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
             <button
               onClick={handleSave}
               disabled={saving || saveFlash}
-              className={`px-3 py-1 rounded transition-all text-xs ${
+              className={`px-3.5 py-1.5 rounded transition-all text-sm ${
                 saveFlash
                   ? "bg-green-500/80 text-white"
                   : saving
@@ -194,15 +226,15 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
 
       {/* Share panel */}
       {showShare && editUuid && viewUuid && (
-        <div className="bg-[#113768]/5 border-b border-[#113768]/20 px-4 py-3 flex items-center gap-4 text-xs">
+        <div className="bg-[#113768]/5 border-b border-[#113768]/20 px-5 py-3.5 flex items-center gap-4 text-sm">
           <div className="flex items-center gap-2 flex-1">
             <span className="text-neutral-600 font-medium">Edit link:</span>
-            <code className="bg-white border border-neutral-300 rounded px-2 py-0.5 text-neutral-800 flex-1 truncate">
+            <code className="bg-white border border-neutral-300 rounded px-2.5 py-1 text-neutral-800 flex-1 truncate">
               {baseUrl}/project/{editUuid}
             </code>
             <button
               onClick={() => copyToClipboard(`${baseUrl}/project/${editUuid}`, "edit")}
-              className={`px-3 py-1 rounded transition-all ${
+              className={`px-3.5 py-1.5 rounded transition-all ${
                 copied === "edit"
                   ? "bg-green-500 text-white"
                   : "bg-[#113768] text-white hover:bg-[#0d2a50]"
@@ -213,12 +245,12 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
           </div>
           <div className="flex items-center gap-2 flex-1">
             <span className="text-neutral-600 font-medium">View link:</span>
-            <code className="bg-white border border-neutral-300 rounded px-2 py-0.5 text-neutral-800 flex-1 truncate">
+            <code className="bg-white border border-neutral-300 rounded px-2.5 py-1 text-neutral-800 flex-1 truncate">
               {baseUrl}/view/{viewUuid}
             </code>
             <button
               onClick={() => copyToClipboard(`${baseUrl}/view/${viewUuid}`, "view")}
-              className={`px-3 py-1 rounded transition-all ${
+              className={`px-3.5 py-1.5 rounded transition-all ${
                 copied === "view"
                   ? "bg-green-500 text-white"
                   : "bg-[#113768] text-white hover:bg-[#0d2a50]"
@@ -229,10 +261,53 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
           </div>
           <button
             onClick={() => setShowShare(false)}
-            className="text-neutral-400 hover:text-neutral-600"
+            className="text-neutral-400 hover:text-neutral-600 text-lg"
           >
             ×
           </button>
+        </div>
+      )}
+
+      {/* Unsaved changes confirmation */}
+      {showExitConfirm && (
+        <div
+          className="fixed inset-0 bg-black/30 flex items-center justify-center z-50"
+          onClick={() => setShowExitConfirm(false)}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl p-6 w-96"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-semibold text-neutral-900 mb-2">Unsaved Changes</h2>
+            <p className="text-sm text-neutral-600 mb-5">
+              You have unsaved changes. Would you like to save before leaving?
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setShowExitConfirm(false)}
+                className="px-4 py-2 text-sm rounded border border-neutral-300 text-neutral-700 hover:bg-neutral-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => router.push("/")}
+                className="px-4 py-2 text-sm rounded bg-red-500 text-white font-medium hover:bg-red-600 transition-colors"
+              >
+                Discard & Leave
+              </button>
+              <button
+                onClick={async () => {
+                  if (onSave) {
+                    await onSave();
+                  }
+                  router.push("/");
+                }}
+                className="px-4 py-2 text-sm rounded bg-[#113768] text-white font-medium hover:bg-[#0d2a50] transition-colors"
+              >
+                Save & Leave
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </>

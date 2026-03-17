@@ -6,6 +6,7 @@ import ComponentLibrary from "./schematic/ComponentLibrary";
 import NetPanel from "./schematic/NetPanel";
 import SchematicCanvas from "./schematic/SchematicCanvas";
 import FootprintEditor from "./schematic/FootprintEditor";
+import ResizableSidebar from "./ResizableSidebar";
 
 const PRESET_TAGS = [
   "Capacitor", "Connector", "Crystal", "Diode",
@@ -41,11 +42,11 @@ export default function SchematicEditor() {
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
-      <div className="border-b border-neutral-300 bg-white px-4 h-10 font-semibold text-sm text-[#113768] flex items-center justify-between">
+      <div className="border-b border-neutral-300 bg-white px-5 h-12 font-semibold text-sm text-[#113768] flex items-center justify-between">
         <span>Schematic / Net Editor</span>
-        <div className="flex items-center gap-3 text-xs font-normal">
+        <div className="flex items-center gap-3 text-sm font-normal">
 {null}
-          <label className="flex items-center gap-1 text-neutral-600 cursor-pointer select-none">
+          <label className="flex items-center gap-1.5 text-neutral-600 cursor-pointer select-none">
             <input
               type="checkbox"
               checked={showNetLines}
@@ -58,15 +59,15 @@ export default function SchematicEditor() {
       </div>
 
       {/* Tag selector bar */}
-      <div className="border-b border-neutral-200 bg-white/70 px-4 py-1 flex items-center gap-1 flex-wrap">
-        <span className="text-[10px] text-neutral-400 uppercase tracking-wide mr-1">Tags</span>
+      <div className="border-b border-neutral-200 bg-white/70 px-5 py-1.5 flex items-center gap-1.5 flex-wrap">
+        <span className="text-xs text-neutral-400 uppercase tracking-wide mr-1">Tags</span>
         {allTags.map((tag) => {
           const isCustom = customTags.includes(tag);
           return (
             <span key={tag} className="relative group">
               <button
                 onClick={() => setActiveTag(activeTag === tag ? null : tag)}
-                className={`text-[11px] px-2 py-0.5 rounded transition-colors ${
+                className={`text-xs px-2.5 py-1 rounded transition-colors ${
                   activeTag === tag
                     ? "bg-green-100 text-green-700 border border-green-400"
                     : "bg-white text-neutral-600 border border-neutral-300 hover:border-neutral-400"
@@ -80,7 +81,7 @@ export default function SchematicEditor() {
                     e.stopPropagation();
                     removeCustomTag(tag);
                   }}
-                  className="absolute -top-1.5 -right-1.5 hidden group-hover:flex h-3.5 w-3.5 items-center justify-center rounded-full bg-red-400 text-white text-[8px] leading-none"
+                  className="absolute -top-1.5 -right-1.5 hidden group-hover:flex h-4 w-4 items-center justify-center rounded-full bg-red-400 text-white text-[9px] leading-none"
                   title="Remove custom tag"
                 >
                   ×
@@ -89,18 +90,18 @@ export default function SchematicEditor() {
             </span>
           );
         })}
-        <div className="flex items-center gap-0.5">
+        <div className="flex items-center gap-1">
           <input
             value={customTagInput}
             onChange={(e) => setCustomTagInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") handleAddCustomTag(); }}
             placeholder="Custom..."
-            className="border border-neutral-300 rounded px-2 py-0.5 text-[11px] text-neutral-900 outline-none focus:border-blue-400 w-20"
+            className="border border-neutral-300 rounded px-2.5 py-1 text-xs text-neutral-900 outline-none focus:border-blue-400 w-24"
           />
           <button
             onClick={handleAddCustomTag}
             disabled={!customTagInput.trim()}
-            className="text-[11px] px-1.5 py-0.5 bg-neutral-200 text-neutral-600 rounded hover:bg-neutral-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="text-xs px-2 py-1 bg-neutral-200 text-neutral-600 rounded hover:bg-neutral-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             +
           </button>
@@ -108,7 +109,7 @@ export default function SchematicEditor() {
         {activeTag && (
           <button
             onClick={() => setActiveTag(null)}
-            className="text-[11px] text-neutral-400 hover:text-neutral-600 px-1"
+            className="text-xs text-neutral-400 hover:text-neutral-600 px-1.5"
           >
             Clear
           </button>
@@ -116,10 +117,12 @@ export default function SchematicEditor() {
       </div>
 
       <div className="flex flex-1 min-h-0">
-        <div className="w-48 flex-shrink-0 border-r border-neutral-200 flex flex-col overflow-hidden">
-          <ComponentLibrary />
-          <NetPanel />
-        </div>
+        <ResizableSidebar defaultWidth={220} minWidth={160} maxWidth={400}>
+          <div className="flex flex-col h-full overflow-hidden border-r border-neutral-200">
+            <ComponentLibrary />
+            <NetPanel />
+          </div>
+        </ResizableSidebar>
         <div className="flex-1 min-w-0">
           <SchematicCanvas />
         </div>
