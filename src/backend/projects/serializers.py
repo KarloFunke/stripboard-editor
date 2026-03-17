@@ -10,6 +10,7 @@ SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 class ProjectListSerializer(serializers.ModelSerializer):
     fork_count = serializers.IntegerField(source="forks.count", read_only=True)
+    preview_data = serializers.SerializerMethodField()
 
     class Meta:
         model = Project
@@ -21,8 +22,24 @@ class ProjectListSerializer(serializers.ModelSerializer):
             "fork_count",
             "created_at",
             "updated_at",
+            "preview_data",
         ]
         read_only_fields = fields
+
+    def get_preview_data(self, obj):
+        """Extract minimal data needed for stripboard preview thumbnail."""
+        data = obj.data or {}
+        components = data.get("components", [])
+        placed = [c for c in components if c.get("boardPos") is not None]
+        if not placed:
+            return None
+        return {
+            "components": placed,
+            "componentDefs": data.get("componentDefs", []),
+            "board": data.get("board", {}),
+            "nets": data.get("nets", []),
+            "netAssignments": data.get("netAssignments", []),
+        }
 
 
 class ProjectDetailSerializer(serializers.ModelSerializer):
@@ -63,7 +80,8 @@ class UserRegistrationSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True)
 
     def validate_username(self, value):
-        if User.objects.filter(username=value).exists():
+        value = value.lower()
+        if User.objects.filter(username__iexact=value).exists():
             raise serializers.ValidationError("Username already taken.")
         return value
 
@@ -76,6 +94,9 @@ class UserRegistrationSerializer(serializers.Serializer):
 class UserLoginSerializer(serializers.Serializer):
     username = serializers.CharField()
     password = serializers.CharField()
+
+    def validate_username(self, value):
+        return value.lower()
 
     def validate_password(self, value):
         if not SHA256_PATTERN.match(value):

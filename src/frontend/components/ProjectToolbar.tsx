@@ -3,7 +3,7 @@
 import { useRef, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useProjectStore } from "@/store/useProjectStore";
-import { getProject } from "@/lib/api";
+import { getProject, getMe, login, register, logout, claimProject, type User } from "@/lib/api";
 
 interface Props {
   editUuid?: string;
@@ -67,6 +67,46 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
   const [saveFlash, setSaveFlash] = useState(false);
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [checkingChanges, setCheckingChanges] = useState(false);
+  const [showSaveNotice, setShowSaveNotice] = useState(false);
+  const hasShownSaveNotice = useRef(false);
+
+  // Auth state
+  const [user, setUser] = useState<User | null>(null);
+  const [showAuth, setShowAuth] = useState<"login" | "register" | null>(null);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authLoading, setAuthLoading] = useState(false);
+
+  useEffect(() => {
+    getMe().then(setUser);
+  }, []);
+
+  const handleAuth = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setAuthError(null);
+    setAuthLoading(true);
+    try {
+      const u = showAuth === "register"
+        ? await register(username, password)
+        : await login(username, password);
+      setUser(u);
+      setShowAuth(null);
+      setUsername("");
+      setPassword("");
+      if (editUuid) {
+        try { await claimProject(editUuid); } catch { /* already owned or not claimable */ }
+      }
+    } catch (err: unknown) {
+      setAuthError(err instanceof Error ? err.message : "Authentication failed");
+    }
+    setAuthLoading(false);
+  };
+
+  const handleLogout = async () => {
+    await logout();
+    setUser(null);
+  };
 
   // Sync nameValue when name changes externally
   useEffect(() => {
@@ -130,6 +170,10 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
       onSave();
       setSaveFlash(true);
       setTimeout(() => setSaveFlash(false), 1500);
+      if (!user && !hasShownSaveNotice.current) {
+        hasShownSaveNotice.current = true;
+        setShowSaveNotice(true);
+      }
     }
   };
 
@@ -251,7 +295,7 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
               {saveFlash ? "Saved!" : saving ? "Saving..." : "Save"}
             </button>
           )}
-          {editUuid && viewUuid && (
+          {user && editUuid && viewUuid && (
             <FeedbackButton
               onClick={() => setShowShare(!showShare)}
               label="Share"
@@ -273,6 +317,33 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
             onChange={handleImport}
             className="hidden"
           />
+          <span className="opacity-20">|</span>
+          {user ? (
+            <>
+              <span className="opacity-70 text-sm">{user.username}</span>
+              <button
+                onClick={handleLogout}
+                className="px-3 py-1.5 rounded bg-white/10 hover:bg-white/20 transition-colors text-sm"
+              >
+                Logout
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={() => setShowAuth("login")}
+                className="px-3 py-1.5 rounded bg-white/10 hover:bg-white/20 transition-colors text-sm"
+              >
+                Login
+              </button>
+              <button
+                onClick={() => setShowAuth("register")}
+                className="px-3 py-1.5 rounded bg-white/20 hover:bg-white/30 transition-colors text-sm"
+              >
+                Register
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -320,6 +391,28 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
         </div>
       )}
 
+      {/* Save notice for anonymous users */}
+      {showSaveNotice && (
+        <div className="bg-amber-50 border-b border-amber-200 px-5 py-3 flex items-center gap-3 text-sm">
+          <div className="flex-1 text-amber-800">
+            Project saved! Bookmark this page or copy the URL to access it later. You need the exact uri to access this project again!
+            <button
+              onClick={() => { setShowSaveNotice(false); setShowAuth("register"); }}
+              className="ml-2 text-[#113768] font-medium hover:underline"
+            >
+              Create an account
+            </button>
+            {" "}to keep all your projects in one place.
+          </div>
+          <button
+            onClick={() => setShowSaveNotice(false)}
+            className="text-amber-400 hover:text-amber-600 text-lg flex-shrink-0"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
       {/* Unsaved changes confirmation */}
       {showExitConfirm && (
         <div
@@ -359,6 +452,58 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
                 Save & Leave
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Auth modal */}
+      {showAuth && (
+        <div
+          className="fixed inset-0 bg-black/30 flex items-center justify-center z-50"
+          onClick={() => setShowAuth(null)}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl p-6 w-80"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-semibold text-neutral-900 mb-4">
+              {showAuth === "login" ? "Login" : "Register"}
+            </h2>
+            <form onSubmit={handleAuth} className="flex flex-col gap-3">
+              <input
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="Username"
+                className="border border-neutral-300 rounded px-3 py-2 text-sm text-neutral-900 outline-none focus:border-[#113768]"
+                autoFocus
+              />
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Password"
+                className="border border-neutral-300 rounded px-3 py-2 text-sm text-neutral-900 outline-none focus:border-[#113768]"
+              />
+              {authError && (
+                <p className="text-xs text-red-500">{authError}</p>
+              )}
+              <button
+                type="submit"
+                disabled={authLoading}
+                className="bg-[#113768] text-white py-2 rounded text-sm font-medium hover:bg-[#0d2a50] transition-colors disabled:opacity-60"
+              >
+                {authLoading
+                  ? (showAuth === "login" ? "Logging in..." : "Registering...")
+                  : (showAuth === "login" ? "Login" : "Register")}
+              </button>
+              <p className="text-xs text-neutral-500 text-center">
+                {showAuth === "login" ? (
+                  <>No account? <button type="button" onClick={() => { setShowAuth("register"); setAuthError(null); }} className="text-[#113768] hover:underline">Register</button></>
+                ) : (
+                  <>Have an account? <button type="button" onClick={() => { setShowAuth("login"); setAuthError(null); }} className="text-[#113768] hover:underline">Login</button></>
+                )}
+              </p>
+            </form>
           </div>
         </div>
       )}

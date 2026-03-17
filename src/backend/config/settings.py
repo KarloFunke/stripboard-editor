@@ -70,6 +70,14 @@ DATABASES = {
 
 AUTH_PASSWORD_VALIDATORS = []
 
+# Cache backend for DRF throttling (shared across Gunicorn workers)
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.db.DatabaseCache",
+        "LOCATION": "django_cache",
+    }
+}
+
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"
 USE_I18N = True
@@ -78,6 +86,8 @@ USE_TZ = True
 STATIC_URL = "static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+NUM_PROXIES = 2  # global reverse proxy + nginx container
+
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework.authentication.SessionAuthentication",
@@ -85,6 +95,17 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.AllowAny",
     ],
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": "120/minute",
+        "user": "300/minute",
+        "project_create": "50/hour",
+        "auth": "15/minute",
+        "pow_challenge": "120/minute",
+    },
 }
 
 # Session settings

@@ -16,4 +16,7 @@ urlpatterns = [
     path("auth/logout/", views.auth_logout, name="auth-logout"),
     path("auth/me/", views.auth_me, name="auth-me"),
     path("auth/csrf/", views.csrf_token, name="csrf-token"),
+
+    # Proof of Work
+    path("pow/challenge/", views.pow_challenge, name="pow-challenge"),
 ]

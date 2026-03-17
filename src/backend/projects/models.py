@@ -19,6 +19,24 @@ class Project(models.Model):
 
     class Meta:
         ordering = ["-updated_at"]
+        indexes = [
+            models.Index(fields=["owner", "-updated_at"]),
+            models.Index(fields=["fork_of"]),
+        ]
 
     def __str__(self):
         return f"{self.name} ({self.edit_uuid})"
+
+
+class PowChallenge(models.Model):
+    challenge = models.CharField(max_length=64, unique=True, db_index=True)
+    expires_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["expires_at"]),
+        ]
+
+    def __str__(self):
+        return self.challenge

@@ -32,7 +32,50 @@ async function apiFetch(
   });
 }
 
+// ── Proof of Work ────────────────────────────────────
+
+async function fetchPowChallenge(): Promise<{ challenge: string; difficulty: number }> {
+  const res = await apiFetch("/pow/challenge/");
+  if (!res.ok) throw new Error("Failed to get PoW challenge");
+  return res.json();
+}
+
+async function solvePoW(challenge: string, difficulty: number): Promise<string> {
+  const prefix = "0".repeat(difficulty);
+  const encoder = new TextEncoder();
+  let nonce = 0;
+  while (true) {
+    const input = challenge + nonce.toString();
+    const hashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(input));
+    const hashHex = Array.from(new Uint8Array(hashBuffer))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    if (hashHex.startsWith(prefix)) {
+      return nonce.toString();
+    }
+    nonce++;
+    // Yield to UI thread every 10K iterations
+    if (nonce % 10000 === 0) {
+      await new Promise((r) => setTimeout(r, 0));
+    }
+  }
+}
+
+async function getPoWSolution(): Promise<{ pow_challenge: string; pow_nonce: string }> {
+  const { challenge, difficulty } = await fetchPowChallenge();
+  const nonce = await solvePoW(challenge, difficulty);
+  return { pow_challenge: challenge, pow_nonce: nonce };
+}
+
 // ── Projects ──────────────────────────────────────────
+
+export interface PreviewData {
+  components: Record<string, unknown>[];
+  componentDefs: Record<string, unknown>[];
+  board: Record<string, unknown>;
+  nets: Record<string, unknown>[];
+  netAssignments: Record<string, unknown>[];
+}
 
 export interface ProjectMeta {
   edit_uuid: string;
@@ -42,6 +85,7 @@ export interface ProjectMeta {
   fork_count: number;
   created_at: string;
   updated_at: string;
+  preview_data: PreviewData | null;
 }
 
 export interface ProjectDetail extends ProjectMeta {
@@ -50,9 +94,10 @@ export interface ProjectDetail extends ProjectMeta {
 }
 
 export async function createProject(name: string, data: Record<string, unknown>): Promise<ProjectDetail> {
+  const pow = await getPoWSolution();
   const res = await apiFetch("/projects/", {
     method: "POST",
-    body: JSON.stringify({ name, data }),
+    body: JSON.stringify({ name, data, ...pow }),
   });
   if (!res.ok) throw new Error("Failed to create project");
   return res.json();
@@ -121,9 +166,10 @@ async function hashPassword(password: string): Promise<string> {
 export async function register(username: string, password: string): Promise<User> {
   csrfToken = null;
   const hashedPassword = await hashPassword(password);
+  const pow = await getPoWSolution();
   const res = await apiFetch("/auth/register/", {
     method: "POST",
-    body: JSON.stringify({ username, password: hashedPassword }),
+    body: JSON.stringify({ username, password: hashedPassword, ...pow }),
   });
   if (!res.ok) {
     const err = await res.json();

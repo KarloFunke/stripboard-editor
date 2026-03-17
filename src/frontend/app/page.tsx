@@ -14,6 +14,7 @@ import {
   type ProjectMeta,
 } from "@/lib/api";
 import { useProjectStore } from "@/store/useProjectStore";
+import StripboardPreview from "@/components/StripboardPreview";
 
 export default function HomePage() {
   const router = useRouter();
@@ -27,6 +28,7 @@ export default function HomePage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
+  const [authLoading, setAuthLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
 
@@ -61,9 +63,10 @@ export default function HomePage() {
     setDeleteConfirm(null);
   };
 
-  const handleAuth = async (e: React.FormEvent) => {
+  const handleAuth = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setAuthError(null);
+    setAuthLoading(true);
     try {
       const u = showAuth === "register"
         ? await register(username, password)
@@ -76,6 +79,7 @@ export default function HomePage() {
     } catch (err: unknown) {
       setAuthError(err instanceof Error ? err.message : "Authentication failed");
     }
+    setAuthLoading(false);
   };
 
   const handleLogout = async () => {
@@ -143,10 +147,133 @@ export default function HomePage() {
         <button
           onClick={handleNewProject}
           disabled={creating}
-          className="w-full bg-[#113768] text-white py-3 rounded-lg text-sm font-medium hover:bg-[#0d2a50] transition-colors disabled:opacity-50 mb-8"
+          className="w-full bg-[#113768] text-white py-3 rounded-lg text-sm font-medium hover:bg-[#0d2a50] transition-colors disabled:opacity-50 mb-10"
         >
           {creating ? "Creating..." : "+ New Project"}
         </button>
+
+        {!user && (<>
+        {/* Editor screenshots */}
+        <div className="mb-10">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <img
+                src="/schematic-editor-example.png"
+                alt="Schematic editor"
+                className="rounded-lg border border-neutral-200 shadow-sm w-full"
+              />
+              <p className="text-xs text-neutral-500 mt-2 text-center">Schematic / Net Editor</p>
+            </div>
+            <div>
+              <img
+                src="/stripboard-editor-example.png"
+                alt="Stripboard layout editor"
+                className="rounded-lg border border-neutral-200 shadow-sm w-full"
+              />
+              <p className="text-xs text-neutral-500 mt-2 text-center">Stripboard Layout</p>
+            </div>
+          </div>
+        </div>
+
+        {/* How it works */}
+        <div className="mb-10">
+          <h2 className="text-lg font-semibold text-neutral-800 mb-4">How It Works</h2>
+          <div className="grid grid-cols-3 gap-4">
+            <div className="bg-white border border-neutral-200 rounded-lg p-4 text-center">
+              <div className="text-2xl mb-2 text-[#113768] font-bold">1</div>
+              <p className="text-sm font-medium text-neutral-800">Add Components</p>
+              <p className="text-xs text-neutral-500 mt-1">Pick from a library of common through-hole footprints or create custom ones.</p>
+            </div>
+            <div className="bg-white border border-neutral-200 rounded-lg p-4 text-center">
+              <div className="text-2xl mb-2 text-[#113768] font-bold">2</div>
+              <p className="text-sm font-medium text-neutral-800">Define Nets</p>
+              <p className="text-xs text-neutral-500 mt-1">Assign pins to nets to describe your circuit connectivity. Auto-net makes it fast.</p>
+            </div>
+            <div className="bg-white border border-neutral-200 rounded-lg p-4 text-center">
+              <div className="text-2xl mb-2 text-[#113768] font-bold">3</div>
+              <p className="text-sm font-medium text-neutral-800">Layout on Board</p>
+              <p className="text-xs text-neutral-500 mt-1">Place components, add wires and cuts. Get real-time conflict and completeness feedback.</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Features */}
+        <div className="mb-10 bg-white border border-neutral-200 rounded-lg p-5">
+          <h2 className="text-lg font-semibold text-neutral-800 mb-3">Features</h2>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm text-neutral-600">
+            <div className="flex items-start gap-2">
+              <span className="text-[#113768] mt-0.5">-</span>
+              <span>Split-screen schematic and stripboard editors</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="text-[#113768] mt-0.5">-</span>
+              <span>Drag-and-drop component placement</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="text-[#113768] mt-0.5">-</span>
+              <span>Automatic conflict and net completeness checking</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="text-[#113768] mt-0.5">-</span>
+              <span>Customizable footprints and per-instance pin naming</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="text-[#113768] mt-0.5">-</span>
+              <span>Pan, zoom, bulk select and move</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="text-[#113768] mt-0.5">-</span>
+              <span>JSON export/import, shareable edit and view-only links</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="text-[#113768] mt-0.5">-</span>
+              <span>Undo/redo with full history</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="text-[#113768] mt-0.5">-</span>
+              <span>No account required — start building immediately</span>
+            </div>
+          </div>
+        </div>
+
+        </>)}
+
+        {/* Account benefits — only show if not logged in */}
+        {!user && (
+          <div className="mb-10 bg-[#113768]/5 border border-[#113768]/15 rounded-lg p-5">
+            <h2 className="text-lg font-semibold text-[#113768] mb-2">Why Create an Account?</h2>
+            <p className="text-sm text-neutral-600 mb-3">
+              You can use this editor without an account — no restrictions. But creating one takes seconds and gives you:
+            </p>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm text-neutral-700 mb-4">
+              <div className="flex items-start gap-2">
+                <span className="text-[#113768] mt-0.5">-</span>
+                <span>All your projects saved in one place</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-[#113768] mt-0.5">-</span>
+                <span>Access your work from any device</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-[#113768] mt-0.5">-</span>
+                <span>Shareable edit and view-only links</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-[#113768] mt-0.5">-</span>
+                <span>Fork other people's shared projects</span>
+              </div>
+            </div>
+            <p className="text-xs text-neutral-500">
+              No email required — just pick a username and password.
+            </p>
+            <button
+              onClick={() => setShowAuth("register")}
+              className="mt-3 bg-[#113768] text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-[#0d2a50] transition-colors"
+            >
+              Create Free Account
+            </button>
+          </div>
+        )}
 
         {/* User projects */}
         {user && (
@@ -157,30 +284,33 @@ export default function HomePage() {
             ) : (
               <div className="flex flex-col gap-2">
                 {projects.map((project) => (
-                  <div
+                  <a
                     key={project.edit_uuid}
-                    className="bg-white border border-neutral-200 rounded-lg px-4 py-3 flex items-center justify-between hover:border-neutral-300 transition-colors"
+                    href={`/project/${project.edit_uuid}`}
+                    className="bg-white border border-neutral-200 rounded-lg px-4 py-3 flex items-center gap-4 hover:border-neutral-300 transition-colors"
                   >
-                    <div>
-                      <a
-                        href={`/project/${project.edit_uuid}`}
-                        className="font-medium text-[#113768] hover:underline"
-                      >
+                    {project.preview_data && (
+                      <div className="flex-shrink-0">
+                        <StripboardPreview data={project.preview_data} maxWidth={180} maxHeight={120} />
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <span className="font-medium text-[#113768]">
                         {project.name}
-                      </a>
+                      </span>
                       <p className="text-xs text-neutral-400 mt-0.5">
                         Updated {new Date(project.updated_at).toLocaleDateString()}
                         {project.fork_count > 0 && ` · ${project.fork_count} fork${project.fork_count > 1 ? "s" : ""}`}
                       </p>
                     </div>
                     <button
-                      onClick={() => setDeleteConfirm(project.edit_uuid)}
-                      className="text-neutral-400 hover:text-red-500 text-sm px-2"
+                      onClick={(e) => { e.preventDefault(); setDeleteConfirm(project.edit_uuid); }}
+                      className="text-neutral-400 hover:text-red-500 text-sm px-2 flex-shrink-0"
                       title="Delete project"
                     >
                       Delete
                     </button>
-                  </div>
+                  </a>
                 ))}
               </div>
             )}
@@ -257,9 +387,12 @@ export default function HomePage() {
               )}
               <button
                 type="submit"
-                className="bg-[#113768] text-white py-2 rounded text-sm font-medium hover:bg-[#0d2a50] transition-colors"
+                disabled={authLoading}
+                className="bg-[#113768] text-white py-2 rounded text-sm font-medium hover:bg-[#0d2a50] transition-colors disabled:opacity-60"
               >
-                {showAuth === "login" ? "Login" : "Register"}
+                {authLoading
+                  ? (showAuth === "login" ? "Logging in..." : "Registering...")
+                  : (showAuth === "login" ? "Login" : "Register")}
               </button>
               <p className="text-xs text-neutral-500 text-center">
                 {showAuth === "login" ? (

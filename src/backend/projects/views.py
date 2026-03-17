@@ -2,7 +2,7 @@ from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
 from django.middleware.csrf import get_token
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 
@@ -15,13 +15,26 @@ from .serializers import (
     UserLoginSerializer,
     UserSerializer,
 )
+from .throttles import ProjectCreateThrottle, AuthThrottle, PowChallengeThrottle
+from .pow import create_challenge, verify_and_consume, DIFFICULTY
 
 
 # ── Projects ────────────────────────────────────────────
 
 
 @api_view(["POST"])
+@throttle_classes([ProjectCreateThrottle])
 def project_create(request):
+    # Require PoW for anonymous users
+    if not request.user.is_authenticated:
+        pow_challenge = request.data.get("pow_challenge")
+        pow_nonce = request.data.get("pow_nonce")
+        if not verify_and_consume(pow_challenge or "", pow_nonce or ""):
+            return Response(
+                {"error": "Invalid or missing proof of work"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
     serializer = ProjectCreateSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
 
@@ -116,7 +129,17 @@ def user_projects(request):
 
 
 @api_view(["POST"])
+@throttle_classes([AuthThrottle])
 def auth_register(request):
+    # Require PoW for registration
+    pow_challenge = request.data.get("pow_challenge")
+    pow_nonce = request.data.get("pow_nonce")
+    if not verify_and_consume(pow_challenge or "", pow_nonce or ""):
+        return Response(
+            {"error": "Invalid or missing proof of work"},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
     serializer = UserRegistrationSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
 
@@ -129,6 +152,7 @@ def auth_register(request):
 
 
 @api_view(["POST"])
+@throttle_classes([AuthThrottle])
 def auth_login(request):
     serializer = UserLoginSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -164,3 +188,10 @@ def auth_me(request):
 @api_view(["GET"])
 def csrf_token(request):
     return Response({"csrfToken": get_token(request)})
+
+
+@api_view(["GET"])
+@throttle_classes([PowChallengeThrottle])
+def pow_challenge(request):
+    challenge = create_challenge()
+    return Response({"challenge": challenge, "difficulty": DIFFICULTY})
