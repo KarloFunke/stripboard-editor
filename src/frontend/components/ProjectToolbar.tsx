@@ -52,6 +52,10 @@ function FeedbackButton({
 export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, lastSaved }: Props) {
   const router = useRouter();
   const name = useProjectStore((s) => s.name);
+  const undo = useProjectStore((s) => s.undo);
+  const redo = useProjectStore((s) => s.redo);
+  const canUndo = useProjectStore((s) => s.canUndo);
+  const canRedo = useProjectStore((s) => s.canRedo);
   const setProjectName = useProjectStore((s) => s.setProjectName);
   const exportProject = useProjectStore((s) => s.exportProject);
   const loadProject = useProjectStore((s) => s.loadProject);
@@ -68,6 +72,22 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
   useEffect(() => {
     setNameValue(name);
   }, [name]);
+
+  // Global undo/redo keyboard shortcuts
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      }
+      if ((e.ctrlKey || e.metaKey) && ((e.key === "z" && e.shiftKey) || e.key === "y")) {
+        e.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [undo, redo]);
 
   const commitName = () => {
     const trimmed = nameValue.trim();
@@ -199,6 +219,23 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
           )}
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={undo}
+            disabled={!canUndo}
+            className="px-2 py-1.5 rounded bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm"
+            title="Undo (Ctrl+Z)"
+          >
+            ↶
+          </button>
+          <button
+            onClick={redo}
+            disabled={!canRedo}
+            className="px-2 py-1.5 rounded bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm"
+            title="Redo (Ctrl+Shift+Z)"
+          >
+            ↷
+          </button>
+          <span className="opacity-20">|</span>
           {onSave && (
             <button
               onClick={handleSave}
@@ -259,7 +296,7 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
             </button>
           </div>
           <div className="flex items-center gap-2 flex-1">
-            <span className="text-neutral-600 font-medium">View link:</span>
+            <span className="text-neutral-600 font-medium">View only link:</span>
             <code className="bg-white border border-neutral-300 rounded px-2.5 py-1 text-neutral-800 flex-1 truncate">
               {baseUrl}/view/{viewUuid}
             </code>

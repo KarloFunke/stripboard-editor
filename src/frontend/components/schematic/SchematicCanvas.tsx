@@ -26,6 +26,7 @@ export default function SchematicCanvas() {
   const updateSchematicPos = useProjectStore((s) => s.updateSchematicPos);
   const removeComponent = useProjectStore((s) => s.removeComponent);
   const addComponent = useProjectStore((s) => s.addComponent);
+  const pushSnapshot = useProjectStore((s) => s.pushSnapshot);
 
   const netLines = useMemo(
     () => showNetLines ? computeNetLines(nets, netAssignments, components, componentDefs) : [],
@@ -67,6 +68,7 @@ export default function SchematicCanvas() {
       const moveIds = selectedIds.length > 0 ? selectedIds : selectedId ? [selectedId] : [];
       if (moveIds.length > 0 && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
         e.preventDefault();
+        pushSnapshot();
         const delta = {
           ArrowUp: { x: 0, y: -MOVE_STEP },
           ArrowDown: { x: 0, y: MOVE_STEP },
@@ -93,7 +95,7 @@ export default function SchematicCanvas() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selectedId, selectedIds, components, updateSchematicPos, removeComponent]);
+  }, [selectedId, selectedIds, components, updateSchematicPos, removeComponent, pushSnapshot]);
 
   const getSVGPoint = useCallback((e: React.MouseEvent) => {
     const svg = svgRef.current;
@@ -110,6 +112,7 @@ export default function SchematicCanvas() {
       const comp = components.find((c) => c.id === componentId);
       if (!comp) return;
 
+      pushSnapshot();
       const pt = getSVGPoint(e);
       setDragging({
         componentId,
@@ -120,7 +123,7 @@ export default function SchematicCanvas() {
         didDrag: false,
       });
     },
-    [components, getSVGPoint]
+    [components, getSVGPoint, pushSnapshot]
   );
 
   const handleSvgMouseDown = useCallback(

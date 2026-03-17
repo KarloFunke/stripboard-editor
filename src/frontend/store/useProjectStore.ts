@@ -110,6 +110,13 @@ interface ProjectActions {
   exportProject: () => Project;
   loadProject: (data: Project) => void;
   resetProject: () => void;
+
+  // Undo/redo
+  pushSnapshot: () => void;
+  undo: () => void;
+  redo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
 }
 
 interface UIState {
@@ -121,7 +128,12 @@ interface UIState {
   showNetLines: boolean;
 }
 
-type ProjectStore = Project & UIState & ProjectActions;
+interface HistoryState {
+  _history: Project[];
+  _redoStack: Project[];
+}
+
+type ProjectStore = Project & UIState & ProjectActions & HistoryState;
 
 const AUTO_NET_COLORS = [
   "#22c55e", "#3b82f6", "#8b5cf6", "#ec4899",
@@ -166,6 +178,34 @@ const initialProject: Project = {
   customTags: [],
 };
 
+const MAX_HISTORY = 80;
+
+function snapshotProject(s: Project): Project {
+  return JSON.parse(JSON.stringify({
+    id: s.id,
+    name: s.name,
+    componentDefs: s.componentDefs,
+    components: s.components,
+    nets: s.nets,
+    netAssignments: s.netAssignments,
+    board: s.board,
+    customTags: s.customTags,
+  }));
+}
+
+function restoreProject(snapshot: Project): Partial<ProjectStore> {
+  return {
+    id: snapshot.id,
+    name: snapshot.name,
+    componentDefs: snapshot.componentDefs,
+    components: snapshot.components,
+    nets: snapshot.nets,
+    netAssignments: snapshot.netAssignments,
+    board: snapshot.board,
+    customTags: snapshot.customTags,
+  };
+}
+
 export const useProjectStore = create<ProjectStore>((set, get) => ({
   ...initialProject,
   activeNetId: null,
@@ -174,17 +214,22 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   wirePlacementMode: false,
   wirePlacementFrom: null,
   showNetLines: true,
+  _history: [],
+  _redoStack: [],
+  canUndo: false,
+  canRedo: false,
 
-  addComponentDef: (def) =>
-    set((s) => ({ componentDefs: [...s.componentDefs, def] })),
+  addComponentDef: (def) => {
+    get().pushSnapshot();
+    set((s) => ({ componentDefs: [...s.componentDefs, def] }));
+  },
 
-  updateComponentDef: (defId, updates) =>
+  updateComponentDef: (defId, updates) => {
+    get().pushSnapshot();
     set((s) => {
       const newDefs = s.componentDefs.map((d) =>
         d.id === defId ? { ...d, ...updates } : d
       );
-
-      // Clean up orphaned net assignments if pins changed
       let newAssignments = s.netAssignments;
       if (updates.pins) {
         const newPinIds = new Set(updates.pins.map((p) => p.id));
@@ -197,11 +242,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
             newPinIds.has(a.pinId)
         );
       }
-
       return { componentDefs: newDefs, netAssignments: newAssignments };
-    }),
+    });
+  },
 
-  addComponent: (defId, schematicPos) =>
+  addComponent: (defId, schematicPos) => {
+    get().pushSnapshot();
     set((s) => {
       const tag = s.activeTag ?? "";
       return {
@@ -218,27 +264,32 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           },
         ],
       };
-    }),
+    });
+  },
 
-  updateLabel: (id, label) =>
+  updateLabel: (id, label) => {
+    get().pushSnapshot();
     set((s) => ({
       components: s.components.map((c) =>
         c.id === id ? { ...c, label } : c
       ),
-    })),
+    }));
+  },
 
-  updateTag: (id, tag) =>
+  updateTag: (id, tag) => {
+    get().pushSnapshot();
     set((s) => ({
       components: s.components.map((c) =>
         c.id === id ? { ...c, tag } : c
       ),
-    })),
+    }));
+  },
 
-  updatePinName: (componentId, pinId, newName) =>
+  updatePinName: (componentId, pinId, newName) => {
+    get().pushSnapshot();
     set((s) => ({
       components: s.components.map((c) => {
         if (c.id !== componentId) return c;
-        // If component has a footprint override, update pin name there
         if (c.footprintOverride) {
           return {
             ...c,
@@ -250,7 +301,6 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
             },
           };
         }
-        // Otherwise, create an override from the base def with the renamed pin
         const baseDef = s.componentDefs.find((d) => d.id === c.defId);
         if (!baseDef) return c;
         return {
@@ -265,27 +315,32 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           },
         };
       }),
-    })),
+    }));
+  },
 
-  updateComponentFootprint: (componentId, override) =>
+  updateComponentFootprint: (componentId, override) => {
+    get().pushSnapshot();
     set((s) => {
       const newComponents = s.components.map((c) =>
         c.id === componentId ? { ...c, footprintOverride: override } : c
       );
-      // Clean up orphaned net assignments for this component
       const newPinIds = new Set(override.pins.map((p) => p.id));
       const newAssignments = s.netAssignments.filter(
         (a) => a.componentId !== componentId || newPinIds.has(a.pinId)
       );
       return { components: newComponents, netAssignments: newAssignments };
-    }),
+    });
+  },
 
-  removeComponent: (id) =>
+  removeComponent: (id) => {
+    get().pushSnapshot();
     set((s) => ({
       components: s.components.filter((c) => c.id !== id),
       netAssignments: s.netAssignments.filter((a) => a.componentId !== id),
-    })),
+    }));
+  },
 
+  // No auto-snapshot: called per-pixel during drag. Caller pushes snapshot before drag starts.
   updateSchematicPos: (id, pos) =>
     set((s) => ({
       components: s.components.map((c) =>
@@ -293,13 +348,16 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       ),
     })),
 
-  placeOnBoard: (id, pos) =>
+  placeOnBoard: (id, pos) => {
+    get().pushSnapshot();
     set((s) => ({
       components: s.components.map((c) =>
         c.id === id ? { ...c, boardPos: pos } : c
       ),
-    })),
+    }));
+  },
 
+  // No auto-snapshot: called per-key during bulk moves. Caller pushes snapshot before first move.
   moveComponentsOnBoard: (ids, deltaRow, deltaCol, wireIds, cutPositions) =>
     set((s) => {
       const newComponents = s.components.map((c) => {
@@ -340,39 +398,50 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       };
     }),
 
-  removeFromBoard: (id) =>
+  removeFromBoard: (id) => {
+    get().pushSnapshot();
     set((s) => ({
       components: s.components.map((c) =>
         c.id === id ? { ...c, boardPos: null } : c
       ),
-    })),
+    }));
+  },
 
-  rotateComponent: (id) =>
+  rotateComponent: (id) => {
+    get().pushSnapshot();
     set((s) => ({
       components: s.components.map((c) =>
         c.id === id
           ? { ...c, rotation: ((c.rotation + 90) % 360) as Component["rotation"] }
           : c
       ),
-    })),
+    }));
+  },
 
-  addNet: (name, color) =>
+  addNet: (name, color) => {
+    get().pushSnapshot();
     set((s) => ({
       nets: [...s.nets, { id: generateId(), name, color }],
-    })),
+    }));
+  },
 
-  updateNet: (id, updates) =>
+  updateNet: (id, updates) => {
+    get().pushSnapshot();
     set((s) => ({
       nets: s.nets.map((n) => (n.id === id ? { ...n, ...updates } : n)),
-    })),
+    }));
+  },
 
-  removeNet: (id) =>
+  removeNet: (id) => {
+    get().pushSnapshot();
     set((s) => ({
       nets: s.nets.filter((n) => n.id !== id),
       netAssignments: s.netAssignments.filter((a) => a.netId !== id),
-    })),
+    }));
+  },
 
-  assignNet: (netId, componentId, pinId) =>
+  assignNet: (netId, componentId, pinId) => {
+    get().pushSnapshot();
     set((s) => ({
       netAssignments: [
         ...s.netAssignments.filter(
@@ -380,26 +449,34 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         ),
         { netId, componentId, pinId },
       ],
-    })),
+    }));
+  },
 
-  unassignNet: (componentId, pinId) =>
+  unassignNet: (componentId, pinId) => {
+    get().pushSnapshot();
     set((s) => ({
       netAssignments: s.netAssignments.filter(
         (a) => !(a.componentId === componentId && a.pinId === pinId)
       ),
-    })),
+    }));
+  },
 
-  setBoardSize: (rows, cols) =>
+  setBoardSize: (rows, cols) => {
+    get().pushSnapshot();
     set((s) => ({
       board: { ...s.board, rows, cols },
-    })),
+    }));
+  },
 
-  placeCut: (cut) =>
+  placeCut: (cut) => {
+    get().pushSnapshot();
     set((s) => ({
       board: { ...s.board, cuts: [...s.board.cuts, cut] },
-    })),
+    }));
+  },
 
-  removeCut: (cut) =>
+  removeCut: (cut) => {
+    get().pushSnapshot();
     set((s) => ({
       board: {
         ...s.board,
@@ -407,17 +484,21 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           (c) => !(c.row === cut.row && c.col === cut.col)
         ),
       },
-    })),
+    }));
+  },
 
-  addJumper: (from, to, netId) =>
+  addJumper: (from, to, netId) => {
+    get().pushSnapshot();
     set((s) => ({
       board: {
         ...s.board,
         jumpers: [...s.board.jumpers, { from, to, netId }],
       },
-    })),
+    }));
+  },
 
-  removeJumper: (from, to) =>
+  removeJumper: (from, to) => {
+    get().pushSnapshot();
     set((s) => ({
       board: {
         ...s.board,
@@ -431,9 +512,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
             )
         ),
       },
-    })),
+    }));
+  },
 
-  addWire: (from, to) =>
+  addWire: (from, to) => {
+    get().pushSnapshot();
     set((s) => ({
       board: {
         ...s.board,
@@ -441,19 +524,23 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       },
       wirePlacementMode: false,
       wirePlacementFrom: null,
-    })),
+    }));
+  },
 
-  removeWire: (wireId) =>
+  removeWire: (wireId) => {
+    get().pushSnapshot();
     set((s) => ({
       board: {
         ...s.board,
         wires: s.board.wires.filter((w) => w.id !== wireId),
       },
-    })),
+    }));
+  },
 
   setActiveNet: (netId) => set({ activeNetId: netId }),
 
-  togglePinNet: (componentId, pinId) =>
+  togglePinNet: (componentId, pinId) => {
+    get().pushSnapshot();
     set((s) => {
       const existing = s.netAssignments.find(
         (a) => a.componentId === componentId && a.pinId === pinId
@@ -503,7 +590,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       }
 
       return s;
-    }),
+    });
+  },
 
   setEditingFootprintComponent: (componentId) => set({ editingFootprintComponentId: componentId }),
 
@@ -596,5 +684,47 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     editingFootprintComponentId: null,
     wirePlacementMode: false,
     wirePlacementFrom: null,
+    _history: [],
+    _redoStack: [],
+    canUndo: false,
+    canRedo: false,
   }),
+
+  pushSnapshot: () => {
+    const s = get();
+    const snapshot = snapshotProject(s);
+    const history = [...s._history, snapshot];
+    if (history.length > MAX_HISTORY) history.shift();
+    set({ _history: history, _redoStack: [], canUndo: true, canRedo: false });
+  },
+
+  undo: () => {
+    const s = get();
+    if (s._history.length === 0) return;
+    const history = [...s._history];
+    const snapshot = history.pop()!;
+    const redoStack = [...s._redoStack, snapshotProject(s)];
+    set({
+      ...restoreProject(snapshot),
+      _history: history,
+      _redoStack: redoStack,
+      canUndo: history.length > 0,
+      canRedo: true,
+    });
+  },
+
+  redo: () => {
+    const s = get();
+    if (s._redoStack.length === 0) return;
+    const redoStack = [...s._redoStack];
+    const snapshot = redoStack.pop()!;
+    const history = [...s._history, snapshotProject(s)];
+    set({
+      ...restoreProject(snapshot),
+      _history: history,
+      _redoStack: redoStack,
+      canUndo: true,
+      canRedo: redoStack.length > 0,
+    });
+  },
 }));

@@ -107,6 +107,7 @@ export default function StripboardCanvas() {
   const justDraggedRef = useRef(false);
 
   const rotateComponent = useProjectStore((s) => s.rotateComponent);
+  const pushSnapshot = useProjectStore((s) => s.pushSnapshot);
   const removeFromBoard = useProjectStore((s) => s.removeFromBoard);
   const moveComponentsOnBoard = useProjectStore((s) => s.moveComponentsOnBoard);
 
@@ -131,6 +132,7 @@ export default function StripboardCanvas() {
       const hasSelection = moveIds.length > 0 || selectedWireIds.length > 0 || selectedCuts.length > 0;
       if (hasSelection && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
         e.preventDefault();
+        pushSnapshot();
         const delta = {
           ArrowUp: { row: -1, col: 0 },
           ArrowDown: { row: 1, col: 0 },
@@ -158,7 +160,7 @@ export default function StripboardCanvas() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [wirePlacementFrom, cancelWirePlacement, selectedId, selectedIds, selectedWireIds, selectedCuts, rotateComponent, removeFromBoard, moveComponentsOnBoard]);
+  }, [wirePlacementFrom, cancelWirePlacement, selectedId, selectedIds, selectedWireIds, selectedCuts, rotateComponent, removeFromBoard, moveComponentsOnBoard, pushSnapshot]);
 
   const svgWidth = BOARD_PADDING * 2 + (board.cols - 1) * HOLE_SPACING;
   const svgHeight = BOARD_PADDING * 2 + (board.rows - 1) * HOLE_SPACING;
@@ -279,6 +281,7 @@ export default function StripboardCanvas() {
       if (wirePlacementMode || wirePlacementFrom) return;
       e.stopPropagation();
       e.preventDefault();
+      pushSnapshot();
       setSelectedId(componentId);
       setDragging({
         componentId,
@@ -662,7 +665,7 @@ export default function StripboardCanvas() {
                   wire={wire}
                   color={color}
                   isConflict={isConflict}
-                  onClick={() => removeWire(wire.id)}
+                  onClick={() => { if (!wirePlacementFrom) removeWire(wire.id); }}
                 />
               </g>
             );
