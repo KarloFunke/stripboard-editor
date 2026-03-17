@@ -238,7 +238,7 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
             disabled={checkingChanges}
             className="font-semibold tracking-wide hover:opacity-80 transition-opacity disabled:opacity-60"
           >
-            {checkingChanges ? "Checking..." : "Stripboard Editor"}
+            {checkingChanges ? "Checking..." : "Home - Stripboard Editor"}
           </button>
           <span className="opacity-40">|</span>
           {editingName ? (

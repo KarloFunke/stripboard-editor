@@ -148,19 +148,26 @@ export default function HomePage() {
             Design Stripboard Layouts
           </h1>
           <p className="text-neutral-600 text-lg">
-            Create schematics, define nets, and layout components on a virtual stripboard.
-            No account required to start.
+            Create schematics, define nets, and layout components on a virtual stripboard. This Website is made to help quickly desing simple Stripboards. Designed for PC only, not mobile.
           </p>
         </div>
 
-        {/* New project */}
-        <button
-          onClick={handleNewProject}
-          disabled={creating}
-          className="w-full bg-[#113768] text-white py-3 rounded-lg text-sm font-medium hover:bg-[#0d2a50] transition-colors disabled:opacity-50 mb-10"
-        >
+        {/* Actions */}
+        <div className="flex gap-3 mb-10">
+          <button
+            onClick={handleNewProject}
+            disabled={creating}
+            className="flex-1 bg-[#113768] text-white py-3 rounded-lg text-sm font-medium hover:bg-[#0d2a50] transition-colors disabled:opacity-50"
+          >
           {creating ? "Creating..." : "+ New Project"}
-        </button>
+          </button>
+          <a
+            href="/tutorial"
+            className="py-3 px-6 rounded-lg text-sm font-medium border border-[#113768] text-[#113768] hover:bg-[#113768]/5 transition-colors text-center"
+          >
+            See Tutorial
+          </a>
+        </div>
 
         {!user && (<>
         {/* Editor screenshots */}
@@ -172,7 +179,7 @@ export default function HomePage() {
                 alt="Schematic editor"
                 className="rounded-lg border border-neutral-200 shadow-sm w-full"
               />
-              <p className="text-xs text-neutral-500 mt-2 text-center">Schematic / Net Editor</p>
+              <p className="text-xs text-neutral-500 mt-2 text-center">Basic Schematic / Net Editor</p>
             </div>
             <div>
               <img
@@ -197,12 +204,12 @@ export default function HomePage() {
             <div className="bg-white border border-neutral-200 rounded-lg p-4 text-center">
               <div className="text-2xl mb-2 text-[#113768] font-bold">2</div>
               <p className="text-sm font-medium text-neutral-800">Define Nets</p>
-              <p className="text-xs text-neutral-500 mt-1">Assign pins to nets to describe your circuit connectivity. Auto-net makes it fast.</p>
+              <p className="text-xs text-neutral-500 mt-1">Assign pins to nets to describe your circuit connectivity.</p>
             </div>
             <div className="bg-white border border-neutral-200 rounded-lg p-4 text-center">
               <div className="text-2xl mb-2 text-[#113768] font-bold">3</div>
               <p className="text-sm font-medium text-neutral-800">Layout on Board</p>
-              <p className="text-xs text-neutral-500 mt-1">Place components, add wires and cuts. Get real-time conflict and completeness feedback.</p>
+              <p className="text-xs text-neutral-500 mt-1">Place components, wires and cuts. Get real-time conflict and completeness feedback.</p>
             </div>
           </div>
         </div>
@@ -237,11 +244,11 @@ export default function HomePage() {
             </div>
             <div className="flex items-start gap-2">
               <span className="text-[#113768] mt-0.5">-</span>
-              <span>Undo/redo with full history</span>
+              <span>Undo/redo</span>
             </div>
             <div className="flex items-start gap-2">
               <span className="text-[#113768] mt-0.5">-</span>
-              <span>No account required — start building immediately</span>
+              <span>No account required — start designing immediately</span>
             </div>
           </div>
         </div>
@@ -253,7 +260,7 @@ export default function HomePage() {
           <div className="mb-10 bg-[#113768]/5 border border-[#113768]/15 rounded-lg p-5">
             <h2 className="text-lg font-semibold text-[#113768] mb-2">Why Create an Account?</h2>
             <p className="text-sm text-neutral-600 mb-3">
-              You can use this editor without an account — no restrictions. But creating one takes seconds and gives you:
+              You can use this editor without an account without restrictions. But creating one takes seconds and gives you:
             </p>
             <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm text-neutral-700 mb-4">
               <div className="flex items-start gap-2">
@@ -274,7 +281,7 @@ export default function HomePage() {
               </div>
             </div>
             <p className="text-xs text-neutral-500">
-              No email required — just pick a username and password.
+              No email required, just pick a username and password. Doesnt cost any money.
             </p>
             <button
               onClick={() => setShowAuth("register")}

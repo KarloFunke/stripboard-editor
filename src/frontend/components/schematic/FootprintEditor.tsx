@@ -177,7 +177,7 @@ export default function FootprintEditor() {
       >
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-neutral-900">
-            Edit Footprint — {component.label} ({def.name})
+            Edit Footprint — {component.label}
           </h2>
           <button
             onClick={close}

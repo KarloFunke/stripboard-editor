@@ -17,7 +17,7 @@ from django.utils import timezone
 from datetime import timedelta
 
 CHALLENGE_TTL = timedelta(minutes=5)
-DIFFICULTY = 4  # number of leading zero hex chars required
+DIFFICULTY = 3  # number of leading zero hex chars required
 
 
 def create_challenge() -> str:
