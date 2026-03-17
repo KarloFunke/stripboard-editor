@@ -485,7 +485,7 @@ export default function StripboardCanvas() {
     <div className="flex flex-col h-full">
       {allDone && (
         <div className="bg-green-50 border-b border-green-200 px-5 py-1.5 text-sm text-green-700">
-          All done — all components placed, no conflicts, all nets connected
+          All done, all components placed, no conflicts, all nets connected
         </div>
       )}
       {conflictCount > 0 && (

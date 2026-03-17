@@ -94,7 +94,7 @@ export default function TutorialPage() {
       <div className="max-w-4xl mx-auto px-6 py-12 flex-1">
         <h1 className="text-2xl font-bold text-[#113768] mb-2">Getting Started</h1>
         <p className="text-neutral-600 mb-10">
-          Build a simple regulator circuit with a connector, voltage regulator, LED, and resistor — step by step.
+          This page shows you how to build a simple circuit containing a connector, voltage regulator, LED, and a resistor.
         </p>
 
         <div className="space-y-12">
@@ -116,7 +116,7 @@ export default function TutorialPage() {
             href="/"
             className="inline-block bg-[#113768] text-white px-6 py-3 rounded-lg text-sm font-medium hover:bg-[#0d2a50] transition-colors"
           >
-            Start Building
+            Start Desigining
           </a>
         </div>
       </div>

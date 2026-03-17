@@ -222,7 +222,7 @@ export default function HomePage() {
             <div className="bg-white border border-neutral-200 rounded-lg p-4 text-center">
               <div className="text-2xl mb-2 text-[#113768] font-bold">3</div>
               <p className="text-sm font-medium text-neutral-800">Layout on Board</p>
-              <p className="text-xs text-neutral-500 mt-1">Place components, wires and cuts. Strips colour-code to your nets in real time — conflicts turn red instantly.</p>
+              <p className="text-xs text-neutral-500 mt-1">Place components, wires and cuts. Strips colour-code to your nets in real time, conflicts turn red instantly.</p>
             </div>
           </div>
         </div>
@@ -241,7 +241,7 @@ export default function HomePage() {
             </div>
             <div className="flex items-start gap-2">
               <span className="text-[#113768] mt-0.5">-</span>
-              <span>Live strip colouring — see net connectivity at a glance</span>
+              <span>Live strip colouring - see net connectivity at a glance</span>
             </div>
             <div className="flex items-start gap-2">
               <span className="text-[#113768] mt-0.5">-</span>
@@ -261,7 +261,7 @@ export default function HomePage() {
             </div>
             <div className="flex items-start gap-2">
               <span className="text-[#113768] mt-0.5">-</span>
-              <span>No account required — start designing immediately</span>
+              <span>No account required, start designing immediately</span>
             </div>
           </div>
         </div>

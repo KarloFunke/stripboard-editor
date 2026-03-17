@@ -7,6 +7,17 @@ from .models import Project
 # SHA-256 hex digest: exactly 64 lowercase hex characters
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
+# Strip HTML tags from project names
+HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
+
+
+def sanitize_name(value: str) -> str:
+    """Remove HTML tags and excessive whitespace from project names."""
+    cleaned = HTML_TAG_PATTERN.sub("", value).strip()
+    if not cleaned:
+        return "Untitled Project"
+    return cleaned
+
 
 class ProjectListSerializer(serializers.ModelSerializer):
     fork_count = serializers.IntegerField(source="forks.count", read_only=True)
@@ -69,10 +80,37 @@ class ProjectDetailSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
+    def validate_name(self, value):
+        return sanitize_name(value)
+
+    def validate_data(self, value):
+        import json
+        size = len(json.dumps(value).encode("utf-8"))
+        if size > MAX_PROJECT_DATA_BYTES:
+            raise serializers.ValidationError(
+                f"Project data too large ({size} bytes). Maximum is {MAX_PROJECT_DATA_BYTES} bytes."
+            )
+        return value
+
+
+MAX_PROJECT_DATA_BYTES = 512_000  # 500 KB
+
 
 class ProjectCreateSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=255, default="Untitled Project")
     data = serializers.JSONField()
+
+    def validate_name(self, value):
+        return sanitize_name(value)
+
+    def validate_data(self, value):
+        import json
+        size = len(json.dumps(value).encode("utf-8"))
+        if size > MAX_PROJECT_DATA_BYTES:
+            raise serializers.ValidationError(
+                f"Project data too large ({size} bytes). Maximum is {MAX_PROJECT_DATA_BYTES} bytes."
+            )
+        return value
 
 
 class UserRegistrationSerializer(serializers.Serializer):

@@ -66,6 +66,8 @@ def project_detail(request, edit_uuid):
         return Response(serializer.data)
 
     if request.method == "DELETE":
+        if not request.user.is_authenticated or project.owner != request.user:
+            return Response({"error": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
         project.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
