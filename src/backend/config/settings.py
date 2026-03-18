@@ -92,6 +92,12 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 NUM_PROXIES = 2  # global reverse proxy + nginx container
 
 REST_FRAMEWORK = {
+    "DEFAULT_RENDERER_CLASSES": [
+        "rest_framework.renderers.JSONRenderer",
+    ] if not DEBUG else [
+        "rest_framework.renderers.JSONRenderer",
+        "rest_framework.renderers.BrowsableAPIRenderer",
+    ],
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework.authentication.SessionAuthentication",
     ],

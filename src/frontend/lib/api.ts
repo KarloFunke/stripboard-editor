@@ -81,7 +81,6 @@ export interface ProjectMeta {
   edit_uuid: string;
   view_uuid: string;
   name: string;
-  fork_of: number | null;
   fork_count: number;
   created_at: string;
   updated_at: string;

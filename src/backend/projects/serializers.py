@@ -65,7 +65,6 @@ class ProjectDetailSerializer(serializers.ModelSerializer):
             "name",
             "data",
             "owner_name",
-            "fork_of",
             "fork_count",
             "created_at",
             "updated_at",
@@ -74,7 +73,6 @@ class ProjectDetailSerializer(serializers.ModelSerializer):
             "edit_uuid",
             "view_uuid",
             "owner_name",
-            "fork_of",
             "fork_count",
             "created_at",
             "updated_at",
@@ -82,8 +80,7 @@ class ProjectDetailSerializer(serializers.ModelSerializer):
 
 
 class ProjectViewSerializer(serializers.ModelSerializer):
-    """Read-only serializer for view-only access. Does NOT expose edit_uuid."""
-    fork_count = serializers.IntegerField(source="forks.count", read_only=True)
+    """Read-only serializer for view-only access. Minimal fields, no edit_uuid."""
     owner_name = serializers.CharField(source="owner.username", read_only=True, default=None)
 
     class Meta:
@@ -93,10 +90,6 @@ class ProjectViewSerializer(serializers.ModelSerializer):
             "name",
             "data",
             "owner_name",
-            "fork_of",
-            "fork_count",
-            "created_at",
-            "updated_at",
         ]
         read_only_fields = fields
 
