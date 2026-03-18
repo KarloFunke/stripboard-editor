@@ -66,7 +66,7 @@ export default function ProjectViewPage() {
 
   return (
     <div className="flex flex-col h-screen bg-[#fafafa]">
-      <div className="h-8 bg-[#113768] text-white flex items-center px-4 justify-between text-xs">
+      <div className="h-12 bg-[#113768] text-white flex items-center px-5 justify-between text-sm">
         <span className="font-semibold tracking-wide">
           {projectName}
           {ownerName && <span className="font-normal opacity-70 ml-2">by {ownerName}</span>}

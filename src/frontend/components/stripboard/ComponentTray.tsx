@@ -5,7 +5,7 @@ import { useProjectStore } from "@/store/useProjectStore";
 import { useStripSegments } from "@/hooks/useStripSegments";
 import { checkNetCompleteness } from "./netCompleteness";
 
-export default function ComponentTray() {
+export default function ComponentTray({ readOnly = false }: { readOnly?: boolean }) {
   const components = useProjectStore((s) => s.components);
   const componentDefs = useProjectStore((s) => s.componentDefs);
   const nets = useProjectStore((s) => s.nets);
@@ -34,6 +34,53 @@ export default function ComponentTray() {
     e.dataTransfer.effectAllowed = "move";
     setTrayDragComponentId(componentId);
   };
+
+  if (readOnly) {
+    return (
+      <div className="flex flex-col h-full overflow-y-auto">
+        {incompleteNets.length > 0 ? (
+          <>
+            <div className="px-3.5 py-2.5 text-xs font-semibold text-red-500 uppercase tracking-wide">
+              Incomplete Nets
+            </div>
+            <div className="px-2.5 pb-2.5">
+              {incompleteNets.map((net) => (
+                <div
+                  key={net.netId}
+                  className="px-2.5 py-2 mb-1.5 rounded text-sm bg-red-50 border border-red-100"
+                  onMouseEnter={() => setHighlightedNetId(net.netId)}
+                  onMouseLeave={() => setHighlightedNetId(null)}
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <span
+                      className="inline-block h-3 w-3 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: net.netColor }}
+                    />
+                    <span className="font-medium text-neutral-900">{net.netName}</span>
+                  </div>
+                  {net.groups.map((group, i) => (
+                    <div key={i} className="text-neutral-600 ml-5 text-sm">
+                      {i > 0 && <span className="text-red-400">disconnected from: </span>}
+                      {group.map((p) => `${p.componentLabel}·${p.pinName}`).join(", ")}
+                    </div>
+                  ))}
+                  {net.unplacedPins.length > 0 && (
+                    <div className="text-neutral-400 ml-5 text-sm">
+                      not placed: {net.unplacedPins.map((p) => `${p.componentLabel}·${p.pinName}`).join(", ")}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="px-3.5 py-2.5 text-xs text-neutral-400">
+            All nets connected
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full overflow-y-auto">

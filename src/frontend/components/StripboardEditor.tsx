@@ -41,7 +41,11 @@ export default function StripboardEditor({ readOnly = false }: { readOnly?: bool
         )}
       </div>
       <div className="flex flex-1 min-h-0">
-        {!readOnly && (
+        {readOnly ? (
+          <div className="w-48 flex-shrink-0 flex flex-col overflow-hidden border-r border-neutral-200">
+            <ComponentTray readOnly />
+          </div>
+        ) : (
           <ResizableSidebar defaultWidth={200} minWidth={140} maxWidth={360}>
             <div className="flex flex-col h-full overflow-hidden border-r border-neutral-200">
               <ComponentTray />
