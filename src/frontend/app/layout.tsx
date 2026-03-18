@@ -44,9 +44,9 @@ export const metadata: Metadata = {
       "Free online stripboard editor with live strip colouring. See net connectivity at a glance — strips light up in your net colours.",
     images: [
       {
-        url: "/stripboard-editor-example.png",
+        url: "/demo-circuit.png",
         width: 1920,
-        height: 1014,
+        height: 963,
         alt: "Stripboard Editor — layout view",
       },
     ],
@@ -56,7 +56,7 @@ export const metadata: Metadata = {
     title: "Stripboard Editor — Design Stripboard Layouts Online",
     description:
       "Free online stripboard editor with live strip colouring. See net connectivity at a glance.",
-    images: ["/stripboard-editor-example.png"],
+    images: ["/demo-circuit.png"],
   },
   alternates: {
     canonical: siteUrl,

@@ -183,26 +183,13 @@ export default function HomePage() {
         </div>
 
         {!user && (<>
-        {/* Editor screenshots */}
+        {/* Editor screenshot */}
         <div className="mb-10">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <img
-                src="/schematic-editor-example.png"
-                alt="Schematic editor"
-                className="rounded-lg border border-neutral-200 shadow-sm w-full"
-              />
-              <p className="text-xs text-neutral-500 mt-2 text-center">Basic Schematic / Net Editor</p>
-            </div>
-            <div>
-              <img
-                src="/stripboard-editor-example.png"
-                alt="Stripboard layout editor"
-                className="rounded-lg border border-neutral-200 shadow-sm w-full"
-              />
-              <p className="text-xs text-neutral-500 mt-2 text-center">Stripboard Layout</p>
-            </div>
-          </div>
+          <img
+            src="/demo-circuit.png"
+            alt="Stripboard Editor — schematic and board layout side by side"
+            className="rounded-lg border border-neutral-200 shadow-sm w-full"
+          />
         </div>
 
         {/* How it works */}
