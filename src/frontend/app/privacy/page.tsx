@@ -82,10 +82,6 @@ export default function PrivacyPage() {
               Karl Funke<br />
               <a href="mailto:karl.funke@indocu.de" className="text-[#113768] hover:underline">karl.funke@indocu.de</a>
             </p>
-            <p className="text-xs text-neutral-400 mt-2">
-              This is a personal hobby project. For business inquiries, visit{" "}
-              <a href="https://indocu.de?utm_source=stripboard-editor" className="text-neutral-500 hover:underline">indocu.de</a>.
-            </p>
           </section>
         </div>
 

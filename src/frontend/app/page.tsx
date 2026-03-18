@@ -284,7 +284,7 @@ export default function HomePage() {
               </div>
             </div>
             <p className="text-xs text-neutral-500">
-              No email required, just pick a username and password. Doesnt cost any money.
+              No email required, just pick a username and password. Doesnt cost any money ever.
             </p>
             <button
               onClick={() => setShowAuth("register")}
@@ -552,8 +552,6 @@ export default function HomePage() {
           <span>
             {"© " + new Date().getFullYear() + " "}
             <a href="https://karl-funke.com?utm_source=stripboard-editor" className="text-neutral-500 hover:text-[#113768] transition-colors">Karl Funke</a>
-            {" · "}
-            <a href="https://indocu.de?utm_source=stripboard-editor" className="text-neutral-500 hover:text-[#113768] transition-colors">indocu.de</a>
           </span>
           <a href="/privacy" className="text-neutral-500 hover:text-[#113768] transition-colors">Privacy Policy</a>
         </div>
