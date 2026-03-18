@@ -105,9 +105,13 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
     setAuthLoading(false);
   };
 
+  const [logoutFlash, setLogoutFlash] = useState(false);
+
   const handleLogout = async () => {
     await logout();
     setUser(null);
+    setLogoutFlash(true);
+    setTimeout(() => setLogoutFlash(false), 1500);
   };
 
   // Sync nameValue when name changes externally
@@ -334,6 +338,8 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
                 Logout
               </button>
             </>
+          ) : logoutFlash ? (
+            <span className="text-sm text-green-300">Logged out</span>
           ) : (
             <>
               <button

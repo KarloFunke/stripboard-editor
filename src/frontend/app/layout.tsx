@@ -18,7 +18,7 @@ const siteUrl = "https://stripboard-editor.com";
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: "Stripboard Editor — Design Stripboard Layouts Online",
+    default: "Stripboard Editor - Design Stripboard Layouts Online",
     template: "%s | Stripboard Editor",
   },
   description:
@@ -39,7 +39,7 @@ export const metadata: Metadata = {
     locale: "en_US",
     url: siteUrl,
     siteName: "Stripboard Editor",
-    title: "Stripboard Editor — Design Stripboard Layouts Online",
+    title: "Stripboard Editor - Design Stripboard Layouts Online",
     description:
       "Free online stripboard editor with live strip colouring. See net connectivity at a glance — strips light up in your net colours.",
     images: [
@@ -53,7 +53,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Stripboard Editor — Design Stripboard Layouts Online",
+    title: "Stripboard Editor - Design Stripboard Layouts Online",
     description:
       "Free online stripboard editor with live strip colouring. See net connectivity at a glance.",
     images: ["/demo-circuit.png"],
