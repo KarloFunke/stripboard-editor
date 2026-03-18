@@ -7,6 +7,7 @@ import { createProject } from "@/lib/api";
 import SchematicEditor from "@/components/SchematicEditor";
 import StripboardEditor from "@/components/StripboardEditor";
 import ProjectToolbar from "@/components/ProjectToolbar";
+import SplitPane from "@/components/SplitPane";
 
 export default function NewProjectPage() {
   const router = useRouter();
@@ -53,14 +54,10 @@ export default function NewProjectPage() {
         saving={saving}
         lastSaved={lastSaved}
       />
-      <div className="flex flex-1 min-h-0">
-        <div className="w-1/2 border-r-2 border-[#113768]/20">
-          <SchematicEditor />
-        </div>
-        <div className="w-1/2">
-          <StripboardEditor />
-        </div>
-      </div>
+      <SplitPane
+        left={<SchematicEditor />}
+        right={<StripboardEditor />}
+      />
     </div>
   );
 }

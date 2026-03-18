@@ -185,11 +185,14 @@ export default function HomePage() {
         {!user && (<>
         {/* Editor screenshot */}
         <div className="mb-10">
-          <img
-            src="/demo-circuit.png"
-            alt="Stripboard Editor — schematic and board layout side by side"
-            className="rounded-lg border border-neutral-200 shadow-sm w-full"
-          />
+          <a href="https://stripboard-editor.com/view/2b08cf25-5e23-4952-8df3-0d0fd385b58e">
+            <img
+              src="/demo-circuit.png"
+              alt="Stripboard Editor — schematic and board layout side by side"
+              className="rounded-lg border border-neutral-200 shadow-sm w-full hover:shadow-md transition-shadow"
+            />
+            <p className="text-xs text-neutral-500 mt-2 text-center">Click to view this demo circuit</p>
+          </a>
         </div>
 
         {/* How it works */}

@@ -8,6 +8,7 @@ import { track } from "@/lib/track";
 import { Project } from "@/types";
 import SchematicEditor from "@/components/SchematicEditor";
 import StripboardEditor from "@/components/StripboardEditor";
+import SplitPane from "@/components/SplitPane";
 
 export default function ProjectViewPage() {
   const params = useParams();
@@ -86,14 +87,10 @@ export default function ProjectViewPage() {
           </a>
         </div>
       </div>
-      <div className="flex flex-1 min-h-0">
-        <div className="w-1/2 border-r-2 border-[#113768]/20">
-          <SchematicEditor readOnly />
-        </div>
-        <div className="w-1/2">
-          <StripboardEditor readOnly />
-        </div>
-      </div>
+      <SplitPane
+        left={<SchematicEditor readOnly />}
+        right={<StripboardEditor readOnly />}
+      />
     </div>
   );
 }
