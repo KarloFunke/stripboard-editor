@@ -3,9 +3,10 @@
 import { useState } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { ComponentDef } from "@/types";
-import { COMPONENT_GROUPS } from "@/data/defaultComponents";
+import { COMPONENT_GROUPS, DEFAULT_COMPONENTS } from "@/data/defaultComponents";
 import { getSymbolDef } from "@/data/symbolDefs";
 import { getSymbolBounds } from "./SymbolRenderer";
+import CustomComponentEditor from "./CustomComponentEditor";
 
 function SymbolThumbnail({ def }: { def: ComponentDef }) {
   const symbolDef = getSymbolDef(def.symbol);
@@ -16,14 +17,12 @@ function SymbolThumbnail({ def }: { def: ComponentDef }) {
   const scale = 0.4;
   const w = bounds.width * scale + pad * 2;
   const h = bounds.height * scale + pad * 2;
-  // Center offset: translate so bounds center is at svg center
   const cx = (bounds.minX + bounds.maxX) / 2;
   const cy = (bounds.minY + bounds.maxY) / 2;
 
   return (
     <svg width={Math.max(w, 24)} height={Math.max(h, 24)} className="flex-shrink-0">
       <g transform={`translate(${Math.max(w, 24) / 2}, ${Math.max(h, 24) / 2}) scale(${scale}) translate(${-cx}, ${-cy})`}>
-        {/* Body paths (includes stubs) */}
         {symbolDef.bodyPaths.map((path, i) => (
           <path
             key={`b-${i}`}
@@ -35,7 +34,6 @@ function SymbolThumbnail({ def }: { def: ComponentDef }) {
             strokeLinejoin="round"
           />
         ))}
-        {/* Pin dots */}
         {symbolDef.pins.map((pin) => (
           <circle
             key={pin.pinId}
@@ -47,7 +45,6 @@ function SymbolThumbnail({ def }: { def: ComponentDef }) {
             strokeWidth={1}
           />
         ))}
-        {/* Extra elements */}
         {symbolDef.extraElements?.map((el, i) => {
           if (el.type === "line") {
             return (
@@ -78,10 +75,18 @@ function SymbolThumbnail({ def }: { def: ComponentDef }) {
 
 export default function ComponentLibrary() {
   const addComponent = useProjectStore((s) => s.addComponent);
+  const addComponentDef = useProjectStore((s) => s.addComponentDef);
+  const removeComponentDef = useProjectStore((s) => s.removeComponentDef);
+  const componentDefs = useProjectStore((s) => s.componentDefs);
 
+  const [showCustomEditor, setShowCustomEditor] = useState(false);
   const [openGroups, setOpenGroups] = useState<Set<string>>(
     new Set([COMPONENT_GROUPS[0].label])
   );
+
+  // Custom components = defs not in DEFAULT_COMPONENTS
+  const defaultIds = new Set(DEFAULT_COMPONENTS.map((d) => d.id));
+  const customDefs = componentDefs.filter((d) => !defaultIds.has(d.id));
 
   const toggleGroup = (label: string) => {
     setOpenGroups((prev) => {
@@ -99,6 +104,11 @@ export default function ComponentLibrary() {
   const handleDragStart = (e: React.DragEvent, defId: string) => {
     e.dataTransfer.setData("application/schematic-component", defId);
     e.dataTransfer.effectAllowed = "copy";
+  };
+
+  const handleCreateCustom = (def: ComponentDef) => {
+    addComponentDef(def);
+    setShowCustomEditor(false);
   };
 
   return (
@@ -141,7 +151,68 @@ export default function ComponentLibrary() {
             </div>
           );
         })}
+
+        {/* Custom components section */}
+        {customDefs.length > 0 && (
+          <div>
+            <button
+              onClick={() => toggleGroup("Custom")}
+              className="w-full flex items-center gap-1.5 px-3.5 py-1.5 text-sm font-medium text-neutral-600 hover:bg-neutral-50 transition-colors"
+            >
+              <span className="text-xs">{openGroups.has("Custom") ? "▼" : "▶"}</span>
+              Custom
+              <span className="text-neutral-400 ml-auto text-xs">{customDefs.length}</span>
+            </button>
+            {openGroups.has("Custom") && (
+              <div className="flex flex-wrap gap-1.5 px-2.5 pb-2.5">
+                {customDefs.map((def) => (
+                  <div key={def.id} className="relative group">
+                    <button
+                      draggable
+                      onDragStart={(e) => handleDragStart(e, def.id)}
+                      onClick={() => handleAdd(def.id)}
+                      className="flex flex-col items-center gap-1 px-2 py-1.5 rounded border border-transparent hover:border-neutral-300 hover:bg-neutral-50 active:bg-neutral-100 transition-colors cursor-grab active:cursor-grabbing"
+                      title={def.name}
+                    >
+                      <SymbolThumbnail def={def} />
+                      <span className="text-xs text-neutral-500 leading-tight text-center max-w-[72px]">
+                        {def.name}
+                      </span>
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeComponentDef(def.id);
+                      }}
+                      className="absolute -top-1 -right-1 hidden group-hover:flex h-4 w-4 items-center justify-center rounded-full bg-red-400 text-white text-[9px] leading-none"
+                      title="Remove custom component"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* Create custom button */}
+      <div className="px-2.5 py-2 border-t border-neutral-200">
+        <button
+          onClick={() => setShowCustomEditor(true)}
+          className="w-full text-xs py-1.5 rounded bg-neutral-100 text-neutral-600 hover:bg-neutral-200 transition-colors"
+        >
+          + Create Custom Component
+        </button>
+      </div>
+
+      {showCustomEditor && (
+        <CustomComponentEditor
+          onSave={handleCreateCustom}
+          onClose={() => setShowCustomEditor(false)}
+        />
+      )}
     </div>
   );
 }

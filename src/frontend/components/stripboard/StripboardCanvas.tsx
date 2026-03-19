@@ -90,6 +90,8 @@ export default function StripboardCanvas({ readOnly = false }: { readOnly?: bool
     startX: number;
     startY: number;
     didDrag: boolean;
+    rowOffset: number; // click row - boardPos row
+    colOffset: number; // click col - boardPos col
   } | null>(null);
   const [dragPreviewPos, setDragPreviewPos] = useState<{
     row: number;
@@ -282,14 +284,24 @@ export default function StripboardCanvas({ readOnly = false }: { readOnly?: bool
       e.preventDefault();
       pushSnapshot();
       setSelectedId(componentId);
+
+      // Compute offset: where within the component the user clicked
+      const comp = components.find((c) => c.id === componentId);
+      const pt = getSVGPoint(e);
+      const clickHole = nearestHole(pt.x, pt.y, board.rows, board.cols);
+      const rowOffset = comp?.boardPos && clickHole ? clickHole.row - comp.boardPos.row : 0;
+      const colOffset = comp?.boardPos && clickHole ? clickHole.col - comp.boardPos.col : 0;
+
       setDragging({
         componentId,
         startX: e.clientX,
         startY: e.clientY,
         didDrag: false,
+        rowOffset,
+        colOffset,
       });
     },
-    [wirePlacementMode, wirePlacementFrom]
+    [wirePlacementMode, wirePlacementFrom, components, board.rows, board.cols, getSVGPoint]
   );
 
   // Start selection rectangle on mouseDown on empty SVG area
@@ -371,7 +383,12 @@ export default function StripboardCanvas({ readOnly = false }: { readOnly?: bool
         setDragging({ ...dragging, didDrag: true });
       }
       const pt = getSVGPoint(e);
-      const previewHole = nearestHole(pt.x, pt.y, board.rows, board.cols);
+      const mouseHole = nearestHole(pt.x, pt.y, board.rows, board.cols);
+      // Apply offset so the component doesn't snap to top-left corner
+      const previewHole = mouseHole ? {
+        row: mouseHole.row - dragging.rowOffset,
+        col: mouseHole.col - dragging.colOffset,
+      } : null;
       setDragPreviewPos(previewHole);
 
       // Live-update position for instant strip recoloring

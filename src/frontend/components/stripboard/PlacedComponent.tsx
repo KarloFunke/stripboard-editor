@@ -91,7 +91,7 @@ export default function PlacedComponent({ component, isSelected, onMouseDown, on
           fill="#525252"
           pointerEvents="none"
         >
-          {pin.pinId}
+          {def.pins.find((p) => p.id === pin.pinId)?.name ?? pin.pinId}
         </text>
       </g>
     );

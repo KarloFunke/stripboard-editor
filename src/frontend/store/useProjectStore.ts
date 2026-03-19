@@ -17,6 +17,7 @@ import { getComponentBounds } from "@/components/stripboard/boardLayout";
 import { recalculateNets } from "@/components/schematic/netInference";
 import { getRotatedPinPositions } from "@/components/schematic/SymbolRenderer";
 import { pointKey } from "@/utils/schematicConstants";
+import { createFootprintSymbol, registerCustomSymbol } from "@/data/symbolDefs";
 
 function generateId(): string {
   return crypto.randomUUID();
@@ -36,6 +37,7 @@ function nextLabel(components: Component[], prefix: string): string {
 interface ProjectActions {
   // Component definitions
   addComponentDef: (def: ComponentDef) => void;
+  removeComponentDef: (defId: string) => void;
   updateComponentDef: (
     defId: string,
     updates: Partial<Pick<ComponentDef, "width" | "height" | "pins" | "bodyCells">>
@@ -232,6 +234,19 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   addComponentDef: (def) => {
     get().pushSnapshot();
     set((s) => ({ componentDefs: [...s.componentDefs, def] }));
+  },
+
+  removeComponentDef: (defId) => {
+    get().pushSnapshot();
+    set((s) => ({
+      componentDefs: s.componentDefs.filter((d) => d.id !== defId),
+      // Remove all instances of this component and their net assignments/wires
+      components: s.components.filter((c) => c.defId !== defId),
+      netAssignments: s.netAssignments.filter((a) =>
+        s.components.some((c) => c.defId !== defId && c.id === a.componentId) ||
+        !s.components.some((c) => c.id === a.componentId)
+      ),
+    }));
   },
 
   updateComponentDef: (defId, updates) => {
@@ -769,6 +784,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const defaultIds = new Set(DEFAULT_COMPONENTS.map((d) => d.id));
     const customDefs = savedDefs.filter((d) => !defaultIds.has(d.id));
     const mergedDefs = [...DEFAULT_COMPONENTS, ...customDefs];
+
+    // Register custom footprint symbols for custom components
+    for (const def of customDefs) {
+      if (def.symbol.startsWith("custom-footprint-")) {
+        const symbol = createFootprintSymbol(def.pins, def.width, def.height);
+        registerCustomSymbol(def.id, { ...symbol, symbolId: def.symbol });
+      }
+    }
 
     set({
       name: data.name ?? "Untitled Project",

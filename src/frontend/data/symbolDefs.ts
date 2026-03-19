@@ -42,6 +42,7 @@ const G = GRID_SIZE; // all stubEnd coords MUST be multiples of this
 const resistor: SymbolDef = {
   symbolId: "resistor",
   label: "Resistor",
+  labelYOffset: 10,
   category: "passive",
   bodyPaths: [
     { d: "M 0 -10 L 5 -8 L -5 -3 L 5 2 L -5 7 L 5 12 L 0 14", fill: "none" },
@@ -91,7 +92,7 @@ const capPolarized: SymbolDef = {
 };
 
 // 2-pin horizontal: pins 1.5 grid cells apart each side
-const DIODE_LEAD = Math.round(1.5 * G); // 30
+const DIODE_LEAD = 2 * G; // 40 — one full grid cell per side
 
 const diode: SymbolDef = {
   symbolId: "diode",
@@ -570,7 +571,69 @@ export function createConnectorSymbol(pinCount: number): SymbolDef {
   };
 }
 
+// ── Custom Footprint Symbol ───────────────────────────
+
+/** Create a symbol that mirrors the stripboard footprint layout — box with pins inside */
+export function createFootprintSymbol(
+  pins: { id: string; name: string; offsetRow: number; offsetCol: number }[],
+  width: number,
+  height: number,
+): SymbolDef {
+  const cellSpacing = G;
+  const maxRow = height - 1;
+  const maxCol = width - 1;
+  // Round offsets to grid so all pin positions land on grid multiples
+  const offsetX = Math.floor(maxCol / 2) * cellSpacing;
+  const offsetY = Math.floor(maxRow / 2) * cellSpacing;
+  const pad = 8;
+  const bodyLeft = -offsetX - pad;
+  const bodyTop = -offsetY - pad;
+  const bodyRight = (maxCol * cellSpacing - offsetX) + pad;
+  const bodyBottom = (maxRow * cellSpacing - offsetY) + pad;
+
+  const symbolPins: SymbolPinStub[] = pins.map((pin) => {
+    const x = pin.offsetCol * cellSpacing - offsetX;
+    const y = pin.offsetRow * cellSpacing - offsetY;
+    // Determine which edge the pin is closest to for label placement
+    const distLeft = pin.offsetCol;
+    const distRight = maxCol - pin.offsetCol;
+    const distTop = pin.offsetRow;
+    const distBottom = maxRow - pin.offsetRow;
+    const minDist = Math.min(distLeft, distRight, distTop, distBottom);
+    let side: "top" | "bottom" | "left" | "right" = "left";
+    if (minDist === distTop) side = "top";
+    else if (minDist === distBottom) side = "bottom";
+    else if (minDist === distRight) side = "right";
+
+    return {
+      pinId: pin.id,
+      defaultName: pin.name,
+      stubStart: { x, y },
+      stubEnd: { x, y },
+      side,
+    };
+  });
+
+  return {
+    symbolId: "custom-footprint",
+    label: "Custom",
+    category: "generic",
+    labelYOffset: 10,
+    bodyPaths: [
+      { d: `M ${bodyLeft} ${bodyTop} L ${bodyRight} ${bodyTop} L ${bodyRight} ${bodyBottom} L ${bodyLeft} ${bodyBottom} Z`, fill: "none" },
+    ],
+    pins: symbolPins,
+  };
+}
+
 // ── Public API ────────────────────────────────────────
+
+/** Symbol cache for custom footprint symbols */
+const customSymbolCache = new Map<string, SymbolDef>();
+
+export function registerCustomSymbol(defId: string, symbol: SymbolDef) {
+  customSymbolCache.set(`custom-footprint-${defId}`, symbol);
+}
 
 export function getSymbolDef(symbolId: string): SymbolDef | undefined {
   const staticMatch = STATIC_SYMBOLS.find((s) => s.symbolId === symbolId);
@@ -581,6 +644,10 @@ export function getSymbolDef(symbolId: string): SymbolDef | undefined {
 
   const connMatch = symbolId.match(/^connector-(\d+)$/);
   if (connMatch) return createConnectorSymbol(parseInt(connMatch[1], 10));
+
+  // Custom footprint symbols
+  const cached = customSymbolCache.get(symbolId);
+  if (cached) return cached;
 
   return undefined;
 }
