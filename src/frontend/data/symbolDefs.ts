@@ -256,11 +256,6 @@ const vreg: SymbolDef = {
     { d: `M 18 0 L ${2 * G} 0`, fill: "none" },     // OUT stub
     { d: `M 0 16 L 0 ${2 * G}`, fill: "none" },     // GND stub
   ],
-  extraElements: [
-    { type: "text", props: { x: -9, y: 4, fontSize: 8, textAnchor: "middle", children: "IN" } },
-    { type: "text", props: { x: 9, y: 4, fontSize: 8, textAnchor: "middle", children: "OUT" } },
-    { type: "text", props: { x: 0, y: 13, fontSize: 8, textAnchor: "middle", children: "GND" } },
-  ],
   pins: [
     { pinId: "1", defaultName: "IN", stubStart: { x: -18, y: 0 }, stubEnd: { x: -2 * G, y: 0 }, side: "left" },
     { pinId: "2", defaultName: "OUT", stubStart: { x: 18, y: 0 }, stubEnd: { x: 2 * G, y: 0 }, side: "right" },

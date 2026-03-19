@@ -128,10 +128,7 @@ const initialProject: Project = {
   name: "Untitled Project",
   componentDefs: [...DEFAULT_COMPONENTS],
   components: [],
-  nets: [
-    { id: generateId(), name: "VCC", color: "#ef4444" },
-    { id: generateId(), name: "GND", color: "#171717" },
-  ],
+  nets: [],
   netAssignments: [],
   schematicWires: [],
   board: {
@@ -816,8 +813,6 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     componentDefs: [...DEFAULT_COMPONENTS],
     components: [],
     nets: [
-      { id: generateId(), name: "VCC", color: "#ef4444" },
-      { id: generateId(), name: "GND", color: "#171717" },
     ],
     netAssignments: [],
     schematicWires: [],

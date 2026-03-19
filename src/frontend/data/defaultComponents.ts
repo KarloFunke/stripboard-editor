@@ -249,7 +249,7 @@ export const COMPONENT_GROUPS: ComponentGroup[] = [
   },
   {
     label: "IC",
-    components: [4, 6, 8, 10, 12, 14, 16, 18, 20].map((pinCount) => ({
+    components: [4, 6, 8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40].map((pinCount) => ({
       id: `def-ic-dip${pinCount}`,
       name: `Generic IC (${pinCount}-pin)`,
       category: "ic" as const,
@@ -260,7 +260,7 @@ export const COMPONENT_GROUPS: ComponentGroup[] = [
   },
   {
     label: "Connector",
-    components: Array.from({ length: 10 }, (_, i) => {
+    components: Array.from({ length: 20 }, (_, i) => {
       const pinCount = i + 1;
       return {
         id: `def-connector-${pinCount}`,
@@ -272,60 +272,38 @@ export const COMPONENT_GROUPS: ComponentGroup[] = [
       };
     }),
   },
+];
+
+/** Hidden footprint preset defs — not shown in the library but referenced by footprintPresets */
+const FOOTPRINT_PRESETS: ComponentDef[] = [
+  ...[2, 3, 4, 5, 7].map((spacing) => ({
+    id: `def-generic-2pin-${spacing}h`,
+    name: `2-Pin (${spacing}h)`,
+    category: "generic" as const,
+    symbol: "generic-2pin",
+    defaultLabelPrefix: "X",
+    ...create2Pin(spacing),
+  })),
   {
-    label: "Generic Footprints",
-    components: [
-      // 2-Pin with various spacings
-      ...[2, 3, 4, 5, 7].map((spacing) => ({
-        id: `def-generic-2pin-${spacing}h`,
-        name: `2-Pin (${spacing}h)`,
-        category: "generic" as const,
-        symbol: "generic-2pin",
-        defaultLabelPrefix: "X",
-        ...create2Pin(spacing),
-      })),
-      // 3-Pin
-      {
-        id: "def-generic-3pin-compact",
-        name: "3-Pin Compact",
-        category: "generic" as const,
-        symbol: "generic-3pin",
-        defaultLabelPrefix: "X",
-        ...create3Pin(false),
-      },
-      {
-        id: "def-generic-3pin-spaced",
-        name: "3-Pin Spaced",
-        category: "generic" as const,
-        symbol: "generic-3pin",
-        defaultLabelPrefix: "X",
-        ...create3Pin(true),
-      },
-      // Inline 4-10
-      ...Array.from({ length: 7 }, (_, i) => {
-        const pinCount = i + 4;
-        return {
-          id: `def-generic-inline-${pinCount}`,
-          name: `Inline ${pinCount}-Pin`,
-          category: "generic" as const,
-          symbol: `connector-${pinCount}`,
-          defaultLabelPrefix: "X",
-          ...createInline(pinCount),
-        };
-      }),
-      // DIP 4-20
-      ...[4, 6, 8, 10, 12, 14, 16, 18, 20].map((pinCount) => ({
-        id: `def-generic-dip${pinCount}`,
-        name: `DIP-${pinCount}`,
-        category: "generic" as const,
-        symbol: `generic-ic-${pinCount}`,
-        defaultLabelPrefix: "X",
-        ...createDIP(pinCount),
-      })),
-    ],
+    id: "def-generic-3pin-compact",
+    name: "3-Pin Compact",
+    category: "generic" as const,
+    symbol: "generic-3pin",
+    defaultLabelPrefix: "X",
+    ...create3Pin(false),
+  },
+  {
+    id: "def-generic-3pin-spaced",
+    name: "3-Pin Spaced",
+    category: "generic" as const,
+    symbol: "generic-3pin",
+    defaultLabelPrefix: "X",
+    ...create3Pin(true),
   },
 ];
 
-/** Flat array of all default components (for store initialization) */
-export const DEFAULT_COMPONENTS: ComponentDef[] =
-  COMPONENT_GROUPS.flatMap((g) => g.components);
+/** Flat array of all default components (visible + hidden presets, for store initialization) */
+export const DEFAULT_COMPONENTS: ComponentDef[] = [
+  ...COMPONENT_GROUPS.flatMap((g) => g.components),
+  ...FOOTPRINT_PRESETS,
+];

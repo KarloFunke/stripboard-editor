@@ -180,6 +180,7 @@ export default function SchematicComponentBlock({
         pinColors={pinColors}
         onPinMouseDown={handlePinMouseDown}
         onPinLabelClick={editingPinId ? undefined : handlePinLabelClick}
+        pinNames={pinNames}
         showPinLabels={!editingPinId}
       />
     </g>

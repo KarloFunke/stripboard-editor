@@ -11,6 +11,7 @@ interface SymbolRendererProps {
   pinColors?: Record<string, string>; // pinId → net color
   onPinMouseDown?: (pinId: string, e: React.MouseEvent) => void;
   onPinLabelClick?: (pinId: string, e: React.MouseEvent) => void;
+  pinNames?: Record<string, string>; // pinId → custom display name (overrides defaultName)
   showPinLabels?: boolean;
   scale?: number;
 }
@@ -55,6 +56,9 @@ export function getSymbolBounds(symbolId: string, rotation: 0 | 90 | 180 | 270 =
   if (!def) return { width: 40, height: 40, minX: -20, minY: -20, maxX: 20, maxY: 20 };
 
   const points: { x: number; y: number }[] = [];
+
+  // Always include the origin so the body center is covered
+  points.push({ x: 0, y: 0 });
 
   // Collect all pin endpoints and stub starts
   for (const pin of def.pins) {
@@ -118,6 +122,7 @@ export default function SymbolRenderer({
   pinColors = {},
   onPinMouseDown,
   onPinLabelClick,
+  pinNames = {},
   showPinLabels = true,
   scale = 1,
 }: SymbolRendererProps) {
@@ -234,7 +239,7 @@ export default function SymbolRenderer({
                   }}
                   onMouseDown={(e) => { if (onPinLabelClick) e.stopPropagation(); }}
                 >
-                  {pin.defaultName}
+                  {pinNames[pin.pinId] ?? pin.defaultName}
                 </text>
               );
             })()}

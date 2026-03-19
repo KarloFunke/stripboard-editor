@@ -59,7 +59,6 @@ function generateId(): string {
   return crypto.randomUUID();
 }
 
-const PERSISTENT_NET_NAMES = new Set(["VCC", "GND"]);
 
 /**
  * Recalculate nets from wire segments using spatial matching.
@@ -186,13 +185,6 @@ export function recalculateNets(
         componentId: pin.componentId,
         pinId: pin.pinId,
       });
-    }
-  }
-
-  // Keep persistent nets (VCC, GND) even if unused
-  for (const net of existingNets) {
-    if (PERSISTENT_NET_NAMES.has(net.name) && !usedNetIds.has(net.id)) {
-      newNets.push(net);
     }
   }
 
