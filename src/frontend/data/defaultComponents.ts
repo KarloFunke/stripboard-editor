@@ -338,8 +338,8 @@ export const COMPONENT_GROUPS: ComponentGroup[] = [
         pins: [
           { id: "1", name: "A", offsetRow: 0, offsetCol: 0 },
           { id: "2", name: "K", offsetRow: 1, offsetCol: 0 },
-          { id: "3", name: "C", offsetRow: 1, offsetCol: 3 },
-          { id: "4", name: "E", offsetRow: 0, offsetCol: 3 },
+          { id: "3", name: "E", offsetRow: 1, offsetCol: 3 },
+          { id: "4", name: "C", offsetRow: 0, offsetCol: 3 },
         ],
       },
       {

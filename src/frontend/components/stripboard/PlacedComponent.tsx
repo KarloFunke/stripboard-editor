@@ -161,13 +161,6 @@ export default function PlacedComponent({ component, isSelected, onMouseDown, on
       >
         {component.label}
       </text>
-      <text
-        x={topLeft.x + ((bounds.maxCol - bounds.minCol) * HOLE_SPACING) / 2}
-        y={topLeft.y + (bounds.maxRow - bounds.minRow) * HOLE_SPACING + pad + 12}
-        textAnchor="middle" fontSize={9} fill="#737373" pointerEvents="none"
-      >
-        {def.name}
-      </text>
       {pins.map(renderPin)}
     </g>
   );

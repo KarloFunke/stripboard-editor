@@ -200,7 +200,7 @@ export default function SymbolRenderer({
             {/* Connection point */}
             <circle
               cx={rEnd.x} cy={rEnd.y}
-              r={hasNet ? 2.5 : 2}
+              r={2.5}
               fill={hasNet ? color : "white"}
               stroke={hasNet ? color : "#999"}
               strokeWidth={1.5}

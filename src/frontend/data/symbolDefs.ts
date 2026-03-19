@@ -400,8 +400,8 @@ const optocoupler: SymbolDef = {
   pins: [
     { pinId: "1", defaultName: "A", stubStart: { x: -18, y: -G }, stubEnd: { x: -2 * G, y: -G }, side: "left" },
     { pinId: "2", defaultName: "K", stubStart: { x: -18, y: G }, stubEnd: { x: -2 * G, y: G }, side: "left" },
-    { pinId: "3", defaultName: "C", stubStart: { x: 18, y: -G }, stubEnd: { x: 2 * G, y: -G }, side: "right" },
-    { pinId: "4", defaultName: "E", stubStart: { x: 18, y: G }, stubEnd: { x: 2 * G, y: G }, side: "right" },
+    { pinId: "4", defaultName: "C", stubStart: { x: 18, y: -G }, stubEnd: { x: 2 * G, y: -G }, side: "right" },
+    { pinId: "3", defaultName: "E", stubStart: { x: 18, y: G }, stubEnd: { x: 2 * G, y: G }, side: "right" },
   ],
 };
 

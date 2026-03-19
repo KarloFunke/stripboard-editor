@@ -35,7 +35,7 @@ export function getWirePoints(wire: SchematicWire): { x: number; y: number }[] {
 
 export default function SchematicWireLine({ wire, color, isSelected, onMouseDown }: Props) {
   const points = getWirePoints(wire);
-  const strokeWidth = isSelected ? 3 : 2;
+  const strokeWidth = isSelected ? 2.5 : 1.5;
   const strokeColor = isSelected ? "#113768" : (color ?? "#666");
 
   return (

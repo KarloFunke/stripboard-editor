@@ -155,6 +155,8 @@ export function recalculateNets(
       let bestNetId = "";
       let bestCount = 0;
       for (const [netId, count] of netCounts) {
+        // Skip nets already claimed by another group (handles net splitting)
+        if (usedNetIds.has(netId)) continue;
         const net = existingNets.find((n) => n.id === netId);
         if (!net) continue;
         const isUserNamed = !net.name.match(/^net\d+$/);
@@ -174,10 +176,8 @@ export function recalculateNets(
       };
     }
 
-    if (!usedNetIds.has(assignedNet.id)) {
-      newNets.push(assignedNet);
-      usedNetIds.add(assignedNet.id);
-    }
+    newNets.push(assignedNet);
+    usedNetIds.add(assignedNet.id);
 
     for (const pin of pins) {
       newAssignments.push({
