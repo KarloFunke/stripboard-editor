@@ -7,10 +7,7 @@ import {
   NetAssignment,
   BoardPosition,
   Cut,
-  Jumper,
   ComponentDef,
-  PinDef,
-  BodyCell,
   Wire,
   SchematicWire,
 } from "@/types";
@@ -71,9 +68,6 @@ interface ProjectActions {
   // Board
   placeCut: (cut: Cut) => void;
   removeCut: (cut: Cut) => void;
-  addJumper: (from: BoardPosition, to: BoardPosition, netId: string) => void;
-  removeJumper: (from: BoardPosition, to: BoardPosition) => void;
-
   // Board wires
   setBoardSize: (rows: number, cols: number) => void;
   addWire: (from: BoardPosition, to: BoardPosition) => void;
@@ -655,33 +649,6 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }));
   },
 
-  addJumper: (from, to, netId) => {
-    get().pushSnapshot();
-    set((s) => ({
-      board: {
-        ...s.board,
-        jumpers: [...s.board.jumpers, { from, to, netId }],
-      },
-    }));
-  },
-
-  removeJumper: (from, to) => {
-    get().pushSnapshot();
-    set((s) => ({
-      board: {
-        ...s.board,
-        jumpers: s.board.jumpers.filter(
-          (j) =>
-            !(
-              j.from.row === from.row &&
-              j.from.col === from.col &&
-              j.to.row === to.row &&
-              j.to.col === to.col
-            )
-        ),
-      },
-    }));
-  },
 
   addWire: (from, to) => {
     get().pushSnapshot();
@@ -820,12 +787,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         jumpers: data.board?.jumpers ?? [],
         wires: data.board?.wires ?? [],
       },
-    
       wirePlacementMode: false,
       wirePlacementFrom: null,
       schematicWireDrawMode: false,
       schematicWireDrawingFrom: null,
-  schematicWireDirection: null,
+      schematicWireDirection: null,
     });
   },
 
@@ -833,17 +799,15 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     name: "Untitled Project",
     componentDefs: [...DEFAULT_COMPONENTS],
     components: [],
-    nets: [
-    ],
+    nets: [],
     netAssignments: [],
     schematicWires: [],
     board: { rows: 20, cols: 20, cuts: [], jumpers: [], wires: [] },
-  
     wirePlacementMode: false,
     wirePlacementFrom: null,
     schematicWireDrawMode: false,
     schematicWireDrawingFrom: null,
-  schematicWireDirection: null,
+    schematicWireDirection: null,
     _history: [],
     _redoStack: [],
     canUndo: false,
