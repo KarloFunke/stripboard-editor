@@ -52,6 +52,7 @@ interface ProjectActions {
   updateComponentFootprint: (componentId: string, override: FootprintOverride) => void;
   updateSchematicPos: (id: string, pos: { x: number; y: number }) => void;
   rotateSchematicComponent: (id: string) => void;
+  mirrorSchematicComponent: (id: string) => void;
   placeOnBoard: (id: string, pos: { row: number; col: number }) => void;
   moveComponentsOnBoard: (ids: string[], deltaRow: number, deltaCol: number, wireIds?: string[], cutPositions?: { row: number; col: number }[]) => void;
   removeFromBoard: (id: string) => void;
@@ -344,11 +345,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       if (!def) return s;
 
       const oldRotation = comp.schematicRotation ?? 0;
+      const mirrored = comp.schematicMirrored ?? false;
       const newRotation = ((oldRotation + 90) % 360) as Component["schematicRotation"];
 
       // Map old pin positions to new pin positions
-      const oldPins = getRotatedPinPositions(def.symbol, oldRotation);
-      const newPins = getRotatedPinPositions(def.symbol, newRotation);
+      const oldPins = getRotatedPinPositions(def.symbol, oldRotation, mirrored);
+      const newPins = getRotatedPinPositions(def.symbol, newRotation, mirrored);
 
       const pinMoves = new Map<string, { dx: number; dy: number }>();
       for (const oldPin of oldPins) {
@@ -368,6 +370,52 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       );
 
       // Move wire endpoints from old pin positions to new
+      const newWires = s.schematicWires.map((w) => {
+        const startKey = pointKey(w.start.x, w.start.y);
+        const endKey = pointKey(w.end.x, w.end.y);
+        const startMove = pinMoves.get(startKey);
+        const endMove = pinMoves.get(endKey);
+        if (!startMove && !endMove) return w;
+        return {
+          ...w,
+          start: startMove ? { x: w.start.x + startMove.dx, y: w.start.y + startMove.dy } : w.start,
+          end: endMove ? { x: w.end.x + endMove.dx, y: w.end.y + endMove.dy } : w.end,
+        };
+      });
+
+      return { components: newComponents, schematicWires: newWires };
+    });
+  },
+
+  mirrorSchematicComponent: (id) => {
+    get().pushSnapshot();
+    set((s) => {
+      const comp = s.components.find((c) => c.id === id);
+      if (!comp) return s;
+
+      const def = resolveComponentDef(comp, s.componentDefs);
+      if (!def) return s;
+
+      const rotation = comp.schematicRotation ?? 0;
+      const oldMirrored = comp.schematicMirrored ?? false;
+      const newMirrored = !oldMirrored;
+
+      const oldPins = getRotatedPinPositions(def.symbol, rotation, oldMirrored);
+      const newPins = getRotatedPinPositions(def.symbol, rotation, newMirrored);
+
+      const pinMoves = new Map<string, { dx: number; dy: number }>();
+      for (const oldPin of oldPins) {
+        const newPin = newPins.find((p) => p.pinId === oldPin.pinId);
+        if (newPin) {
+          const key = pointKey(comp.schematicPos.x + oldPin.x, comp.schematicPos.y + oldPin.y);
+          pinMoves.set(key, { dx: newPin.x - oldPin.x, dy: newPin.y - oldPin.y });
+        }
+      }
+
+      const newComponents = s.components.map((c) =>
+        c.id === id ? { ...c, schematicMirrored: newMirrored } : c
+      );
+
       const newWires = s.schematicWires.map((w) => {
         const startKey = pointKey(w.start.x, w.start.y);
         const endKey = pointKey(w.end.x, w.end.y);
@@ -673,7 +721,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
     // This component's pin positions
     const rotation = comp.schematicRotation ?? 0;
-    const pins = getRotatedPinPositions(def.symbol, rotation);
+    const mirrored = comp.schematicMirrored ?? false;
+    const pins = getRotatedPinPositions(def.symbol, rotation, mirrored);
     const myPinKeys = new Set<string>();
     for (const pin of pins) {
       myPinKeys.add(pointKey(comp.schematicPos.x + pin.x, comp.schematicPos.y + pin.y));
@@ -686,9 +735,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       const otherDef = resolveComponentDef(other, s.componentDefs);
       if (!otherDef) continue;
       const otherRot = other.schematicRotation ?? 0;
-      const otherPins = getRotatedPinPositions(otherDef.symbol, otherRot);
+      const otherMir = other.schematicMirrored ?? false;
+      const otherPins = getRotatedPinPositions(otherDef.symbol, otherRot, otherMir);
       for (const pin of otherPins) {
-        otherPinKeys.add(`${Math.round(other.schematicPos.x + pin.x)},${Math.round(other.schematicPos.y + pin.y)}`);
+        otherPinKeys.add(pointKey(other.schematicPos.x + pin.x, other.schematicPos.y + pin.y));
       }
     }
 

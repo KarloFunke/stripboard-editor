@@ -375,6 +375,8 @@ export function createGenericIcSymbol(pinCount: number): SymbolDef {
 export function createConnectorSymbol(pinCount: number): SymbolDef {
   const bodyWidth = 20;
   const halfW = bodyWidth / 2;
+  // Ensure stub endpoints land on grid multiples
+  const stubEndX = -Math.ceil((halfW + G) / G) * G; // round outward to grid
 
   const extent = (pinCount - 1) * G;
   const yStart = -Math.floor(extent / 2 / G) * G;
@@ -389,7 +391,7 @@ export function createConnectorSymbol(pinCount: number): SymbolDef {
       pinId: String(i + 1),
       defaultName: String(i + 1),
       stubStart: { x: -halfW, y },
-      stubEnd: { x: -halfW - G, y },
+      stubEnd: { x: stubEndX, y },
       side: "left",
     });
   }

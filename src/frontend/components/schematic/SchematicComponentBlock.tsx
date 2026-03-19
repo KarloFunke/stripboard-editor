@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { Component } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
-import SymbolRenderer, { getSymbolBounds } from "./SymbolRenderer";
+import SymbolRenderer, { getSymbolBounds, getRotatedPinPositions } from "./SymbolRenderer";
 
 interface Props {
   component: Component;
@@ -23,15 +23,20 @@ export default function SchematicComponentBlock({
   const netAssignments = useProjectStore((s) => s.netAssignments);
   const nets = useProjectStore((s) => s.nets);
   const updateLabel = useProjectStore((s) => s.updateLabel);
+  const updatePinName = useProjectStore((s) => s.updatePinName);
+  const wireDrawMode = useProjectStore((s) => s.schematicWireDrawMode);
 
   const [editingLabel, setEditingLabel] = useState(false);
   const [editLabelValue, setEditLabelValue] = useState("");
+  const [editingPinId, setEditingPinId] = useState<string | null>(null);
+  const [editPinValue, setEditPinValue] = useState("");
 
   const def = resolveComponentDef(component, componentDefs);
   if (!def) return null;
 
   const rotation = component.schematicRotation ?? 0;
-  const bounds = getSymbolBounds(def.symbol, rotation);
+  const mirrored = component.schematicMirrored ?? false;
+  const bounds = getSymbolBounds(def.symbol, rotation, mirrored);
 
   // Build pin color map from net assignments
   const pinColors: Record<string, string> = {};
@@ -42,11 +47,14 @@ export default function SchematicComponentBlock({
     }
   }
 
-  const handleMouseDown = (e: React.MouseEvent) => {
-    onMouseDown(e);
-  };
+  // Build custom pin name map from resolved def
+  const pinNames: Record<string, string> = {};
+  for (const pin of def.pins) {
+    pinNames[pin.id] = pin.name;
+  }
 
   const handleLabelClick = (e: React.MouseEvent) => {
+    if (wireDrawMode) return;
     e.stopPropagation();
     setEditLabelValue(component.label);
     setEditingLabel(true);
@@ -60,6 +68,23 @@ export default function SchematicComponentBlock({
     setEditingLabel(false);
   };
 
+  const handlePinLabelClick = (pinId: string, e: React.MouseEvent) => {
+    if (wireDrawMode) return;
+    e.stopPropagation();
+    setEditPinValue(pinNames[pinId] ?? pinId);
+    setEditingPinId(pinId);
+  };
+
+  const commitPinName = () => {
+    if (editingPinId) {
+      const trimmed = editPinValue.trim();
+      if (trimmed && trimmed !== pinNames[editingPinId]) {
+        updatePinName(component.id, editingPinId, trimmed);
+      }
+      setEditingPinId(null);
+    }
+  };
+
   const handlePinMouseDown = (pinId: string, e: React.MouseEvent) => {
     onPinMouseDown?.(component.id, pinId, e);
   };
@@ -68,7 +93,7 @@ export default function SchematicComponentBlock({
     <g
       transform={`translate(${component.schematicPos.x}, ${component.schematicPos.y})`}
       style={{ cursor: "grab" }}
-      onMouseDown={handleMouseDown}
+      onMouseDown={onMouseDown}
     >
       {/* Invisible hit area for dragging */}
       <rect
@@ -117,14 +142,45 @@ export default function SchematicComponentBlock({
         </text>
       )}
 
+      {/* Inline pin name editing overlay */}
+      {editingPinId && (() => {
+        const pinPositions = getRotatedPinPositions(def.symbol, rotation, mirrored);
+        const pinPos = pinPositions.find((p) => p.pinId === editingPinId);
+        if (!pinPos) return null;
+        return (
+          <foreignObject
+            x={pinPos.x - 30}
+            y={pinPos.y - 10}
+            width={60}
+            height={20}
+          >
+            <input
+              autoFocus
+              value={editPinValue}
+              onChange={(e) => setEditPinValue(e.target.value)}
+              onBlur={commitPinName}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commitPinName();
+                if (e.key === "Escape") setEditingPinId(null);
+              }}
+              className="w-full bg-white border border-[#113768] rounded px-1 text-[9px] text-center text-neutral-900 outline-none"
+              onClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+            />
+          </foreignObject>
+        );
+      })()}
+
       {/* Symbol */}
       <SymbolRenderer
         symbolId={def.symbol}
         rotation={rotation}
+        mirrored={mirrored}
         selected={isSelected}
         pinColors={pinColors}
         onPinMouseDown={handlePinMouseDown}
-        showPinLabels={true}
+        onPinLabelClick={editingPinId ? undefined : handlePinLabelClick}
+        showPinLabels={!editingPinId}
       />
     </g>
   );

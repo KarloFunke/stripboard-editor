@@ -44,6 +44,7 @@ export interface Component {
   // Position on the schematic canvas (always set)
   schematicPos: { x: number; y: number };
   schematicRotation: 0 | 90 | 180 | 270;
+  schematicMirrored?: boolean; // horizontal mirror (flip X axis)
 
   // Position on the stripboard (null until placed)
   boardPos: { row: number; col: number } | null;

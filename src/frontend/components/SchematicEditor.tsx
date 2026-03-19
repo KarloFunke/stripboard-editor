@@ -4,11 +4,9 @@ import { useProjectStore } from "@/store/useProjectStore";
 import ComponentLibrary from "./schematic/ComponentLibrary";
 import NetPanel from "./schematic/NetPanel";
 import SchematicCanvas from "./schematic/SchematicCanvas";
-import FootprintEditor from "./schematic/FootprintEditor";
 import ResizableSidebar from "./ResizableSidebar";
 
 export default function SchematicEditor({ readOnly = false }: { readOnly?: boolean }) {
-  const editingFootprintComponentId = useProjectStore((s) => s.editingFootprintComponentId);
   const wireDrawMode = useProjectStore((s) => s.schematicWireDrawMode);
   const wireDrawingFrom = useProjectStore((s) => s.schematicWireDrawingFrom);
   const toggleWireDrawMode = useProjectStore((s) => s.toggleSchematicWireDrawMode);
@@ -60,7 +58,6 @@ export default function SchematicEditor({ readOnly = false }: { readOnly?: boole
           <SchematicCanvas readOnly={readOnly} />
         </div>
       </div>
-      {!readOnly && editingFootprintComponentId && <FootprintEditor />}
     </div>
   );
 }

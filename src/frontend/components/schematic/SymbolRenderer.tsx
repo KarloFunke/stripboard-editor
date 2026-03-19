@@ -6,9 +6,11 @@ import { getSymbolDef, type SymbolDef } from "@/data/symbolDefs";
 interface SymbolRendererProps {
   symbolId: string;
   rotation?: 0 | 90 | 180 | 270;
+  mirrored?: boolean;
   selected?: boolean;
   pinColors?: Record<string, string>; // pinId → net color
   onPinMouseDown?: (pinId: string, e: React.MouseEvent) => void;
+  onPinLabelClick?: (pinId: string, e: React.MouseEvent) => void;
   showPinLabels?: boolean;
   scale?: number;
 }
@@ -25,21 +27,28 @@ function rotatePoint(x: number, y: number, rotation: 0 | 90 | 180 | 270): { x: n
   }
 }
 
-/** Get rotated pin connection points (positions relative to component origin) */
+/** Apply mirror (flip X) then rotation to a point */
+function transformPoint(x: number, y: number, rotation: 0 | 90 | 180 | 270, mirrored: boolean): { x: number; y: number } {
+  const mx = mirrored ? -x : x;
+  return rotatePoint(mx, y, rotation);
+}
+
+/** Get transformed pin connection points (positions relative to component origin) */
 export function getRotatedPinPositions(
   symbolId: string,
-  rotation: 0 | 90 | 180 | 270
+  rotation: 0 | 90 | 180 | 270,
+  mirrored: boolean = false,
 ): { pinId: string; x: number; y: number }[] {
   const def = getSymbolDef(symbolId);
   if (!def) return [];
   return def.pins.map((pin) => {
-    const rotated = rotatePoint(pin.stubEnd.x, pin.stubEnd.y, rotation);
-    return { pinId: pin.pinId, x: rotated.x, y: rotated.y };
+    const p = transformPoint(pin.stubEnd.x, pin.stubEnd.y, rotation, mirrored);
+    return { pinId: pin.pinId, x: p.x, y: p.y };
   });
 }
 
-/** Compute bounding box of all points (stubs + body key points) after rotation */
-export function getSymbolBounds(symbolId: string, rotation: 0 | 90 | 180 | 270 = 0): {
+/** Compute bounding box of all points (stubs + body key points) after transform */
+export function getSymbolBounds(symbolId: string, rotation: 0 | 90 | 180 | 270 = 0, mirrored: boolean = false): {
   width: number; height: number; minX: number; minY: number; maxX: number; maxY: number;
 } {
   const def = getSymbolDef(symbolId);
@@ -49,8 +58,8 @@ export function getSymbolBounds(symbolId: string, rotation: 0 | 90 | 180 | 270 =
 
   // Collect all pin endpoints and stub starts
   for (const pin of def.pins) {
-    points.push(rotatePoint(pin.stubEnd.x, pin.stubEnd.y, rotation));
-    points.push(rotatePoint(pin.stubStart.x, pin.stubStart.y, rotation));
+    points.push(transformPoint(pin.stubEnd.x, pin.stubEnd.y, rotation, mirrored));
+    points.push(transformPoint(pin.stubStart.x, pin.stubStart.y, rotation, mirrored));
   }
 
   // If no points, use a default
@@ -66,19 +75,27 @@ export function getSymbolBounds(symbolId: string, rotation: 0 | 90 | 180 | 270 =
   return { width: maxX - minX, height: maxY - minY, minX, minY, maxX, maxY };
 }
 
-/** Compute pin label position and anchor dynamically based on stub direction and rotation */
+/** Compute pin label position and anchor dynamically based on stub direction, rotation, and mirror */
 function getPinLabelProps(
   stubEnd: { x: number; y: number },
   side: "top" | "bottom" | "left" | "right",
   rotation: 0 | 90 | 180 | 270,
+  mirrored: boolean = false,
 ): { x: number; y: number; anchor: "start" | "middle" | "end"; baseline: "auto" | "hanging" | "central" } {
+  // Mirror flips left/right
+  let effectiveSide = side;
+  if (mirrored) {
+    if (side === "left") effectiveSide = "right";
+    else if (side === "right") effectiveSide = "left";
+  }
+
   // Determine the effective side after rotation
   const sideOrder: ("top" | "right" | "bottom" | "left")[] = ["top", "right", "bottom", "left"];
   const rotSteps = rotation / 90;
-  const effectiveSide = sideOrder[(sideOrder.indexOf(side) + rotSteps) % 4];
+  effectiveSide = sideOrder[(sideOrder.indexOf(effectiveSide) + rotSteps) % 4];
 
-  // Rotate the stub endpoint
-  const rp = rotatePoint(stubEnd.x, stubEnd.y, rotation);
+  // Transform the stub endpoint
+  const rp = transformPoint(stubEnd.x, stubEnd.y, rotation, mirrored);
   const offset = 8;
 
   switch (effectiveSide) {
@@ -96,9 +113,11 @@ function getPinLabelProps(
 export default function SymbolRenderer({
   symbolId,
   rotation = 0,
+  mirrored = false,
   selected = false,
   pinColors = {},
   onPinMouseDown,
+  onPinLabelClick,
   showPinLabels = true,
   scale = 1,
 }: SymbolRendererProps) {
@@ -110,8 +129,8 @@ export default function SymbolRenderer({
 
   return (
     <g transform={`scale(${scale})`}>
-      {/* Body and stubs (rotated as a group) */}
-      <g transform={`rotate(${rotation})`}>
+      {/* Body and stubs (mirrored then rotated as a group) */}
+      <g transform={`rotate(${rotation})${mirrored ? " scale(-1,1)" : ""}`}>
         {def.bodyPaths.map((path, i) => (
           <path
             key={`body-${i}`}
@@ -168,8 +187,8 @@ export default function SymbolRenderer({
       {def.pins.map((pin) => {
         const color = pinColors[pin.pinId];
         const hasNet = !!color;
-        // Compute rotated pin position in world space
-        const rEnd = rotatePoint(pin.stubEnd.x, pin.stubEnd.y, rotation);
+        // Compute transformed pin position in world space
+        const rEnd = transformPoint(pin.stubEnd.x, pin.stubEnd.y, rotation, mirrored);
 
         return (
           <g key={`pin-${pin.pinId}`}>
@@ -198,7 +217,7 @@ export default function SymbolRenderer({
             />
             {/* Pin label — dynamically positioned based on stub direction */}
             {showPinLabels && (() => {
-              const lp = getPinLabelProps(pin.stubEnd, pin.side, rotation);
+              const lp = getPinLabelProps(pin.stubEnd, pin.side, rotation, mirrored);
               return (
                 <text
                   x={lp.x} y={lp.y}
@@ -206,7 +225,14 @@ export default function SymbolRenderer({
                   textAnchor={lp.anchor}
                   dominantBaseline={lp.baseline}
                   fill="#666"
-                  style={{ userSelect: "none" }}
+                  style={{ userSelect: "none", cursor: onPinLabelClick ? "text" : "default" }}
+                  onClick={(e) => {
+                    if (onPinLabelClick) {
+                      e.stopPropagation();
+                      onPinLabelClick(pin.pinId, e);
+                    }
+                  }}
+                  onMouseDown={(e) => { if (onPinLabelClick) e.stopPropagation(); }}
                 >
                   {pin.defaultName}
                 </text>

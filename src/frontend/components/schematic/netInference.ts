@@ -95,7 +95,7 @@ export function recalculateNets(
       if (!def) continue;
 
       const rotation = comp.schematicRotation ?? 0;
-      const rotatedPins = getRotatedPinPositions(def.symbol, rotation);
+      const rotatedPins = getRotatedPinPositions(def.symbol, rotation, comp.schematicMirrored ?? false);
 
       for (const pin of rotatedPins) {
         const absX = comp.schematicPos.x + pin.x;

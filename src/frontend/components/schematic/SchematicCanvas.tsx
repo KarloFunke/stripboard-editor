@@ -6,15 +6,11 @@ import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { usePanZoom } from "@/hooks/usePanZoom";
 import { useCanvasSelection } from "@/hooks/useCanvasSelection";
 import SchematicComponentBlock from "./SchematicComponentBlock";
-import ComponentPopup from "./ComponentPopup";
 import SchematicWireLine, { getWirePoints } from "./SchematicWireLine";
 import { getBlockSize } from "./blockLayout";
 import { getRotatedPinPositions } from "./SymbolRenderer";
 import { GRID_SIZE, snapToGrid, pointKey } from "@/utils/schematicConstants";
 
-const POPUP_WIDTH = 220;
-const POPUP_HEIGHT_ESTIMATE = 250;
-const POPUP_GAP = 8;
 const MOVE_STEP = GRID_SIZE;
 const PIN_SNAP_RADIUS = 15;
 
@@ -35,7 +31,8 @@ function findNearestPin(
     if (!def) continue;
 
     const rotation = comp.schematicRotation ?? 0;
-    const pinPositions = getRotatedPinPositions(def.symbol, rotation);
+    const mirrored = comp.schematicMirrored ?? false;
+    const pinPositions = getRotatedPinPositions(def.symbol, rotation, mirrored);
 
     for (const pin of pinPositions) {
       if (comp.id === excludeComponentId && pin.pinId === excludePinId) continue;
@@ -69,6 +66,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
   const removeSchematicWire = useProjectStore((s) => s.removeSchematicWire);
   const splitSchematicWire = useProjectStore((s) => s.splitSchematicWire);
   const rotateSchematicComponent = useProjectStore((s) => s.rotateSchematicComponent);
+  const mirrorSchematicComponent = useProjectStore((s) => s.mirrorSchematicComponent);
   const wireDrawMode = useProjectStore((s) => s.schematicWireDrawMode);
   const wireDrawingFrom = useProjectStore((s) => s.schematicWireDrawingFrom);
   const wireDirection = useProjectStore((s) => s.schematicWireDirection);
@@ -92,7 +90,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
       const def = resolveComponentDef(comp, componentDefs);
       if (!def) continue;
       const rotation = comp.schematicRotation ?? 0;
-      const pins = getRotatedPinPositions(def.symbol, rotation);
+      const pins = getRotatedPinPositions(def.symbol, rotation, comp.schematicMirrored ?? false);
       for (const pin of pins) {
         const assignment = netAssignments.find(
           (a) => a.componentId === comp.id && a.pinId === pin.pinId
@@ -184,10 +182,6 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
     didDrag: boolean;
   } | null>(null);
 
-  const selectedComponent = selectedId
-    ? components.find((c) => c.id === selectedId) ?? null
-    : null;
-
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -227,6 +221,14 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
       if (e.key === "r" || e.key === "R") {
         if (selectedId) {
           rotateSchematicComponent(selectedId);
+          return;
+        }
+      }
+
+      // M: mirror selected component on schematic
+      if (e.key === "m" || e.key === "M") {
+        if (selectedId) {
+          mirrorSchematicComponent(selectedId);
           return;
         }
       }
@@ -293,7 +295,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
             const def = resolveComponentDef(comp, s.componentDefs);
             if (!def) continue;
             const rot = comp.schematicRotation ?? 0;
-            const pins = getRotatedPinPositions(def.symbol, rot);
+            const pins = getRotatedPinPositions(def.symbol, rot, comp.schematicMirrored ?? false);
             for (const pin of pins) {
               pinPositions.add(pointKey(comp.schematicPos.x + pin.x, comp.schematicPos.y + pin.y));
             }
@@ -334,7 +336,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
     const def = resolveComponentDef(comp, componentDefs);
     if (!def) return null;
     const rotation = comp.schematicRotation ?? 0;
-    const pins = getRotatedPinPositions(def.symbol, rotation);
+    const pins = getRotatedPinPositions(def.symbol, rotation, comp.schematicMirrored ?? false);
     const pin = pins.find((p) => p.pinId === pinId);
     if (!pin) return null;
     return { x: comp.schematicPos.x + pin.x, y: comp.schematicPos.y + pin.y };
@@ -539,33 +541,6 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
       ]
     : components;
 
-  // Smart popup positioning
-  const getPopupPos = () => {
-    if (!selectedComponent) return { x: 0, y: 0 };
-    const def = resolveComponentDef(selectedComponent, componentDefs);
-    if (!def) return { x: 0, y: 0 };
-
-    const { bounds } = getBlockSize(def, selectedComponent.schematicRotation ?? 0);
-    const svg = svgRef.current;
-    const svgWidth = svg?.clientWidth ?? 1000;
-    const svgHeight = svg?.clientHeight ?? 800;
-
-    const compX = selectedComponent.schematicPos.x;
-    const compY = selectedComponent.schematicPos.y;
-
-    let x = compX + bounds.maxX + POPUP_GAP;
-    let y = compY - POPUP_HEIGHT_ESTIMATE / 2;
-
-    if (x + POPUP_WIDTH > svgWidth) {
-      x = compX + bounds.minX - POPUP_WIDTH - POPUP_GAP;
-    }
-    if (y + POPUP_HEIGHT_ESTIMATE > svgHeight) {
-      y = svgHeight - POPUP_HEIGHT_ESTIMATE;
-    }
-    if (y < 0) y = 0;
-
-    return { x, y };
-  };
 
   // Wire drawing start position is just the stored grid point
   const wireStartPos = wireDrawingFrom;
@@ -764,25 +739,6 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
           />
         )}
 
-        {/* Popup — only for ic/connector/generic components (passive/semiconductor don't need it) */}
-        {!readOnly && selectedComponent && !wireDrawMode && (() => {
-          const selDef = resolveComponentDef(selectedComponent, componentDefs);
-          const showPopup = selDef && ["ic", "connector", "generic"].includes(selDef.category);
-          return showPopup;
-        })() && (
-          <foreignObject
-            x={getPopupPos().x}
-            y={getPopupPos().y}
-            width={POPUP_WIDTH + 10}
-            height={POPUP_HEIGHT_ESTIMATE + 50}
-            style={{ overflow: "visible" }}
-          >
-            <ComponentPopup
-              component={selectedComponent}
-              onClose={() => setSelectedId(null)}
-            />
-          </foreignObject>
-        )}
       </svg>
 
       {/* Zoom controls */}
