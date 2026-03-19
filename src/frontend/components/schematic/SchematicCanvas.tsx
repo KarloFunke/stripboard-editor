@@ -7,8 +7,8 @@ import { usePanZoom } from "@/hooks/usePanZoom";
 import { useCanvasSelection } from "@/hooks/useCanvasSelection";
 import SchematicComponentBlock from "./SchematicComponentBlock";
 import SchematicWireLine, { getWirePoints } from "./SchematicWireLine";
-import { getBlockSize } from "./blockLayout";
-import { getRotatedPinPositions } from "./SymbolRenderer";
+import { UnionFind } from "./netInference";
+import { getRotatedPinPositions, getSymbolBounds } from "./SymbolRenderer";
 import { GRID_SIZE, snapToGrid, pointKey } from "@/utils/schematicConstants";
 
 const MOVE_STEP = GRID_SIZE;
@@ -106,38 +106,25 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
     }
 
     // Union-Find to group connected wire points
-    const parent = new Map<string, string>();
-    const find = (x: string): string => {
-      if (!parent.has(x)) parent.set(x, x);
-      let root = x;
-      while (parent.get(root) !== root) root = parent.get(root)!;
-      let cur = x;
-      while (cur !== root) { const next = parent.get(cur)!; parent.set(cur, root); cur = next; }
-      return root;
-    };
-    const union = (a: string, b: string) => {
-      const ra = find(a), rb = find(b);
-      if (ra !== rb) parent.set(ra, rb);
-    };
-
+    const uf = new UnionFind();
     for (const wire of schematicWires) {
       const pts = getWirePoints(wire);
       const keys = pts.map((p) => pointKey(p.x, p.y));
-      for (const k of keys) find(k); // ensure in UF
-      for (let i = 1; i < keys.length; i++) union(keys[0], keys[i]);
+      for (const k of keys) uf.makeSet(k);
+      for (let i = 1; i < keys.length; i++) uf.union(keys[0], keys[i]);
     }
 
     // Find color for each group root
     const rootColor = new Map<string, string>();
     for (const [pk, color] of pointNetColor) {
-      const root = find(pk);
+      const root = uf.find(pk);
       if (!rootColor.has(root)) rootColor.set(root, color);
     }
 
     // Assign colors to wires
     for (const wire of schematicWires) {
       const sk = pointKey(wire.start.x, wire.start.y);
-      const root = find(sk);
+      const root = uf.find(sk);
       const color = rootColor.get(root);
       if (color) colorMap.set(wire.id, color);
     }
@@ -473,7 +460,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
       for (const comp of components) {
         const def = resolveComponentDef(comp, componentDefs);
         if (!def) continue;
-        const { bounds } = getBlockSize(def, comp.schematicRotation ?? 0);
+        const bounds = getSymbolBounds(def.symbol, comp.schematicRotation ?? 0, comp.schematicMirrored ?? false);
         const cx = comp.schematicPos.x + bounds.minX;
         const cy = comp.schematicPos.y + bounds.minY;
         if (cx + bounds.width >= x1 && cx <= x2 && cy + bounds.height >= y1 && cy <= y2) {

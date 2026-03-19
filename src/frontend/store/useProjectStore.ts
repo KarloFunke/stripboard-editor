@@ -166,6 +166,58 @@ function restoreProject(snapshot: Project): Partial<ProjectStore> {
   };
 }
 
+/**
+ * Shared helper: transform a schematic component (rotate, mirror, etc.)
+ * and move connected wire endpoints to follow the pin position changes.
+ */
+function transformSchematicComponent(
+  s: ProjectStore,
+  id: string,
+  getUpdates: (comp: Component) => Partial<Component>,
+): Partial<ProjectStore> {
+  const comp = s.components.find((c) => c.id === id);
+  if (!comp) return s;
+  const def = resolveComponentDef(comp, s.componentDefs);
+  if (!def) return s;
+
+  const oldRotation = comp.schematicRotation ?? 0;
+  const oldMirrored = comp.schematicMirrored ?? false;
+  const updates = getUpdates(comp);
+  const newRotation = (updates.schematicRotation ?? oldRotation) as 0 | 90 | 180 | 270;
+  const newMirrored = updates.schematicMirrored ?? oldMirrored;
+
+  // Compute pin position deltas
+  const oldPins = getRotatedPinPositions(def.symbol, oldRotation, oldMirrored);
+  const newPins = getRotatedPinPositions(def.symbol, newRotation, newMirrored);
+  const pinMoves = new Map<string, { dx: number; dy: number }>();
+  for (const oldPin of oldPins) {
+    const newPin = newPins.find((p) => p.pinId === oldPin.pinId);
+    if (newPin) {
+      pinMoves.set(
+        pointKey(comp.schematicPos.x + oldPin.x, comp.schematicPos.y + oldPin.y),
+        { dx: newPin.x - oldPin.x, dy: newPin.y - oldPin.y },
+      );
+    }
+  }
+
+  const newComponents = s.components.map((c) =>
+    c.id === id ? { ...c, ...updates } : c
+  );
+
+  const newWires = s.schematicWires.map((w) => {
+    const startMove = pinMoves.get(pointKey(w.start.x, w.start.y));
+    const endMove = pinMoves.get(pointKey(w.end.x, w.end.y));
+    if (!startMove && !endMove) return w;
+    return {
+      ...w,
+      start: startMove ? { x: w.start.x + startMove.dx, y: w.start.y + startMove.dy } : w.start,
+      end: endMove ? { x: w.end.x + endMove.dx, y: w.end.y + endMove.dy } : w.end,
+    };
+  });
+
+  return { components: newComponents, schematicWires: newWires };
+}
+
 export const useProjectStore = create<ProjectStore>((set, get) => ({
   ...initialProject,
   editingFootprintComponentId: null,
@@ -334,100 +386,17 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   rotateSchematicComponent: (id) => {
     get().pushSnapshot();
-    set((s) => {
-      const comp = s.components.find((c) => c.id === id);
-      if (!comp) return s;
-
-      const def = resolveComponentDef(comp, s.componentDefs);
-      if (!def) return s;
-
-      const oldRotation = comp.schematicRotation ?? 0;
-      const mirrored = comp.schematicMirrored ?? false;
-      const newRotation = ((oldRotation + 90) % 360) as Component["schematicRotation"];
-
-      // Map old pin positions to new pin positions
-      const oldPins = getRotatedPinPositions(def.symbol, oldRotation, mirrored);
-      const newPins = getRotatedPinPositions(def.symbol, newRotation, mirrored);
-
-      const pinMoves = new Map<string, { dx: number; dy: number }>();
-      for (const oldPin of oldPins) {
-        const newPin = newPins.find((p) => p.pinId === oldPin.pinId);
-        if (newPin) {
-          const key = pointKey(comp.schematicPos.x + oldPin.x, comp.schematicPos.y + oldPin.y);
-          pinMoves.set(key, {
-            dx: newPin.x - oldPin.x,
-            dy: newPin.y - oldPin.y,
-          });
-        }
-      }
-
-      // Update component rotation
-      const newComponents = s.components.map((c) =>
-        c.id === id ? { ...c, schematicRotation: newRotation } : c
-      );
-
-      // Move wire endpoints from old pin positions to new
-      const newWires = s.schematicWires.map((w) => {
-        const startKey = pointKey(w.start.x, w.start.y);
-        const endKey = pointKey(w.end.x, w.end.y);
-        const startMove = pinMoves.get(startKey);
-        const endMove = pinMoves.get(endKey);
-        if (!startMove && !endMove) return w;
-        return {
-          ...w,
-          start: startMove ? { x: w.start.x + startMove.dx, y: w.start.y + startMove.dy } : w.start,
-          end: endMove ? { x: w.end.x + endMove.dx, y: w.end.y + endMove.dy } : w.end,
-        };
-      });
-
-      return { components: newComponents, schematicWires: newWires };
-    });
+    set((s) => transformSchematicComponent(s, id, (comp) => {
+      const newRotation = (((comp.schematicRotation ?? 0) + 90) % 360) as Component["schematicRotation"];
+      return { schematicRotation: newRotation };
+    }));
   },
 
   mirrorSchematicComponent: (id) => {
     get().pushSnapshot();
-    set((s) => {
-      const comp = s.components.find((c) => c.id === id);
-      if (!comp) return s;
-
-      const def = resolveComponentDef(comp, s.componentDefs);
-      if (!def) return s;
-
-      const rotation = comp.schematicRotation ?? 0;
-      const oldMirrored = comp.schematicMirrored ?? false;
-      const newMirrored = !oldMirrored;
-
-      const oldPins = getRotatedPinPositions(def.symbol, rotation, oldMirrored);
-      const newPins = getRotatedPinPositions(def.symbol, rotation, newMirrored);
-
-      const pinMoves = new Map<string, { dx: number; dy: number }>();
-      for (const oldPin of oldPins) {
-        const newPin = newPins.find((p) => p.pinId === oldPin.pinId);
-        if (newPin) {
-          const key = pointKey(comp.schematicPos.x + oldPin.x, comp.schematicPos.y + oldPin.y);
-          pinMoves.set(key, { dx: newPin.x - oldPin.x, dy: newPin.y - oldPin.y });
-        }
-      }
-
-      const newComponents = s.components.map((c) =>
-        c.id === id ? { ...c, schematicMirrored: newMirrored } : c
-      );
-
-      const newWires = s.schematicWires.map((w) => {
-        const startKey = pointKey(w.start.x, w.start.y);
-        const endKey = pointKey(w.end.x, w.end.y);
-        const startMove = pinMoves.get(startKey);
-        const endMove = pinMoves.get(endKey);
-        if (!startMove && !endMove) return w;
-        return {
-          ...w,
-          start: startMove ? { x: w.start.x + startMove.dx, y: w.start.y + startMove.dy } : w.start,
-          end: endMove ? { x: w.end.x + endMove.dx, y: w.end.y + endMove.dy } : w.end,
-        };
-      });
-
-      return { components: newComponents, schematicWires: newWires };
-    });
+    set((s) => transformSchematicComponent(s, id, (comp) => {
+      return { schematicMirrored: !(comp.schematicMirrored ?? false) };
+    }));
   },
 
   placeOnBoard: (id, pos) => {
@@ -711,10 +680,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   captureSchematicDragBindings: (componentId) => {
     const s = get();
     const comp = s.components.find((c) => c.id === componentId);
-    if (!comp) { set({ _dragWireBindings: [] }); return; }
+    if (!comp) { set({ _dragWireBindings: null }); return; }
 
     const def = resolveComponentDef(comp, s.componentDefs);
-    if (!def) { set({ _dragWireBindings: [] }); return; }
+    if (!def) { set({ _dragWireBindings: null }); return; }
 
     // This component's pin positions
     const rotation = comp.schematicRotation ?? 0;

@@ -11,7 +11,7 @@ interface Props {
 }
 
 /** Compute the bend point for an L-shaped wire route */
-export function getWireBendPoint(wire: SchematicWire): { x: number; y: number } {
+function getWireBendPoint(wire: SchematicWire): { x: number; y: number } {
   if (wire.routeDirection === "horizontal-first") {
     return { x: wire.end.x, y: wire.start.y };
   } else {

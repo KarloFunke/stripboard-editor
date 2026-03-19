@@ -7,7 +7,7 @@ import { randomNetColor, nextNetName } from "@/utils/netColors";
 
 // ── Union-Find ────────────────────────────────────────
 
-class UnionFind {
+export class UnionFind {
   parent: Map<string, string>;
   rank: Map<string, number>;
 
