@@ -1,6 +1,6 @@
 import { Board, Component, ComponentDef, NetAssignment } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
-import { getRotatedPinPositions } from "./boardLayout";
+import { getComponentPinPositions } from "./boardLayout";
 
 export interface StripSegment {
   row: number;
@@ -22,7 +22,7 @@ export function computeStripSegments(
     if (!comp.boardPos) continue;
     const def = resolveComponentDef(comp, componentDefs);
     if (!def) continue;
-    const pins = getRotatedPinPositions(def, comp.boardPos, comp.rotation);
+    const pins = getComponentPinPositions(comp, def);
     for (const pin of pins) {
       allPins.push({ componentId: comp.id, pinId: pin.pinId, row: pin.row, col: pin.col });
     }

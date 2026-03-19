@@ -24,6 +24,7 @@ export interface ComponentDef {
   pins: PinDef[];
   bodyCells?: BodyCell[]; // cells occupied by body but not pins; inferred as bounding rect if absent
   footprintPresets?: string[]; // alternative footprint def IDs the user can choose from
+  flexible?: boolean; // 2-pin components with draggable pin positions
 }
 
 // ── Component Instance (single object for both editors) ──
@@ -49,6 +50,9 @@ export interface Component {
   // Position on the stripboard (null until placed)
   boardPos: { row: number; col: number } | null;
   rotation: 0 | 90 | 180 | 270;
+
+  // For flexible 2-pin components: absolute position of pin 2 (pin 1 is at boardPos)
+  flexibleEndPos?: { row: number; col: number };
 
   // Per-instance footprint override; when set, takes priority over the ComponentDef
   footprintOverride?: FootprintOverride;

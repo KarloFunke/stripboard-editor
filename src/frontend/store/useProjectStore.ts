@@ -56,6 +56,7 @@ interface ProjectActions {
   placeOnBoard: (id: string, pos: { row: number; col: number }) => void;
   moveComponentsOnBoard: (ids: string[], deltaRow: number, deltaCol: number, wireIds?: string[], cutPositions?: { row: number; col: number }[]) => void;
   removeFromBoard: (id: string) => void;
+  setFlexibleEndPos: (id: string, pos: { row: number; col: number }) => void;
   rotateComponent: (id: string) => void;
 
   // Schematic wires
@@ -79,7 +80,7 @@ interface ProjectActions {
   removeWire: (wireId: string) => void;
 
   // UI state
-  setEditingFootprintComponent: (componentId: string | null) => void;
+
   startWirePlacement: () => void;
   cancelWirePlacement: () => void;
   setWirePlacementFrom: (pos: BoardPosition) => void;
@@ -105,7 +106,7 @@ interface ProjectActions {
 }
 
 interface UIState {
-  editingFootprintComponentId: string | null;
+
   wirePlacementMode: boolean;
   wirePlacementFrom: BoardPosition | null;
   trayDragComponentId: string | null;
@@ -220,7 +221,7 @@ function transformSchematicComponent(
 
 export const useProjectStore = create<ProjectStore>((set, get) => ({
   ...initialProject,
-  editingFootprintComponentId: null,
+
   wirePlacementMode: false,
   wirePlacementFrom: null,
   trayDragComponentId: null,
@@ -402,9 +403,19 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   placeOnBoard: (id, pos) => {
     get().pushSnapshot();
     set((s) => ({
-      components: s.components.map((c) =>
-        c.id === id ? { ...c, boardPos: pos } : c
-      ),
+      components: s.components.map((c) => {
+        if (c.id !== id) return c;
+        const def = resolveComponentDef(c, s.componentDefs);
+        // For flexible components, initialize flexibleEndPos on first placement
+        let flexEnd = c.flexibleEndPos;
+        if (def?.flexible && !flexEnd && def.pins.length >= 2) {
+          flexEnd = {
+            row: pos.row + def.pins[1].offsetRow,
+            col: pos.col + def.pins[1].offsetCol,
+          };
+        }
+        return { ...c, boardPos: pos, flexibleEndPos: flexEnd };
+      }),
     }));
   },
 
@@ -418,6 +429,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
             row: c.boardPos.row + deltaRow,
             col: c.boardPos.col + deltaCol,
           },
+          flexibleEndPos: c.flexibleEndPos ? {
+            row: c.flexibleEndPos.row + deltaRow,
+            col: c.flexibleEndPos.col + deltaCol,
+          } : undefined,
         };
       });
 
@@ -452,25 +467,62 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     get().pushSnapshot();
     set((s) => ({
       components: s.components.map((c) =>
-        c.id === id ? { ...c, boardPos: null } : c
+        c.id === id ? { ...c, boardPos: null, flexibleEndPos: undefined } : c
       ),
     }));
   },
 
+  // Set pin 2 position for flexible components (no snapshot — called per-pixel during drag)
+  setFlexibleEndPos: (id, pos) =>
+    set((s) => ({
+      components: s.components.map((c) =>
+        c.id === id ? { ...c, flexibleEndPos: pos } : c
+      ),
+    })),
+
   rotateComponent: (id) => {
     const s = get();
     const comp = s.components.find((c) => c.id === id);
-    if (!comp) return;
-    const newRotation = ((comp.rotation + 90) % 360) as Component["rotation"];
-    if (comp.boardPos) {
-      const def = resolveComponentDef(comp, s.componentDefs);
-      if (def) {
-        const bounds = getComponentBounds(def, comp.boardPos, newRotation);
-        if (bounds.minRow < 0 || bounds.minCol < 0 ||
-            bounds.maxRow >= s.board.rows || bounds.maxCol >= s.board.cols) {
-          return;
-        }
+    if (!comp || !comp.boardPos) return;
+    const def = resolveComponentDef(comp, s.componentDefs);
+    if (!def) return;
+
+    // Flexible component: rotate pin positions 90° around midpoint
+    if (def.flexible && comp.boardPos) {
+      const pin1 = comp.boardPos;
+      const pin2 = comp.flexibleEndPos ?? {
+        row: pin1.row + (def.pins[1]?.offsetRow ?? 1),
+        col: pin1.col + (def.pins[1]?.offsetCol ?? 0),
+      };
+      // Midpoint
+      const midRow = (pin1.row + pin2.row) / 2;
+      const midCol = (pin1.col + pin2.col) / 2;
+      // Rotate 90° CW around midpoint: (r,c) → (midR + (c-midC), midC - (r-midR))
+      const new1Row = Math.round(midRow + (pin1.col - midCol));
+      const new1Col = Math.round(midCol - (pin1.row - midRow));
+      const new2Row = Math.round(midRow + (pin2.col - midCol));
+      const new2Col = Math.round(midCol - (pin2.row - midRow));
+      // Bounds check
+      if (new1Row < 0 || new1Col < 0 || new2Row < 0 || new2Col < 0 ||
+          new1Row >= s.board.rows || new1Col >= s.board.cols ||
+          new2Row >= s.board.rows || new2Col >= s.board.cols) {
+        return;
       }
+      get().pushSnapshot();
+      set((s2) => ({
+        components: s2.components.map((c) =>
+          c.id === id ? { ...c, boardPos: { row: new1Row, col: new1Col }, flexibleEndPos: { row: new2Row, col: new2Col } } : c
+        ),
+      }));
+      return;
+    }
+
+    // Fixed component: standard rotation
+    const newRotation = ((comp.rotation + 90) % 360) as Component["rotation"];
+    const bounds = getComponentBounds(def, comp.boardPos, newRotation);
+    if (bounds.minRow < 0 || bounds.minCol < 0 ||
+        bounds.maxRow >= s.board.rows || bounds.maxCol >= s.board.cols) {
+      return;
     }
     get().pushSnapshot();
     set((s2) => ({
@@ -655,7 +707,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   // ── UI State ─────────────────────────────────────────
 
-  setEditingFootprintComponent: (componentId) => set({ editingFootprintComponentId: componentId }),
+
 
   startWirePlacement: () =>
     set({ wirePlacementMode: true, wirePlacementFrom: null }),
@@ -768,7 +820,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         jumpers: data.board?.jumpers ?? [],
         wires: data.board?.wires ?? [],
       },
-      editingFootprintComponentId: null,
+    
       wirePlacementMode: false,
       wirePlacementFrom: null,
       schematicWireDrawMode: false,
@@ -786,7 +838,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     netAssignments: [],
     schematicWires: [],
     board: { rows: 20, cols: 20, cuts: [], jumpers: [], wires: [] },
-    editingFootprintComponentId: null,
+  
     wirePlacementMode: false,
     wirePlacementFrom: null,
     schematicWireDrawMode: false,

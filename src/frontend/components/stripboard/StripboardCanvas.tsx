@@ -1,16 +1,16 @@
 "use client";
 
-import { useRef, useState, useCallback, useEffect, useMemo } from "react";
+import { useRef, useState, useCallback, useEffect } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { useStripSegments } from "@/hooks/useStripSegments";
 import { usePanZoom } from "@/hooks/usePanZoom";
 import { useCanvasSelection } from "@/hooks/useCanvasSelection";
-import { checkNetCompleteness } from "./netCompleteness";
+
 import {
   HOLE_SPACING,
   HOLE_RADIUS,
-  BOARD_PADDING,
+
   STRIP_HEIGHT,
   STRIP_COLOR,
   STRIP_CONFLICT_COLOR,
@@ -62,21 +62,12 @@ export default function StripboardCanvas({ readOnly = false }: { readOnly?: bool
   const startWirePlacement = useProjectStore((s) => s.startWirePlacement);
   const trayDragComponentId = useProjectStore((s) => s.trayDragComponentId);
   const highlightedNetId = useProjectStore((s) => s.highlightedNetId);
+  const setFlexibleEndPos = useProjectStore((s) => s.setFlexibleEndPos);
 
   const nets = useProjectStore((s) => s.nets);
-  const netAssignments = useProjectStore((s) => s.netAssignments);
-  const { segments, connectivity, conflictCount } = useStripSegments();
 
-  const incompleteNets = useMemo(
-    () => checkNetCompleteness(nets, netAssignments, segments, connectivity, components, componentDefs),
-    [nets, netAssignments, segments, connectivity, components, componentDefs]
-  );
+  const { segments, connectivity } = useStripSegments();
 
-  const allPlaced = components.length >= 2 && components.every((c) => c.boardPos !== null);
-  const allNetsUsed = allPlaced && components.every((c) =>
-    netAssignments.some((a) => a.componentId === c.id)
-  );
-  const allDone = allPlaced && allNetsUsed && conflictCount === 0 && incompleteNets.length === 0;
 
   const {
     selectedId, setSelectedId,
@@ -105,6 +96,10 @@ export default function StripboardCanvas({ readOnly = false }: { readOnly?: bool
     col: number;
   } | null>(null);
   const [wireMousePos, setWireMousePos] = useState<{ x: number; y: number } | null>(null);
+  const [flexPinDrag, setFlexPinDrag] = useState<{
+    componentId: string;
+    pinId: string; // "1" for pin1 (boardPos), "2" for pin2 (flexibleEndPos)
+  } | null>(null);
 
   const rotateComponent = useProjectStore((s) => s.rotateComponent);
   const pushSnapshot = useProjectStore((s) => s.pushSnapshot);
@@ -165,8 +160,6 @@ export default function StripboardCanvas({ readOnly = false }: { readOnly?: bool
     return () => window.removeEventListener("keydown", handler);
   }, [wirePlacementFrom, cancelWirePlacement, selectedId, selectedIds, selectedWireIds, selectedCuts, rotateComponent, removeFromBoard, moveComponentsOnBoard, pushSnapshot]);
 
-  const svgWidth = BOARD_PADDING * 2 + (board.cols - 1) * HOLE_SPACING;
-  const svgHeight = BOARD_PADDING * 2 + (board.rows - 1) * HOLE_SPACING;
 
   const getSVGPoint = useCallback((e: React.MouseEvent | React.DragEvent) => {
     const svg = svgRef.current;
@@ -332,6 +325,36 @@ export default function StripboardCanvas({ readOnly = false }: { readOnly?: bool
     (e: React.MouseEvent) => {
       if (panZoom.handlePanMove(e)) return;
 
+      // Flexible pin drag
+      if (flexPinDrag) {
+        const pt = getSVGPoint(e);
+        const hole = nearestHole(pt.x, pt.y, board.rows, board.cols);
+        if (hole) {
+          const comp = components.find((c) => c.id === flexPinDrag.componentId);
+          if (comp && comp.boardPos) {
+            if (flexPinDrag.pinId === "1") {
+              // Lock pin 2 absolute position before moving pin 1
+              if (!comp.flexibleEndPos) {
+                const def = resolveComponentDef(comp, componentDefs);
+                if (def) {
+                  const pin2Offset = def.pins[1];
+                  if (pin2Offset) {
+                    setFlexibleEndPos(flexPinDrag.componentId, {
+                      row: comp.boardPos.row + pin2Offset.offsetRow,
+                      col: comp.boardPos.col + pin2Offset.offsetCol,
+                    });
+                  }
+                }
+              }
+              placeOnBoard(flexPinDrag.componentId, hole);
+            } else {
+              setFlexibleEndPos(flexPinDrag.componentId, hole);
+            }
+          }
+        }
+        return;
+      }
+
       // Wire preview line
       if (wirePlacementFrom) {
         setWireMousePos(getSVGPoint(e));
@@ -348,13 +371,37 @@ export default function StripboardCanvas({ readOnly = false }: { readOnly?: bool
         setDragging({ ...dragging, didDrag: true });
       }
       const pt = getSVGPoint(e);
-      setDragPreviewPos(nearestHole(pt.x, pt.y, board.rows, board.cols));
+      const previewHole = nearestHole(pt.x, pt.y, board.rows, board.cols);
+      setDragPreviewPos(previewHole);
+
+      // Live-update position for instant strip recoloring
+      if (dragging.didDrag && previewHole) {
+        const comp = components.find((c) => c.id === dragging.componentId);
+        if (comp?.boardPos && (previewHole.row !== comp.boardPos.row || previewHole.col !== comp.boardPos.col)) {
+          const dDef = resolveComponentDef(comp, componentDefs);
+          if (dDef?.flexible && comp.flexibleEndPos) {
+            const dr = previewHole.row - comp.boardPos.row;
+            const dc = previewHole.col - comp.boardPos.col;
+            setFlexibleEndPos(dragging.componentId, {
+              row: comp.flexibleEndPos.row + dr,
+              col: comp.flexibleEndPos.col + dc,
+            });
+          }
+          placeOnBoard(dragging.componentId, previewHole);
+        }
+      }
     },
-    [dragging, selectionRect, getSVGPoint, board.rows, board.cols, wirePlacementFrom, updateSelectionRect, checkDragThreshold]
+    [dragging, selectionRect, getSVGPoint, board.rows, board.cols, wirePlacementFrom, updateSelectionRect, checkDragThreshold, flexPinDrag, components, placeOnBoard, setFlexibleEndPos]
   );
 
   const handleMouseUp = useCallback(() => {
     panZoom.handlePanEnd();
+
+    // End flexible pin drag
+    if (flexPinDrag) {
+      setFlexPinDrag(null);
+      return;
+    }
 
     // Finalize selection rectangle
     const rectHandled = finalizeSelectionRect((x1, y1, x2, y2) => {
@@ -401,9 +448,7 @@ export default function StripboardCanvas({ readOnly = false }: { readOnly?: bool
 
     if (dragging) {
       markDragComplete();
-      if (dragging.didDrag && dragPreviewPos && isValidPlacement(dragging.componentId, dragPreviewPos)) {
-        placeOnBoard(dragging.componentId, dragPreviewPos);
-      }
+      // Position already committed live during drag — no need to placeOnBoard here
     }
     setDragging(null);
     setDragPreviewPos(null);
@@ -490,25 +535,6 @@ export default function StripboardCanvas({ readOnly = false }: { readOnly?: bool
 
   return (
     <div className="flex flex-col h-full">
-      {allDone && (
-        <div className="bg-green-50 border-b border-green-200 px-5 py-1.5 text-sm text-green-700">
-          All done, all components placed, no conflicts, all nets connected
-        </div>
-      )}
-      {conflictCount > 0 && (
-        <div className="bg-red-50 border-b border-red-200 px-5 py-1.5 text-sm text-red-700">
-          {conflictCount} connectivity conflict{conflictCount > 1 ? "s" : ""} — place cuts or rearrange components
-        </div>
-      )}
-      {(selectedIds.length > 0 || selectedWireIds.length > 0 || selectedCuts.length > 0) && (
-        <div className="bg-[#113768]/5 border-b border-[#113768]/20 px-5 py-1.5 text-sm text-[#113768]">
-          {[
-            selectedIds.length > 0 && `${selectedIds.length} component${selectedIds.length > 1 ? "s" : ""}`,
-            selectedWireIds.length > 0 && `${selectedWireIds.length} wire${selectedWireIds.length > 1 ? "s" : ""}`,
-            selectedCuts.length > 0 && `${selectedCuts.length} cut${selectedCuts.length > 1 ? "s" : ""}`,
-          ].filter(Boolean).join(", ")} selected — arrow keys to move, Escape to deselect
-        </div>
-      )}
       <div ref={containerRef} className="flex-1 overflow-hidden relative">
         <svg
           ref={svgRef}
@@ -631,16 +657,30 @@ export default function StripboardCanvas({ readOnly = false }: { readOnly?: bool
             .map((comp) => {
               const displayPos = getDisplayPos(comp);
               if (!displayPos) return null;
-              const renderComp =
-                displayPos !== comp.boardPos
-                  ? { ...comp, boardPos: displayPos }
-                  : comp;
+              let renderComp = comp;
+              if (displayPos !== comp.boardPos && comp.boardPos) {
+                const deltaRow = displayPos.row - comp.boardPos.row;
+                const deltaCol = displayPos.col - comp.boardPos.col;
+                renderComp = {
+                  ...comp,
+                  boardPos: displayPos,
+                  flexibleEndPos: comp.flexibleEndPos ? {
+                    row: comp.flexibleEndPos.row + deltaRow,
+                    col: comp.flexibleEndPos.col + deltaCol,
+                  } : comp.flexibleEndPos,
+                };
+              }
               return (
                 <PlacedComponent
                   key={comp.id}
                   component={renderComp}
                   isSelected={comp.id === selectedId || selectedIds.includes(comp.id)}
                   onMouseDown={(e) => handleComponentMouseDown(comp.id, e)}
+                  onPinDragStart={!readOnly ? (pinId, e) => {
+                    e.stopPropagation();
+                    pushSnapshot();
+                    setFlexPinDrag({ componentId: comp.id, pinId });
+                  } : undefined}
                 />
               );
             })}
