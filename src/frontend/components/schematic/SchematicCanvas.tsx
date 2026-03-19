@@ -80,6 +80,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
 
   const [wirePreview, setWirePreview] = useState<{ x: number; y: number } | null>(null);
   const [selectedWireId, setSelectedWireId] = useState<string | null>(null);
+  const [selectedWireIds, setSelectedWireIds] = useState<string[]>([]);
 
   // Compute wire colors: propagate net color through connected wire groups
   const wireColorMap = useMemo(() => {
@@ -211,8 +212,9 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
           toggleWireDrawMode();
           return;
         }
-        if (selectedIds.length > 0) {
+        if (selectedIds.length > 0 || selectedWireIds.length > 0) {
           setSelectedIds([]);
+          setSelectedWireIds([]);
           return;
         }
         if (selectedWireId) {
@@ -229,23 +231,41 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
         }
       }
 
-      // Delete: remove selected component or wire
+      // Delete: remove all selected components and wires
       if (e.key === "Delete") {
-        if (selectedWireId) {
-          removeSchematicWire(selectedWireId);
-          setSelectedWireId(null);
-          return;
+        const hasSelection = selectedId || selectedWireId || selectedIds.length > 0 || selectedWireIds.length > 0;
+        if (!hasSelection) return;
+        pushSnapshot();
+
+        // Delete bulk-selected wires
+        const wireIdsToDelete = [...selectedWireIds];
+        if (selectedWireId && !wireIdsToDelete.includes(selectedWireId)) {
+          wireIdsToDelete.push(selectedWireId);
         }
-        if (selectedId) {
-          removeComponent(selectedId);
-          setSelectedId(null);
-          return;
+        for (const wid of wireIdsToDelete) {
+          removeSchematicWire(wid);
         }
+
+        // Delete bulk-selected components
+        const compIdsToDelete = [...selectedIds];
+        if (selectedId && !compIdsToDelete.includes(selectedId)) {
+          compIdsToDelete.push(selectedId);
+        }
+        for (const cid of compIdsToDelete) {
+          removeComponent(cid);
+        }
+
+        setSelectedId(null);
+        setSelectedWireId(null);
+        setSelectedIds([]);
+        setSelectedWireIds([]);
+        return;
       }
 
-      // Arrow keys: move selected components
+      // Arrow keys: move selected components and wires
       const moveIds = selectedIds.length > 0 ? selectedIds : selectedId ? [selectedId] : [];
-      if (moveIds.length > 0 && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
+      const moveWireIds = selectedWireIds;
+      if ((moveIds.length > 0 || moveWireIds.length > 0) && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
         e.preventDefault();
         pushSnapshot();
         const delta = {
@@ -263,12 +283,43 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
             });
           }
         }
+        // Move selected wires — only move "free" endpoints (not on any component's pin,
+        // since pin-connected endpoints are already moved by updateSchematicPos)
+        if (moveWireIds.length > 0) {
+          const s = useProjectStore.getState();
+          // Build set of all component pin positions (after the move)
+          const pinPositions = new Set<string>();
+          for (const comp of s.components) {
+            const def = resolveComponentDef(comp, s.componentDefs);
+            if (!def) continue;
+            const rot = comp.schematicRotation ?? 0;
+            const pins = getRotatedPinPositions(def.symbol, rot);
+            for (const pin of pins) {
+              pinPositions.add(pointKey(comp.schematicPos.x + pin.x, comp.schematicPos.y + pin.y));
+            }
+          }
+          const movedWires = s.schematicWires.map((w) => {
+            if (!moveWireIds.includes(w.id)) return w;
+            const startOnPin = pinPositions.has(pointKey(w.start.x, w.start.y));
+            const endOnPin = pinPositions.has(pointKey(w.end.x, w.end.y));
+            // Only move endpoints that are free grid anchors (not on pins)
+            const moveStart = !startOnPin;
+            const moveEnd = !endOnPin;
+            if (!moveStart && !moveEnd) return w;
+            return {
+              ...w,
+              start: moveStart ? { x: w.start.x + delta.x, y: w.start.y + delta.y } : w.start,
+              end: moveEnd ? { x: w.end.x + delta.x, y: w.end.y + delta.y } : w.end,
+            };
+          });
+          useProjectStore.setState({ schematicWires: movedWires });
+        }
         return;
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selectedId, selectedIds, selectedWireId, wireDrawingFrom, components, updateSchematicPos, removeComponent, removeSchematicWire, rotateSchematicComponent, pushSnapshot, setSchematicWireDrawing]);
+  }, [selectedId, selectedIds, selectedWireId, selectedWireIds, wireDrawingFrom, wireDrawMode, components, schematicWires, updateSchematicPos, removeComponent, removeSchematicWire, rotateSchematicComponent, pushSnapshot, setSchematicWireDrawing, toggleWireDrawMode]);
 
   const getSVGPoint = useCallback((e: React.MouseEvent) => {
     const svg = svgRef.current;
@@ -427,6 +478,14 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
           selected.push(comp.id);
         }
       }
+      // Also select wires with any endpoint inside the rect
+      const selWires: string[] = [];
+      for (const wire of schematicWires) {
+        const startIn = wire.start.x >= x1 && wire.start.x <= x2 && wire.start.y >= y1 && wire.start.y <= y2;
+        const endIn = wire.end.x >= x1 && wire.end.x <= x2 && wire.end.y >= y1 && wire.end.y <= y2;
+        if (startIn || endIn) selWires.push(wire.id);
+      }
+      setSelectedWireIds(selWires);
       return selected;
     });
     if (rectHandled) return;
@@ -450,6 +509,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
       if (e.target === svgRef.current || isGridRect) {
         clearSelection();
         setSelectedWireId(null);
+        setSelectedWireIds([]);
       }
     }
   }, [shouldSuppressClick, clearSelection]);
@@ -570,7 +630,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
             key={wire.id}
             wire={wire}
             color={wireColorMap.get(wire.id)}
-            isSelected={selectedWireId === wire.id}
+            isSelected={selectedWireId === wire.id || selectedWireIds.includes(wire.id)}
             onMouseDown={(e) => {
               if (readOnly) return;
               e.stopPropagation();
@@ -627,7 +687,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
           return (
             <circle
               key={key}
-              cx={jp.x} cy={jp.y} r={4}
+              cx={jp.x} cy={jp.y} r={2.5}
               fill={color}
               pointerEvents="none"
             />
