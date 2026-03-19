@@ -9,6 +9,8 @@
 //
 // Labels and bounding boxes are computed at render time, not stored here.
 
+import { GRID_SIZE } from "@/utils/schematicConstants";
+
 export interface SymbolPinStub {
   pinId: string;
   defaultName: string;
@@ -31,7 +33,7 @@ export interface SymbolExtraElement {
   props: Record<string, string | number>;
 }
 
-const G = 20; // grid size — all stubEnd coords MUST be multiples of this
+const G = GRID_SIZE; // all stubEnd coords MUST be multiples of this
 
 // ── Passive Symbols ───────────────────────────────────
 // 2-pin vertical: pins at (0, -G) and (0, G) = (0, -20) and (0, 20)

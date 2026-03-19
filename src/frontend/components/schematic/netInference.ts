@@ -2,6 +2,8 @@ import { SchematicWire, Net, NetAssignment, Component, ComponentDef } from "@/ty
 import { getWirePoints } from "./SchematicWireLine";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { getRotatedPinPositions } from "./SymbolRenderer";
+import { pointKey } from "@/utils/schematicConstants";
+import { randomNetColor, nextNetName } from "@/utils/netColors";
 
 // ── Union-Find ────────────────────────────────────────
 
@@ -53,35 +55,8 @@ class UnionFind {
   }
 }
 
-/** Grid point key for spatial matching */
-function pointKey(x: number, y: number): string {
-  return `${Math.round(x)},${Math.round(y)}`;
-}
-
-const AUTO_NET_COLORS = [
-  "#22c55e", "#3b82f6", "#8b5cf6", "#ec4899",
-  "#06b6d4", "#f97316", "#eab308", "#14b8a6",
-  "#f43f5e", "#6366f1", "#84cc16", "#a855f7",
-];
-
 function generateId(): string {
   return crypto.randomUUID();
-}
-
-function randomColor(existingNets: Net[]): string {
-  const usedColors = new Set(existingNets.map((n) => n.color));
-  const available = AUTO_NET_COLORS.filter((c) => !usedColors.has(c));
-  if (available.length > 0) {
-    return available[Math.floor(Math.random() * available.length)];
-  }
-  const hue = Math.floor(Math.random() * 360);
-  return `hsl(${hue}, 70%, 50%)`;
-}
-
-function nextNetName(nets: Net[]): string {
-  let num = 1;
-  while (nets.some((n) => n.name === `net${num}`)) num++;
-  return `net${num}`;
 }
 
 const PERSISTENT_NET_NAMES = new Set(["VCC", "GND"]);
@@ -196,7 +171,7 @@ export function recalculateNets(
       assignedNet = {
         id: generateId(),
         name: nextNetName([...existingNets, ...newNets]),
-        color: randomColor([...existingNets, ...newNets]),
+        color: randomNetColor([...existingNets, ...newNets]),
       };
     }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { Component } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
@@ -24,7 +24,6 @@ export default function SchematicComponentBlock({
   const nets = useProjectStore((s) => s.nets);
   const updateLabel = useProjectStore((s) => s.updateLabel);
 
-  const mouseDownPos = useRef<{ x: number; y: number } | null>(null);
   const [editingLabel, setEditingLabel] = useState(false);
   const [editLabelValue, setEditLabelValue] = useState("");
 
@@ -44,12 +43,7 @@ export default function SchematicComponentBlock({
   }
 
   const handleMouseDown = (e: React.MouseEvent) => {
-    mouseDownPos.current = { x: e.clientX, y: e.clientY };
     onMouseDown(e);
-  };
-
-  const handleMouseUp = () => {
-    mouseDownPos.current = null;
   };
 
   const handleLabelClick = (e: React.MouseEvent) => {
@@ -75,7 +69,6 @@ export default function SchematicComponentBlock({
       transform={`translate(${component.schematicPos.x}, ${component.schematicPos.y})`}
       style={{ cursor: "grab" }}
       onMouseDown={handleMouseDown}
-      onMouseUp={handleMouseUp}
     >
       {/* Invisible hit area for dragging */}
       <rect

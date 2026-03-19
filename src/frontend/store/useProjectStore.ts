@@ -19,6 +19,7 @@ import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { getComponentBounds } from "@/components/stripboard/boardLayout";
 import { recalculateNets } from "@/components/schematic/netInference";
 import { getRotatedPinPositions } from "@/components/schematic/SymbolRenderer";
+import { pointKey } from "@/utils/schematicConstants";
 
 function generateId(): string {
   return crypto.randomUUID();
@@ -110,6 +111,7 @@ interface UIState {
   highlightedNetId: string | null;
   schematicWireDrawMode: boolean;
   schematicWireDrawingFrom: { x: number; y: number } | null;
+  schematicWireDirection: "horizontal-first" | "vertical-first" | null; // locked on first significant mouse move
   // Captured at drag start: which wire endpoints to move with the dragged component
   _dragWireBindings: { wireId: string; endpoint: "start" | "end" }[] | null;
 }
@@ -120,28 +122,6 @@ interface HistoryState {
 }
 
 type ProjectStore = Project & UIState & ProjectActions & HistoryState;
-
-const AUTO_NET_COLORS = [
-  "#22c55e", "#3b82f6", "#8b5cf6", "#ec4899",
-  "#06b6d4", "#f97316", "#eab308", "#14b8a6",
-  "#f43f5e", "#6366f1", "#84cc16", "#a855f7",
-];
-
-function randomAutoNetColor(nets: Net[]): string {
-  const usedColors = new Set(nets.map((n) => n.color));
-  const available = AUTO_NET_COLORS.filter((c) => !usedColors.has(c));
-  if (available.length > 0) {
-    return available[Math.floor(Math.random() * available.length)];
-  }
-  const hue = Math.floor(Math.random() * 360);
-  return `hsl(${hue}, 70%, 50%)`;
-}
-
-function nextNetName(nets: Net[]): string {
-  let num = 1;
-  while (nets.some((n) => n.name === `net${num}`)) num++;
-  return `net${num}`;
-}
 
 const initialProject: Project = {
   name: "Untitled Project",
@@ -197,6 +177,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   highlightedNetId: null,
   schematicWireDrawMode: false,
   schematicWireDrawingFrom: null,
+  schematicWireDirection: null,
   _dragWireBindings: null,
   _history: [],
   _redoStack: [],
@@ -373,7 +354,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       for (const oldPin of oldPins) {
         const newPin = newPins.find((p) => p.pinId === oldPin.pinId);
         if (newPin) {
-          const key = `${Math.round(comp.schematicPos.x + oldPin.x)},${Math.round(comp.schematicPos.y + oldPin.y)}`;
+          const key = pointKey(comp.schematicPos.x + oldPin.x, comp.schematicPos.y + oldPin.y);
           pinMoves.set(key, {
             dx: newPin.x - oldPin.x,
             dy: newPin.y - oldPin.y,
@@ -388,8 +369,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
       // Move wire endpoints from old pin positions to new
       const newWires = s.schematicWires.map((w) => {
-        const startKey = `${Math.round(w.start.x)},${Math.round(w.start.y)}`;
-        const endKey = `${Math.round(w.end.x)},${Math.round(w.end.y)}`;
+        const startKey = pointKey(w.start.x, w.start.y);
+        const endKey = pointKey(w.end.x, w.end.y);
         const startMove = pinMoves.get(startKey);
         const endMove = pinMoves.get(endKey);
         if (!startMove && !endMove) return w;
@@ -492,9 +473,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     if (Math.round(start.x) === Math.round(end.x) && Math.round(start.y) === Math.round(end.y)) return;
     get().pushSnapshot();
     const s = get();
+    // Use direction from mouse movement if available, otherwise fallback to distance-based
     const dx = Math.abs(end.x - start.x);
     const dy = Math.abs(end.y - start.y);
-    const routeDirection = dx >= dy ? "horizontal-first" as const : "vertical-first" as const;
+    const routeDirection = s.schematicWireDirection ?? (dx >= dy ? "horizontal-first" as const : "vertical-first" as const);
     const newWire: SchematicWire = { id: generateId(), start, end, routeDirection };
     const newWires = [...s.schematicWires, newWire];
     const result = recalculateNets(newWires, s.nets, s.netAssignments, s.components, s.componentDefs);
@@ -673,9 +655,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   setHighlightedNetId: (id) => set({ highlightedNetId: id }),
   toggleSchematicWireDrawMode: () => set((s) => ({
     schematicWireDrawMode: !s.schematicWireDrawMode,
-    schematicWireDrawingFrom: null, // cancel any in-progress drawing
+    schematicWireDrawingFrom: null,
+    schematicWireDirection: null,
   })),
-  setSchematicWireDrawing: (from) => set({ schematicWireDrawingFrom: from }),
+  setSchematicWireDrawing: (from) => set({ schematicWireDrawingFrom: from, schematicWireDirection: null }),
 
   // Capture which wire endpoints should move with a component during drag.
   // Called once at drag start. Only captures endpoints at this component's pin positions
@@ -693,7 +676,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const pins = getRotatedPinPositions(def.symbol, rotation);
     const myPinKeys = new Set<string>();
     for (const pin of pins) {
-      myPinKeys.add(`${Math.round(comp.schematicPos.x + pin.x)},${Math.round(comp.schematicPos.y + pin.y)}`);
+      myPinKeys.add(pointKey(comp.schematicPos.x + pin.x, comp.schematicPos.y + pin.y));
     }
 
     // Other components' pin positions (exclude from moving)
@@ -712,8 +695,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     // Find wire endpoints at this component's pins but not other components' pins
     const bindings: { wireId: string; endpoint: "start" | "end" }[] = [];
     for (const w of s.schematicWires) {
-      const startKey = `${Math.round(w.start.x)},${Math.round(w.start.y)}`;
-      const endKey = `${Math.round(w.end.x)},${Math.round(w.end.y)}`;
+      const startKey = pointKey(w.start.x, w.start.y);
+      const endKey = pointKey(w.end.x, w.end.y);
       if (myPinKeys.has(startKey) && !otherPinKeys.has(startKey)) {
         bindings.push({ wireId: w.id, endpoint: "start" });
       }
@@ -774,6 +757,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       wirePlacementFrom: null,
       schematicWireDrawMode: false,
       schematicWireDrawingFrom: null,
+  schematicWireDirection: null,
     });
   },
 
@@ -793,6 +777,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     wirePlacementFrom: null,
     schematicWireDrawMode: false,
     schematicWireDrawingFrom: null,
+  schematicWireDirection: null,
     _history: [],
     _redoStack: [],
     canUndo: false,

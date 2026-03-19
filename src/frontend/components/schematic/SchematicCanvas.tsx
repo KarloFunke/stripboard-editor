@@ -10,17 +10,13 @@ import ComponentPopup from "./ComponentPopup";
 import SchematicWireLine, { getWirePoints } from "./SchematicWireLine";
 import { getBlockSize } from "./blockLayout";
 import { getRotatedPinPositions } from "./SymbolRenderer";
+import { GRID_SIZE, snapToGrid, pointKey } from "@/utils/schematicConstants";
 
 const POPUP_WIDTH = 220;
 const POPUP_HEIGHT_ESTIMATE = 250;
 const POPUP_GAP = 8;
-const MOVE_STEP = 20;
+const MOVE_STEP = GRID_SIZE;
 const PIN_SNAP_RADIUS = 15;
-const GRID_SIZE = 20; // snap grid spacing
-
-function snapToGrid(val: number): number {
-  return Math.round(val / GRID_SIZE) * GRID_SIZE;
-}
 
 
 
@@ -75,6 +71,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
   const rotateSchematicComponent = useProjectStore((s) => s.rotateSchematicComponent);
   const wireDrawMode = useProjectStore((s) => s.schematicWireDrawMode);
   const wireDrawingFrom = useProjectStore((s) => s.schematicWireDrawingFrom);
+  const wireDirection = useProjectStore((s) => s.schematicWireDirection);
   const setSchematicWireDrawing = useProjectStore((s) => s.setSchematicWireDrawing);
   const toggleWireDrawMode = useProjectStore((s) => s.toggleSchematicWireDrawMode);
   const pushSnapshot = useProjectStore((s) => s.pushSnapshot);
@@ -102,7 +99,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
         if (assignment) {
           const net = nets.find((n) => n.id === assignment.netId);
           if (net) {
-            const key = `${Math.round(comp.schematicPos.x + pin.x)},${Math.round(comp.schematicPos.y + pin.y)}`;
+            const key = pointKey(comp.schematicPos.x + pin.x, comp.schematicPos.y + pin.y);
             pointNetColor.set(key, net.color);
           }
         }
@@ -126,7 +123,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
 
     for (const wire of schematicWires) {
       const pts = getWirePoints(wire);
-      const keys = pts.map((p) => `${Math.round(p.x)},${Math.round(p.y)}`);
+      const keys = pts.map((p) => pointKey(p.x, p.y));
       for (const k of keys) find(k); // ensure in UF
       for (let i = 1; i < keys.length; i++) union(keys[0], keys[i]);
     }
@@ -140,7 +137,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
 
     // Assign colors to wires
     for (const wire of schematicWires) {
-      const sk = `${Math.round(wire.start.x)},${Math.round(wire.start.y)}`;
+      const sk = pointKey(wire.start.x, wire.start.y);
       const root = find(sk);
       const color = rootColor.get(root);
       if (color) colorMap.set(wire.id, color);
@@ -148,6 +145,25 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
 
     return colorMap;
   }, [schematicWires, components, componentDefs, nets, netAssignments]);
+
+  // Compute junction points: grid points where 3+ wire endpoints/bends meet
+  const junctionPoints = useMemo(() => {
+    const pointCount = new Map<string, { x: number; y: number; count: number }>();
+    for (const wire of schematicWires) {
+      const pts = getWirePoints(wire);
+      for (const p of pts) {
+        const key = pointKey(p.x, p.y);
+        const existing = pointCount.get(key);
+        if (existing) {
+          existing.count++;
+        } else {
+          pointCount.set(key, { x: p.x, y: p.y, count: 1 });
+        }
+      }
+    }
+    // Only show dots where 3+ wire segments meet (T-junctions, crosses)
+    return Array.from(pointCount.values()).filter((p) => p.count >= 3);
+  }, [schematicWires]);
 
   const {
     selectedId, setSelectedId,
@@ -357,10 +373,26 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
     (e: React.MouseEvent) => {
       if (panZoom.handlePanMove(e)) return;
 
-      // Wire drawing preview
+      // Wire drawing preview + detect initial direction
       if (wireDrawMode && wireDrawingFrom) {
         const pt = getSVGPoint(e);
-        setWirePreview(pt);
+        setWirePreview({ x: snapToGrid(pt.x), y: snapToGrid(pt.y) });
+
+        const mdx = Math.abs(pt.x - wireDrawingFrom.x);
+        const mdy = Math.abs(pt.y - wireDrawingFrom.y);
+        const threshold = GRID_SIZE / 2;
+
+        if (mdx < threshold && mdy < threshold) {
+          // Back near start — reset direction so user can re-choose
+          if (wireDirection) {
+            useProjectStore.setState({ schematicWireDirection: null });
+          }
+        } else if (!wireDirection) {
+          // Lock direction on first significant movement
+          useProjectStore.setState({
+            schematicWireDirection: mdx >= mdy ? "horizontal-first" : "vertical-first",
+          });
+        }
         return;
       }
 
@@ -377,7 +409,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
       const newY = snapToGrid(pt.y - dragging.offsetY);
       updateSchematicPos(dragging.componentId, { x: newX, y: newY });
     },
-    [dragging, selectionRect, getSVGPoint, updateSchematicPos, panZoom.handlePanMove, updateSelectionRect, checkDragThreshold, wireDrawingFrom]
+    [dragging, selectionRect, getSVGPoint, updateSchematicPos, panZoom.handlePanMove, updateSelectionRect, checkDragThreshold, wireDrawMode, wireDrawingFrom, wireDirection]
   );
 
   const handleMouseUp = useCallback(() => {
@@ -526,8 +558,8 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
       >
         {/* Grid dots */}
         <defs>
-          <pattern id="grid" width={GRID_SIZE} height={GRID_SIZE} patternUnits="userSpaceOnUse">
-            <circle cx="0" cy="0" r="0.5" fill="#e5e5e5" />
+          <pattern id="grid" width={GRID_SIZE} height={GRID_SIZE} patternUnits="userSpaceOnUse" x={-GRID_SIZE / 2} y={-GRID_SIZE / 2}>
+            <circle cx={GRID_SIZE / 2} cy={GRID_SIZE / 2} r="1" fill="#d4d4d4" />
           </pattern>
         </defs>
         <rect x="-10000" y="-10000" width="20000" height="20000" fill="url(#grid)" />
@@ -585,15 +617,29 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
           />
         ))}
 
-        {/* Wire drawing preview — L-shape from start to cursor */}
+        {/* Junction dots — where 3+ wire segments meet */}
+        {junctionPoints.map((jp) => {
+          const key = pointKey(jp.x, jp.y);
+          const wire = schematicWires.find((w) =>
+            pointKey(w.start.x, w.start.y) === key || pointKey(w.end.x, w.end.y) === key
+          );
+          const color = wire ? (wireColorMap.get(wire.id) ?? "#666") : "#666";
+          return (
+            <circle
+              key={key}
+              cx={jp.x} cy={jp.y} r={4}
+              fill={color}
+              pointerEvents="none"
+            />
+          );
+        })}
+
+        {/* Wire drawing preview — L-shape following mouse direction */}
         {wireStartPos && wirePreview && (() => {
-          const dx = Math.abs(wirePreview.x - wireStartPos.x);
-          const dy = Math.abs(wirePreview.y - wireStartPos.y);
           const sameX = Math.abs(wirePreview.x - wireStartPos.x) < 1;
           const sameY = Math.abs(wirePreview.y - wireStartPos.y) < 1;
 
           if (sameX || sameY) {
-            // Straight line
             return (
               <line
                 x1={wireStartPos.x} y1={wireStartPos.y}
@@ -605,8 +651,10 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
             );
           }
 
-          // L-shape: auto-select direction
-          const hFirst = dx >= dy;
+          // Use locked direction, fallback to distance-based
+          const dx = Math.abs(wirePreview.x - wireStartPos.x);
+          const dy = Math.abs(wirePreview.y - wireStartPos.y);
+          const hFirst = wireDirection === "horizontal-first" || (!wireDirection && dx >= dy);
           const bend = hFirst
             ? { x: wirePreview.x, y: wireStartPos.y }
             : { x: wireStartPos.x, y: wirePreview.y };
