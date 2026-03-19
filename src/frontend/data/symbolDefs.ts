@@ -26,6 +26,7 @@ export interface SymbolDef {
   bodyPaths: { d: string; fill?: string; stroke?: string }[];
   extraElements?: SymbolExtraElement[];
   pins: SymbolPinStub[];
+  labelYOffset?: number; // extra pixels to push the component label upward
 }
 
 export interface SymbolExtraElement {
@@ -89,60 +90,67 @@ const capPolarized: SymbolDef = {
   ],
 };
 
-// 2-pin horizontal: pins at (-2G, 0) and (2G, 0) = (-40, 0) and (40, 0)
+// 2-pin horizontal: pins 1.5 grid cells apart each side
+const DIODE_LEAD = Math.round(1.5 * G); // 30
+
 const diode: SymbolDef = {
   symbolId: "diode",
   label: "Diode",
+  labelYOffset: 10,
   category: "passive",
   bodyPaths: [
     { d: "M -8 -8 L 8 0 L -8 8 Z", fill: "none" },   // triangle
     { d: "M 8 -8 L 8 8", fill: "none" },                // bar
-    { d: "M -8 0 L -2G 0".replace("2G", String(2 * G)), fill: "none" },
-    { d: `M 8 0 L ${2 * G} 0`, fill: "none" },
+    { d: `M -8 0 L ${-DIODE_LEAD} 0`, fill: "none" },
+    { d: `M 8 0 L ${DIODE_LEAD} 0`, fill: "none" },
   ],
   pins: [
-    { pinId: "1", defaultName: "A", stubStart: { x: -8, y: 0 }, stubEnd: { x: -2 * G, y: 0 }, side: "left" },
-    { pinId: "2", defaultName: "K", stubStart: { x: 8, y: 0 }, stubEnd: { x: 2 * G, y: 0 }, side: "right" },
+    { pinId: "1", defaultName: "A", stubStart: { x: -8, y: 0 }, stubEnd: { x: -DIODE_LEAD, y: 0 }, side: "left" },
+    { pinId: "2", defaultName: "K", stubStart: { x: 8, y: 0 }, stubEnd: { x: DIODE_LEAD, y: 0 }, side: "right" },
   ],
 };
 
 const led: SymbolDef = {
   symbolId: "led",
   label: "LED",
+  labelYOffset: 16,
   category: "passive",
   bodyPaths: [
     { d: "M -8 -8 L 8 0 L -8 8 Z", fill: "none" },
     { d: "M 8 -8 L 8 8", fill: "none" },
-    { d: `M -8 0 L ${-2 * G} 0`, fill: "none" },
-    { d: `M 8 0 L ${2 * G} 0`, fill: "none" },
+    { d: `M -8 0 L ${-DIODE_LEAD} 0`, fill: "none" },
+    { d: `M 8 0 L ${DIODE_LEAD} 0`, fill: "none" },
   ],
   extraElements: [
-    { type: "line", props: { x1: 2, y1: -12, x2: 8, y2: -18 } },
-    { type: "line", props: { x1: 8, y1: -18, x2: 5, y2: -15 } },
-    { type: "line", props: { x1: 8, y1: -18, x2: 8, y2: -14 } },
-    { type: "line", props: { x1: 6, y1: -10, x2: 12, y2: -16 } },
-    { type: "line", props: { x1: 12, y1: -16, x2: 9, y2: -13 } },
-    { type: "line", props: { x1: 12, y1: -16, x2: 12, y2: -12 } },
+    // Arrow 1: shaft + arrowhead (~40° per side)
+    { type: "line", props: { x1: 3, y1: -11, x2: 10, y2: -18 } },
+    { type: "line", props: { x1: 10, y1: -18, x2: 4, y2: -15 } },
+    { type: "line", props: { x1: 10, y1: -18, x2: 7, y2: -12 } },
+    // Arrow 2
+    { type: "line", props: { x1: 7, y1: -9, x2: 14, y2: -16 } },
+    { type: "line", props: { x1: 14, y1: -16, x2: 8, y2: -13 } },
+    { type: "line", props: { x1: 14, y1: -16, x2: 11, y2: -10 } },
   ],
   pins: [
-    { pinId: "1", defaultName: "A", stubStart: { x: -8, y: 0 }, stubEnd: { x: -2 * G, y: 0 }, side: "left" },
-    { pinId: "2", defaultName: "K", stubStart: { x: 8, y: 0 }, stubEnd: { x: 2 * G, y: 0 }, side: "right" },
+    { pinId: "1", defaultName: "A", stubStart: { x: -8, y: 0 }, stubEnd: { x: -DIODE_LEAD, y: 0 }, side: "left" },
+    { pinId: "2", defaultName: "K", stubStart: { x: 8, y: 0 }, stubEnd: { x: DIODE_LEAD, y: 0 }, side: "right" },
   ],
 };
 
 const zener: SymbolDef = {
   symbolId: "zener",
   label: "Zener Diode",
+  labelYOffset: 12,
   category: "passive",
   bodyPaths: [
     { d: "M -8 -8 L 8 0 L -8 8 Z", fill: "none" },
     { d: "M 6 -10 L 8 -8 L 8 8 L 10 10", fill: "none" },
-    { d: `M -8 0 L ${-2 * G} 0`, fill: "none" },
-    { d: `M 8 0 L ${2 * G} 0`, fill: "none" },
+    { d: `M -8 0 L ${-DIODE_LEAD} 0`, fill: "none" },
+    { d: `M 8 0 L ${DIODE_LEAD} 0`, fill: "none" },
   ],
   pins: [
-    { pinId: "1", defaultName: "A", stubStart: { x: -8, y: 0 }, stubEnd: { x: -2 * G, y: 0 }, side: "left" },
-    { pinId: "2", defaultName: "K", stubStart: { x: 8, y: 0 }, stubEnd: { x: 2 * G, y: 0 }, side: "right" },
+    { pinId: "1", defaultName: "A", stubStart: { x: -8, y: 0 }, stubEnd: { x: -DIODE_LEAD, y: 0 }, side: "left" },
+    { pinId: "2", defaultName: "K", stubStart: { x: 8, y: 0 }, stubEnd: { x: DIODE_LEAD, y: 0 }, side: "right" },
   ],
 };
 
@@ -249,6 +257,7 @@ const pmos: SymbolDef = {
 const vreg: SymbolDef = {
   symbolId: "vreg",
   label: "Voltage Regulator",
+  labelYOffset: -5,
   category: "semiconductor",
   bodyPaths: [
     { d: "M -18 -16 L 18 -16 L 18 16 L -18 16 Z", fill: "none" },
@@ -297,11 +306,164 @@ const generic3pin: SymbolDef = {
   ],
 };
 
+// ── Inductor ──────────────────────────────────────────
+
+const inductor: SymbolDef = {
+  symbolId: "inductor",
+  label: "Inductor",
+  category: "passive",
+  bodyPaths: [
+    // Coil loops (4 bumps)
+    { d: "M 0 -12 A 5 5 0 0 1 0 -4 A 5 5 0 0 1 0 4 A 5 5 0 0 1 0 12", fill: "none" },
+    // Stubs to grid
+    { d: `M 0 -12 L 0 ${-G}`, fill: "none" },
+    { d: `M 0 12 L 0 ${G}`, fill: "none" },
+  ],
+  pins: [
+    { pinId: "1", defaultName: "1", stubStart: { x: 0, y: -12 }, stubEnd: { x: 0, y: -G }, side: "top" },
+    { pinId: "2", defaultName: "2", stubStart: { x: 0, y: 12 }, stubEnd: { x: 0, y: G }, side: "bottom" },
+  ],
+};
+
+// ── Transformer ───────────────────────────────────────
+// 4-pin: P1 (top-left), P2 (bottom-left), S1 (top-right), S2 (bottom-right)
+
+const transformer: SymbolDef = {
+  symbolId: "transformer",
+  label: "Transformer",
+  category: "passive",
+  bodyPaths: [
+    // Primary coil (left side)
+    { d: "M -10 -12 A 5 5 0 0 1 -10 -4 A 5 5 0 0 1 -10 4 A 5 5 0 0 1 -10 12", fill: "none" },
+    // Secondary coil (right side)
+    { d: "M 10 -12 A 5 5 0 0 0 10 -4 A 5 5 0 0 0 10 4 A 5 5 0 0 0 10 12", fill: "none" },
+    // Core lines (two vertical parallel lines between coils)
+    { d: "M -3 -14 L -3 14", fill: "none" },
+    { d: "M 3 -14 L 3 14", fill: "none" },
+    // Stubs
+    { d: `M -10 -12 L ${-2 * G} ${-G}`, fill: "none" },
+    { d: `M -10 12 L ${-2 * G} ${G}`, fill: "none" },
+    { d: `M 10 -12 L ${2 * G} ${-G}`, fill: "none" },
+    { d: `M 10 12 L ${2 * G} ${G}`, fill: "none" },
+  ],
+  pins: [
+    { pinId: "1", defaultName: "P1", stubStart: { x: -10, y: -12 }, stubEnd: { x: -2 * G, y: -G }, side: "left" },
+    { pinId: "2", defaultName: "P2", stubStart: { x: -10, y: 12 }, stubEnd: { x: -2 * G, y: G }, side: "left" },
+    { pinId: "3", defaultName: "S1", stubStart: { x: 10, y: -12 }, stubEnd: { x: 2 * G, y: -G }, side: "right" },
+    { pinId: "4", defaultName: "S2", stubStart: { x: 10, y: 12 }, stubEnd: { x: 2 * G, y: G }, side: "right" },
+  ],
+};
+
+// ── Common Component Symbols ──────────────────────────
+
+const timer555: SymbolDef = {
+  symbolId: "timer-555",
+  label: "555 Timer",
+  labelYOffset: 14,
+  category: "ic",
+  bodyPaths: [
+    { d: `M -24 ${-G - 10} L 24 ${-G - 10} L 24 ${2 * G + 10} L -24 ${2 * G + 10} Z`, fill: "none" },
+    // Stubs for 8 pins (4 per side, evenly spaced at grid multiples)
+    ...[-G, 0, G, 2 * G].map((y) => ({ d: `M -24 ${y} L ${-2 * G} ${y}`, fill: "none" })),
+    ...[-G, 0, G, 2 * G].map((y) => ({ d: `M 24 ${y} L ${2 * G} ${y}`, fill: "none" })),
+  ],
+  extraElements: [
+    { type: "text", props: { x: 0, y: 4, fontSize: 10, textAnchor: "middle", children: "555" } },
+  ],
+  pins: [
+    { pinId: "1", defaultName: "GND", stubStart: { x: -24, y: -G }, stubEnd: { x: -2 * G, y: -G }, side: "left" },
+    { pinId: "2", defaultName: "TRIG", stubStart: { x: -24, y: 0 }, stubEnd: { x: -2 * G, y: 0 }, side: "left" },
+    { pinId: "3", defaultName: "OUT", stubStart: { x: -24, y: G }, stubEnd: { x: -2 * G, y: G }, side: "left" },
+    { pinId: "4", defaultName: "RESET", stubStart: { x: -24, y: 2 * G }, stubEnd: { x: -2 * G, y: 2 * G }, side: "left" },
+    // Top anchor point to push bounds above the box (stubStart at box top)
+    { pinId: "8", defaultName: "VCC", stubStart: { x: 24, y: -G }, stubEnd: { x: 2 * G, y: -G }, side: "right" },
+    { pinId: "7", defaultName: "DISCH", stubStart: { x: 24, y: 0 }, stubEnd: { x: 2 * G, y: 0 }, side: "right" },
+    { pinId: "6", defaultName: "THRESH", stubStart: { x: 24, y: G }, stubEnd: { x: 2 * G, y: G }, side: "right" },
+    { pinId: "5", defaultName: "CTRL", stubStart: { x: 24, y: 2 * G }, stubEnd: { x: 2 * G, y: 2 * G }, side: "right" },
+  ],
+};
+
+const optocoupler: SymbolDef = {
+  symbolId: "optocoupler",
+  label: "Optocoupler",
+  labelYOffset: 8,
+  category: "ic",
+  bodyPaths: [
+    { d: `M -18 ${-G - 6} L 18 ${-G - 6} L 18 ${G + 6} L -18 ${G + 6} Z`, fill: "none" },
+    // Stubs
+    { d: `M -18 ${-G} L ${-2 * G} ${-G}`, fill: "none" },
+    { d: `M -18 ${G} L ${-2 * G} ${G}`, fill: "none" },
+    { d: `M 18 ${-G} L ${2 * G} ${-G}`, fill: "none" },
+    { d: `M 18 ${G} L ${2 * G} ${G}`, fill: "none" },
+  ],
+  pins: [
+    { pinId: "1", defaultName: "A", stubStart: { x: -18, y: -G }, stubEnd: { x: -2 * G, y: -G }, side: "left" },
+    { pinId: "2", defaultName: "K", stubStart: { x: -18, y: G }, stubEnd: { x: -2 * G, y: G }, side: "left" },
+    { pinId: "3", defaultName: "C", stubStart: { x: 18, y: -G }, stubEnd: { x: 2 * G, y: -G }, side: "right" },
+    { pinId: "4", defaultName: "E", stubStart: { x: 18, y: G }, stubEnd: { x: 2 * G, y: G }, side: "right" },
+  ],
+};
+
+const opamp: SymbolDef = {
+  symbolId: "opamp",
+  label: "Op-Amp",
+  category: "ic",
+  labelYOffset: 15,
+  bodyPaths: [
+    // Triangle body
+    { d: "M -20 -24 L 20 0 L -20 24 Z", fill: "none" },
+    // +/- labels inside
+    // Stubs
+    { d: `M -20 -12 L ${-2 * G} ${-G}`, fill: "none" },  // +
+    { d: `M -20 12 L ${-2 * G} ${G}`, fill: "none" },     // -
+    { d: `M 20 0 L ${2 * G} 0`, fill: "none" },            // OUT
+    { d: `M 0 -18 L 0 ${-2 * G}`, fill: "none" },          // V+
+    { d: `M 0 18 L 0 ${2 * G}`, fill: "none" },            // V-
+  ],
+  extraElements: [
+    { type: "text", props: { x: -14, y: -8, fontSize: 10, textAnchor: "middle", children: "+" } },
+    { type: "text", props: { x: -14, y: 16, fontSize: 10, textAnchor: "middle", children: "−" } },
+  ],
+  pins: [
+    { pinId: "3", defaultName: "+", stubStart: { x: -20, y: -12 }, stubEnd: { x: -2 * G, y: -G }, side: "left" },
+    { pinId: "2", defaultName: "−", stubStart: { x: -20, y: 12 }, stubEnd: { x: -2 * G, y: G }, side: "left" },
+    { pinId: "6", defaultName: "OUT", stubStart: { x: 20, y: 0 }, stubEnd: { x: 2 * G, y: 0 }, side: "right" },
+    { pinId: "7", defaultName: "V+", stubStart: { x: 0, y: -18 }, stubEnd: { x: 0, y: -2 * G }, side: "top" },
+    { pinId: "4", defaultName: "V−", stubStart: { x: 0, y: 18 }, stubEnd: { x: 0, y: 2 * G }, side: "bottom" },
+  ],
+};
+
+// ── Switch ────────────────────────────────────────────
+
+const switchSPST: SymbolDef = {
+  symbolId: "switch",
+  label: "Switch",
+  labelYOffset: 10,
+  category: "passive",
+  bodyPaths: [
+    // Pin 1 lead
+    { d: `M ${-G} 0 L 0 0`, fill: "none" },
+    // Angled lever from pin1 contact toward pin2
+    { d: `M 0 0 L ${G} ${-G / 2}`, fill: "none" },
+    // Pin 2 lead
+    { d: `M ${G} 0 L ${2 * G} 0`, fill: "none" },
+  ],
+  extraElements: [
+    { type: "circle", props: { cx: 0, cy: 0, r: 2, fill: "currentColor" } },
+    { type: "circle", props: { cx: G, cy: 0, r: 2, fill: "currentColor" } },
+  ],
+  pins: [
+    { pinId: "1", defaultName: "1", stubStart: { x: 0, y: 0 }, stubEnd: { x: -G, y: 0 }, side: "left" },
+    { pinId: "2", defaultName: "2", stubStart: { x: G, y: 0 }, stubEnd: { x: 2 * G, y: 0 }, side: "right" },
+  ],
+};
+
 // ── Static symbol registry ────────────────────────────
 
 const STATIC_SYMBOLS: SymbolDef[] = [
-  resistor, capacitor, capPolarized, diode, led, zener,
+  resistor, capacitor, capPolarized, diode, led, zener, inductor, transformer, switchSPST,
   npn, pnp, nmos, pmos, vreg,
+  timer555, optocoupler, opamp,
   generic2pin, generic3pin,
 ];
 
@@ -361,6 +523,7 @@ export function createGenericIcSymbol(pinCount: number): SymbolDef {
     symbolId: `generic-ic-${pinCount}`,
     label: `Generic IC (${pinCount}-pin)`,
     category: "ic",
+    labelYOffset: 14,
     bodyPaths,
     pins,
   };

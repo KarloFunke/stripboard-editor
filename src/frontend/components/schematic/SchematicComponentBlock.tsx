@@ -5,6 +5,7 @@ import { useProjectStore } from "@/store/useProjectStore";
 import { Component } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import SymbolRenderer, { getSymbolBounds, getRotatedPinPositions } from "./SymbolRenderer";
+import { getSymbolDef } from "@/data/symbolDefs";
 
 interface Props {
   component: Component;
@@ -36,6 +37,8 @@ export default function SchematicComponentBlock({
 
   const rotation = component.schematicRotation ?? 0;
   const mirrored = component.schematicMirrored ?? false;
+  const symbolDef = getSymbolDef(def.symbol);
+  const labelYOffset = symbolDef?.labelYOffset ?? 0;
   const bounds = getSymbolBounds(def.symbol, rotation, mirrored);
 
   // Build pin color map from net assignments
@@ -108,7 +111,7 @@ export default function SchematicComponentBlock({
       {editingLabel ? (
         <foreignObject
           x={-50}
-          y={bounds.minY - 24}
+          y={bounds.minY - 24 - labelYOffset}
           width={100}
           height={20}
         >
@@ -129,7 +132,7 @@ export default function SchematicComponentBlock({
       ) : (
         <text
           x={(bounds.minX + bounds.maxX) / 2}
-          y={bounds.minY - 6}
+          y={bounds.minY - 6 - labelYOffset}
           textAnchor="middle"
           fontSize={12}
           fontWeight={600}

@@ -104,9 +104,9 @@ function getPinLabelProps(
 
   switch (effectiveSide) {
     case "top":
-      return { x: rp.x + offset, y: rp.y + 2, anchor: "start", baseline: "central" };
+      return { x: rp.x, y: rp.y - offset, anchor: "middle", baseline: "auto" };
     case "bottom":
-      return { x: rp.x + offset, y: rp.y - 2, anchor: "start", baseline: "central" };
+      return { x: rp.x, y: rp.y + offset + 2, anchor: "middle", baseline: "hanging" };
     case "left":
       return { x: rp.x - offset, y: rp.y, anchor: "end", baseline: "central" };
     case "right":
