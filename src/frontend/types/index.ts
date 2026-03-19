@@ -16,11 +16,14 @@ export interface BodyCell {
 export interface ComponentDef {
   id: string;
   name: string;
-  category: "resistor" | "capacitor" | "led" | "terminal" | "ic" | "custom";
-  width: number;  // columns spanned
-  height: number; // rows spanned
+  category: "passive" | "semiconductor" | "ic" | "connector" | "generic";
+  symbol: string; // references SymbolDef.symbolId for schematic rendering
+  defaultLabelPrefix: string; // e.g. "R", "C", "D", "Q", "U", "J", "X"
+  width: number;  // columns spanned (stripboard footprint)
+  height: number; // rows spanned (stripboard footprint)
   pins: PinDef[];
   bodyCells?: BodyCell[]; // cells occupied by body but not pins; inferred as bounding rect if absent
+  footprintPresets?: string[]; // alternative footprint def IDs the user can choose from
 }
 
 // ── Component Instance (single object for both editors) ──
@@ -37,10 +40,10 @@ export interface Component {
   id: string;
   defId: string;   // references ComponentDef.id
   label: string;   // short identifier, e.g. "R1", "U1"
-  tag: string;     // descriptive label, e.g. "Resistor", "Output Connector"
 
   // Position on the schematic canvas (always set)
   schematicPos: { x: number; y: number };
+  schematicRotation: 0 | 90 | 180 | 270;
 
   // Position on the stripboard (null until placed)
   boardPos: { row: number; col: number } | null;
@@ -62,6 +65,18 @@ export interface NetAssignment {
   netId: string;
   componentId: string; // references Component.id
   pinId: string;       // references PinDef.id within the ComponentDef
+}
+
+// ── Schematic Wires ───────────────────────────────────
+
+// A wire connects two grid-aligned points with an auto-routed L-shape.
+// No component references — net inference is purely spatial.
+// The bend point is derived from start/end, not stored.
+export interface SchematicWire {
+  id: string;
+  start: { x: number; y: number };
+  end: { x: number; y: number };
+  routeDirection: "horizontal-first" | "vertical-first";
 }
 
 // ── Board ──────────────────────────────────────────────
@@ -106,6 +121,6 @@ export interface Project {
   components: Component[];
   nets: Net[];
   netAssignments: NetAssignment[];
+  schematicWires: SchematicWire[];
   board: Board;
-  customTags: string[];
 }

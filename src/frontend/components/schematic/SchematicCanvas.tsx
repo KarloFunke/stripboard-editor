@@ -1,19 +1,61 @@
 "use client";
 
-import { useRef, useState, useCallback, useMemo, useEffect } from "react";
+import { useRef, useState, useCallback, useEffect, useMemo } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { usePanZoom } from "@/hooks/usePanZoom";
 import { useCanvasSelection } from "@/hooks/useCanvasSelection";
 import SchematicComponentBlock from "./SchematicComponentBlock";
 import ComponentPopup from "./ComponentPopup";
+import SchematicWireLine, { getWirePoints } from "./SchematicWireLine";
 import { getBlockSize } from "./blockLayout";
-import { computeNetLines } from "./netLines";
+import { getRotatedPinPositions } from "./SymbolRenderer";
 
 const POPUP_WIDTH = 220;
 const POPUP_HEIGHT_ESTIMATE = 250;
 const POPUP_GAP = 8;
-const MOVE_STEP = 20; // pixels per arrow key press
+const MOVE_STEP = 20;
+const PIN_SNAP_RADIUS = 15;
+const GRID_SIZE = 20; // snap grid spacing
+
+function snapToGrid(val: number): number {
+  return Math.round(val / GRID_SIZE) * GRID_SIZE;
+}
+
+
+
+/** Find nearest pin connection point to a given SVG coordinate */
+function findNearestPin(
+  x: number, y: number,
+  components: ReturnType<typeof useProjectStore.getState>["components"],
+  componentDefs: ReturnType<typeof useProjectStore.getState>["componentDefs"],
+  excludeComponentId?: string,
+  excludePinId?: string,
+): { componentId: string; pinId: string; x: number; y: number } | null {
+  let best: { componentId: string; pinId: string; x: number; y: number; dist: number } | null = null;
+
+  for (const comp of components) {
+    const def = resolveComponentDef(comp, componentDefs);
+    if (!def) continue;
+
+    const rotation = comp.schematicRotation ?? 0;
+    const pinPositions = getRotatedPinPositions(def.symbol, rotation);
+
+    for (const pin of pinPositions) {
+      if (comp.id === excludeComponentId && pin.pinId === excludePinId) continue;
+
+      const px = comp.schematicPos.x + pin.x;
+      const py = comp.schematicPos.y + pin.y;
+      const dist = Math.sqrt((x - px) ** 2 + (y - py) ** 2);
+
+      if (dist < PIN_SNAP_RADIUS && (!best || dist < best.dist)) {
+        best = { componentId: comp.id, pinId: pin.pinId, x: px, y: py, dist };
+      }
+    }
+  }
+
+  return best ? { componentId: best.componentId, pinId: best.pinId, x: best.x, y: best.y } : null;
+}
 
 export default function SchematicCanvas({ readOnly = false }: { readOnly?: boolean }) {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -21,18 +63,91 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
   const panZoom = usePanZoom();
   const components = useProjectStore((s) => s.components);
   const componentDefs = useProjectStore((s) => s.componentDefs);
+  const schematicWires = useProjectStore((s) => s.schematicWires);
   const nets = useProjectStore((s) => s.nets);
   const netAssignments = useProjectStore((s) => s.netAssignments);
-  const showNetLines = useProjectStore((s) => s.showNetLines);
   const updateSchematicPos = useProjectStore((s) => s.updateSchematicPos);
   const removeComponent = useProjectStore((s) => s.removeComponent);
   const addComponent = useProjectStore((s) => s.addComponent);
+  const addSchematicWire = useProjectStore((s) => s.addSchematicWire);
+  const removeSchematicWire = useProjectStore((s) => s.removeSchematicWire);
+  const splitSchematicWire = useProjectStore((s) => s.splitSchematicWire);
+  const rotateSchematicComponent = useProjectStore((s) => s.rotateSchematicComponent);
+  const wireDrawMode = useProjectStore((s) => s.schematicWireDrawMode);
+  const wireDrawingFrom = useProjectStore((s) => s.schematicWireDrawingFrom);
+  const setSchematicWireDrawing = useProjectStore((s) => s.setSchematicWireDrawing);
+  const toggleWireDrawMode = useProjectStore((s) => s.toggleSchematicWireDrawMode);
   const pushSnapshot = useProjectStore((s) => s.pushSnapshot);
+  const captureSchematicDragBindings = useProjectStore((s) => s.captureSchematicDragBindings);
+  const clearSchematicDragBindings = useProjectStore((s) => s.clearSchematicDragBindings);
 
-  const netLines = useMemo(
-    () => showNetLines ? computeNetLines(nets, netAssignments, components, componentDefs) : [],
-    [showNetLines, nets, netAssignments, components, componentDefs]
-  );
+  const [wirePreview, setWirePreview] = useState<{ x: number; y: number } | null>(null);
+  const [selectedWireId, setSelectedWireId] = useState<string | null>(null);
+
+  // Compute wire colors: propagate net color through connected wire groups
+  const wireColorMap = useMemo(() => {
+    const colorMap = new Map<string, string>(); // wireId → color
+
+    // Build point → net color lookup from pin positions
+    const pointNetColor = new Map<string, string>();
+    for (const comp of components) {
+      const def = resolveComponentDef(comp, componentDefs);
+      if (!def) continue;
+      const rotation = comp.schematicRotation ?? 0;
+      const pins = getRotatedPinPositions(def.symbol, rotation);
+      for (const pin of pins) {
+        const assignment = netAssignments.find(
+          (a) => a.componentId === comp.id && a.pinId === pin.pinId
+        );
+        if (assignment) {
+          const net = nets.find((n) => n.id === assignment.netId);
+          if (net) {
+            const key = `${Math.round(comp.schematicPos.x + pin.x)},${Math.round(comp.schematicPos.y + pin.y)}`;
+            pointNetColor.set(key, net.color);
+          }
+        }
+      }
+    }
+
+    // Union-Find to group connected wire points
+    const parent = new Map<string, string>();
+    const find = (x: string): string => {
+      if (!parent.has(x)) parent.set(x, x);
+      let root = x;
+      while (parent.get(root) !== root) root = parent.get(root)!;
+      let cur = x;
+      while (cur !== root) { const next = parent.get(cur)!; parent.set(cur, root); cur = next; }
+      return root;
+    };
+    const union = (a: string, b: string) => {
+      const ra = find(a), rb = find(b);
+      if (ra !== rb) parent.set(ra, rb);
+    };
+
+    for (const wire of schematicWires) {
+      const pts = getWirePoints(wire);
+      const keys = pts.map((p) => `${Math.round(p.x)},${Math.round(p.y)}`);
+      for (const k of keys) find(k); // ensure in UF
+      for (let i = 1; i < keys.length; i++) union(keys[0], keys[i]);
+    }
+
+    // Find color for each group root
+    const rootColor = new Map<string, string>();
+    for (const [pk, color] of pointNetColor) {
+      const root = find(pk);
+      if (!rootColor.has(root)) rootColor.set(root, color);
+    }
+
+    // Assign colors to wires
+    for (const wire of schematicWires) {
+      const sk = `${Math.round(wire.start.x)},${Math.round(wire.start.y)}`;
+      const root = find(sk);
+      const color = rootColor.get(root);
+      if (color) colorMap.set(wire.id, color);
+    }
+
+    return colorMap;
+  }, [schematicWires, components, componentDefs, nets, netAssignments]);
 
   const {
     selectedId, setSelectedId,
@@ -63,9 +178,53 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
 
-      if (e.key === "Escape" && selectedIds.length > 0) {
-        setSelectedIds([]);
+      // W: toggle wire draw mode
+      if (e.key === "w" || e.key === "W") {
+        toggleWireDrawMode();
         return;
+      }
+
+      // Escape: cancel wire drawing, exit wire mode, or clear selection
+      if (e.key === "Escape") {
+        if (wireDrawingFrom) {
+          setSchematicWireDrawing(null);
+          setWirePreview(null);
+          return;
+        }
+        if (wireDrawMode) {
+          toggleWireDrawMode();
+          return;
+        }
+        if (selectedIds.length > 0) {
+          setSelectedIds([]);
+          return;
+        }
+        if (selectedWireId) {
+          setSelectedWireId(null);
+          return;
+        }
+      }
+
+      // R: rotate selected component on schematic
+      if (e.key === "r" || e.key === "R") {
+        if (selectedId) {
+          rotateSchematicComponent(selectedId);
+          return;
+        }
+      }
+
+      // Delete: remove selected component or wire
+      if (e.key === "Delete") {
+        if (selectedWireId) {
+          removeSchematicWire(selectedWireId);
+          setSelectedWireId(null);
+          return;
+        }
+        if (selectedId) {
+          removeComponent(selectedId);
+          setSelectedId(null);
+          return;
+        }
       }
 
       // Arrow keys: move selected components
@@ -83,23 +242,17 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
           const comp = components.find((c) => c.id === id);
           if (comp) {
             updateSchematicPos(id, {
-              x: comp.schematicPos.x + delta.x,
-              y: comp.schematicPos.y + delta.y,
+              x: snapToGrid(comp.schematicPos.x + delta.x),
+              y: snapToGrid(comp.schematicPos.y + delta.y),
             });
           }
         }
         return;
       }
-
-      // Delete selected component
-      if (selectedId && e.key === "Delete") {
-        removeComponent(selectedId);
-        setSelectedId(null);
-      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selectedId, selectedIds, components, updateSchematicPos, removeComponent, pushSnapshot]);
+  }, [selectedId, selectedIds, selectedWireId, wireDrawingFrom, components, updateSchematicPos, removeComponent, removeSchematicWire, rotateSchematicComponent, pushSnapshot, setSchematicWireDrawing]);
 
   const getSVGPoint = useCallback((e: React.MouseEvent) => {
     const svg = svgRef.current;
@@ -107,17 +260,59 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
     return panZoom.screenToSvg(e.clientX, e.clientY, svg);
   }, [panZoom.screenToSvg]);
 
+  // Get absolute grid position of a component's pin
+  const getPinGridPos = useCallback((componentId: string, pinId: string): { x: number; y: number } | null => {
+    const comp = components.find((c) => c.id === componentId);
+    if (!comp) return null;
+    const def = resolveComponentDef(comp, componentDefs);
+    if (!def) return null;
+    const rotation = comp.schematicRotation ?? 0;
+    const pins = getRotatedPinPositions(def.symbol, rotation);
+    const pin = pins.find((p) => p.pinId === pinId);
+    if (!pin) return null;
+    return { x: comp.schematicPos.x + pin.x, y: comp.schematicPos.y + pin.y };
+  }, [components, componentDefs]);
+
+  // Pin click handler for wire drawing (only active in wire draw mode)
+  const handlePinMouseDown = useCallback((componentId: string, pinId: string, e: React.MouseEvent) => {
+    if (readOnly || !wireDrawMode) return;
+    e.stopPropagation();
+    e.preventDefault();
+
+    const pinPos = getPinGridPos(componentId, pinId);
+    if (!pinPos) return;
+
+    if (wireDrawingFrom) {
+      // Don't create zero-length wires
+      if (Math.round(wireDrawingFrom.x) === Math.round(pinPos.x) &&
+          Math.round(wireDrawingFrom.y) === Math.round(pinPos.y)) return;
+      // Complete wire — L-shape is auto-routed
+      addSchematicWire(wireDrawingFrom, pinPos);
+      setSchematicWireDrawing(null);
+      setWirePreview(null);
+    } else {
+      // Start wire drawing from this pin's position
+      setSchematicWireDrawing(pinPos);
+      setSelectedId(null);
+      setSelectedWireId(null);
+    }
+  }, [wireDrawMode, wireDrawingFrom, getPinGridPos, addSchematicWire, setSchematicWireDrawing, setSelectedId]);
+
   const handleMouseDown = useCallback(
     (componentId: string, e: React.MouseEvent) => {
       if (readOnly) return;
-      if (e.button === 2) return; // right-click is pan
-      if ((e.target as Element).closest("[data-pin]")) return;
+      if (e.button === 2) return;
+
+      // If wire drawing mode, don't start drag
+      if (wireDrawMode) return;
+
       e.preventDefault();
 
       const comp = components.find((c) => c.id === componentId);
       if (!comp) return;
 
       pushSnapshot();
+      captureSchematicDragBindings(componentId);
       const pt = getSVGPoint(e);
       setDragging({
         componentId,
@@ -127,27 +322,47 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
         startY: e.clientY,
         didDrag: false,
       });
+      setSelectedWireId(null);
     },
-    [components, getSVGPoint, pushSnapshot]
+    [components, getSVGPoint, pushSnapshot, wireDrawingFrom, captureSchematicDragBindings]
   );
 
   const handleSvgMouseDown = useCallback(
     (e: React.MouseEvent) => {
       if (readOnly) return;
-      if (e.button === 2) return; // right-click is pan
+      if (e.button === 2) return;
       const target = e.target as Element;
       const isBackground = target.tagName === "svg" ||
         target.getAttribute("fill") === "url(#grid)";
       if (!isBackground) return;
 
+      if (wireDrawMode && wireDrawingFrom) {
+        // Click on grid = complete wire to this grid point, continue drawing
+        const pt = getSVGPoint(e);
+        const snapped = { x: snapToGrid(pt.x), y: snapToGrid(pt.y) };
+        if (Math.round(wireDrawingFrom.x) !== Math.round(snapped.x) ||
+            Math.round(wireDrawingFrom.y) !== Math.round(snapped.y)) {
+          addSchematicWire(wireDrawingFrom, snapped);
+          setSchematicWireDrawing(snapped);
+        }
+        return;
+      }
+
       startSelectionRect(getSVGPoint(e));
     },
-    [getSVGPoint, startSelectionRect]
+    [getSVGPoint, startSelectionRect, wireDrawingFrom, addSchematicWire, setSchematicWireDrawing]
   );
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
       if (panZoom.handlePanMove(e)) return;
+
+      // Wire drawing preview
+      if (wireDrawMode && wireDrawingFrom) {
+        const pt = getSVGPoint(e);
+        setWirePreview(pt);
+        return;
+      }
 
       if (selectionRect) {
         updateSelectionRect(getSVGPoint(e));
@@ -158,27 +373,25 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
         setDragging({ ...dragging, didDrag: true });
       }
       const pt = getSVGPoint(e);
-      updateSchematicPos(dragging.componentId, {
-        x: pt.x - dragging.offsetX,
-        y: pt.y - dragging.offsetY,
-      });
+      const newX = snapToGrid(pt.x - dragging.offsetX);
+      const newY = snapToGrid(pt.y - dragging.offsetY);
+      updateSchematicPos(dragging.componentId, { x: newX, y: newY });
     },
-    [dragging, selectionRect, getSVGPoint, updateSchematicPos, panZoom.handlePanMove, updateSelectionRect, checkDragThreshold]
+    [dragging, selectionRect, getSVGPoint, updateSchematicPos, panZoom.handlePanMove, updateSelectionRect, checkDragThreshold, wireDrawingFrom]
   );
 
   const handleMouseUp = useCallback(() => {
     panZoom.handlePanEnd();
 
-    // Finalize selection rectangle
     const rectHandled = finalizeSelectionRect((x1, y1, x2, y2) => {
       const selected: string[] = [];
       for (const comp of components) {
         const def = resolveComponentDef(comp, componentDefs);
         if (!def) continue;
-        const { blockWidth, blockHeight } = getBlockSize(def);
-        const cx = comp.schematicPos.x;
-        const cy = comp.schematicPos.y;
-        if (cx + blockWidth >= x1 && cx <= x2 && cy + blockHeight >= y1 && cy <= y2) {
+        const { bounds } = getBlockSize(def, comp.schematicRotation ?? 0);
+        const cx = comp.schematicPos.x + bounds.minX;
+        const cy = comp.schematicPos.y + bounds.minY;
+        if (cx + bounds.width >= x1 && cx <= x2 && cy + bounds.height >= y1 && cy <= y2) {
           selected.push(comp.id);
         }
       }
@@ -195,7 +408,8 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
       }
     }
     setDragging(null);
-  }, [dragging, components, componentDefs, finalizeSelectionRect, markDragComplete, setSelectedId]);
+    clearSchematicDragBindings();
+  }, [dragging, components, componentDefs, finalizeSelectionRect, markDragComplete, setSelectedId, clearSchematicDragBindings]);
 
   const handleCanvasClick = useCallback((e: React.MouseEvent) => {
     if (shouldSuppressClick()) return;
@@ -203,6 +417,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
       const isGridRect = (e.target as Element).getAttribute("fill") === "url(#grid)";
       if (e.target === svgRef.current || isGridRect) {
         clearSelection();
+        setSelectedWireId(null);
       }
     }
   }, [shouldSuppressClick, clearSelection]);
@@ -221,10 +436,10 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
     if (!defId || !svgRef.current) return;
     e.preventDefault();
     const pos = panZoom.screenToSvg(e.clientX, e.clientY, svgRef.current);
-    addComponent(defId, { x: pos.x, y: pos.y });
+    addComponent(defId, { x: snapToGrid(pos.x), y: snapToGrid(pos.y) });
   }, [addComponent, panZoom.screenToSvg]);
 
-  // Render selected component last so it's on top
+  // Render selected component last
   const sortedComponents = selectedId
     ? [
         ...components.filter((c) => c.id !== selectedId),
@@ -238,7 +453,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
     const def = resolveComponentDef(selectedComponent, componentDefs);
     if (!def) return { x: 0, y: 0 };
 
-    const { blockWidth } = getBlockSize(def);
+    const { bounds } = getBlockSize(def, selectedComponent.schematicRotation ?? 0);
     const svg = svgRef.current;
     const svgWidth = svg?.clientWidth ?? 1000;
     const svgHeight = svg?.clientHeight ?? 800;
@@ -246,11 +461,11 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
     const compX = selectedComponent.schematicPos.x;
     const compY = selectedComponent.schematicPos.y;
 
-    let x = compX + blockWidth + POPUP_GAP;
-    let y = compY - 10;
+    let x = compX + bounds.maxX + POPUP_GAP;
+    let y = compY - POPUP_HEIGHT_ESTIMATE / 2;
 
     if (x + POPUP_WIDTH > svgWidth) {
-      x = compX - POPUP_WIDTH - POPUP_GAP;
+      x = compX + bounds.minX - POPUP_WIDTH - POPUP_GAP;
     }
     if (y + POPUP_HEIGHT_ESTIMATE > svgHeight) {
       y = svgHeight - POPUP_HEIGHT_ESTIMATE;
@@ -260,7 +475,10 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
     return { x, y };
   };
 
-  // Get container size for viewBox calculation
+  // Wire drawing start position is just the stored grid point
+  const wireStartPos = wireDrawingFrom;
+
+  // Container size for viewBox
   const [containerSize, setContainerSize] = useState({ width: 1000, height: 800 });
   useEffect(() => {
     const el = containerRef.current;
@@ -275,101 +493,191 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
 
   const cursorStyle = panZoom.isPanning.current
     ? "grabbing"
+    : wireDrawMode
+    ? "crosshair"
     : dragging
     ? "grabbing"
     : "default";
 
   return (
     <div ref={containerRef} className="h-full w-full overflow-hidden relative">
-    <svg
-      ref={svgRef}
-      className="h-full w-full bg-white"
-      viewBox={panZoom.getViewBox(containerSize.width, containerSize.height)}
-      style={{ cursor: cursorStyle }}
-      onMouseDown={(e) => {
-        panZoom.handlePanStart(e);
-        handleSvgMouseDown(e);
-      }}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      onMouseLeave={() => {
-        panZoom.handlePanEnd();
-        setDragging(null);
-        cancelSelectionRect();
-      }}
-      onWheel={panZoom.handleWheel}
-      onContextMenu={panZoom.handleContextMenu}
-      onClick={handleCanvasClick}
-      onDragOver={handleDragOver}
-      onDrop={handleDrop}
-    >
-      {/* Grid dots */}
-      <defs>
-        <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
-          <circle cx="10" cy="10" r="0.5" fill="#e5e5e5" />
-        </pattern>
-      </defs>
-      <rect x="-10000" y="-10000" width="20000" height="20000" fill="url(#grid)" />
+      <svg
+        ref={svgRef}
+        className="h-full w-full bg-white"
+        viewBox={panZoom.getViewBox(containerSize.width, containerSize.height)}
+        style={{ cursor: cursorStyle }}
+        onMouseDown={(e) => {
+          panZoom.handlePanStart(e);
+          handleSvgMouseDown(e);
+        }}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={() => {
+          panZoom.handlePanEnd();
+          setDragging(null);
+          clearSchematicDragBindings();
+          cancelSelectionRect();
+        }}
+        onWheel={panZoom.handleWheel}
+        onContextMenu={panZoom.handleContextMenu}
+        onClick={handleCanvasClick}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+      >
+        {/* Grid dots */}
+        <defs>
+          <pattern id="grid" width={GRID_SIZE} height={GRID_SIZE} patternUnits="userSpaceOnUse">
+            <circle cx="0" cy="0" r="0.5" fill="#e5e5e5" />
+          </pattern>
+        </defs>
+        <rect x="-10000" y="-10000" width="20000" height="20000" fill="url(#grid)" />
 
-      {/* Net lines (MST edges) */}
-      {netLines.map((netLine) =>
-        netLine.edges.map((edge, i) => (
-          <line
-            key={`nl-${netLine.netId}-${i}`}
-            x1={edge.x1}
-            y1={edge.y1}
-            x2={edge.x2}
-            y2={edge.y2}
-            stroke={netLine.color}
-            strokeWidth={1.5}
-            strokeOpacity={0.4}
-            strokeDasharray="4 3"
+        {/* Schematic wires */}
+        {schematicWires.map((wire) => (
+          <SchematicWireLine
+            key={wire.id}
+            wire={wire}
+            color={wireColorMap.get(wire.id)}
+            isSelected={selectedWireId === wire.id}
+            onMouseDown={(e) => {
+              if (readOnly) return;
+              e.stopPropagation();
+
+              if (!wireDrawMode) {
+                // Not in wire mode — just select the wire
+                setSelectedWireId(wire.id);
+                setSelectedId(null);
+                return;
+              }
+
+              if (wireDrawingFrom) {
+                // Complete current wire drawing at the nearest grid point on this wire
+                const pt = getSVGPoint(e);
+                const snapped = { x: snapToGrid(pt.x), y: snapToGrid(pt.y) };
+                // Split the target wire at this point
+                splitSchematicWire(wire.id, snapped);
+                // Complete the wire being drawn
+                if (Math.round(wireDrawingFrom.x) !== Math.round(snapped.x) ||
+                    Math.round(wireDrawingFrom.y) !== Math.round(snapped.y)) {
+                  addSchematicWire(wireDrawingFrom, snapped);
+                }
+                setSchematicWireDrawing(null);
+                setWirePreview(null);
+                return;
+              }
+
+              // In wire mode, not drawing — split wire and start new wire from split point
+              const pt = getSVGPoint(e);
+              const snapped = { x: snapToGrid(pt.x), y: snapToGrid(pt.y) };
+              const atStart = Math.round(wire.start.x) === Math.round(snapped.x) && Math.round(wire.start.y) === Math.round(snapped.y);
+              const atEnd = Math.round(wire.end.x) === Math.round(snapped.x) && Math.round(wire.end.y) === Math.round(snapped.y);
+              if (atStart || atEnd) {
+                setSchematicWireDrawing(snapped);
+                setSelectedId(null);
+                setSelectedWireId(null);
+              } else {
+                splitSchematicWire(wire.id, snapped);
+                setSchematicWireDrawing(snapped);
+                setSelectedId(null);
+                setSelectedWireId(null);
+              }
+            }}
+          />
+        ))}
+
+        {/* Wire drawing preview — L-shape from start to cursor */}
+        {wireStartPos && wirePreview && (() => {
+          const dx = Math.abs(wirePreview.x - wireStartPos.x);
+          const dy = Math.abs(wirePreview.y - wireStartPos.y);
+          const sameX = Math.abs(wirePreview.x - wireStartPos.x) < 1;
+          const sameY = Math.abs(wirePreview.y - wireStartPos.y) < 1;
+
+          if (sameX || sameY) {
+            // Straight line
+            return (
+              <line
+                x1={wireStartPos.x} y1={wireStartPos.y}
+                x2={wirePreview.x} y2={wirePreview.y}
+                stroke="#113768" strokeWidth={2}
+                strokeOpacity={0.4} strokeDasharray="4 3"
+                pointerEvents="none"
+              />
+            );
+          }
+
+          // L-shape: auto-select direction
+          const hFirst = dx >= dy;
+          const bend = hFirst
+            ? { x: wirePreview.x, y: wireStartPos.y }
+            : { x: wireStartPos.x, y: wirePreview.y };
+          return (
+            <>
+              <line
+                x1={wireStartPos.x} y1={wireStartPos.y}
+                x2={bend.x} y2={bend.y}
+                stroke="#113768" strokeWidth={2}
+                strokeOpacity={0.4} strokeDasharray="4 3"
+                pointerEvents="none"
+              />
+              <line
+                x1={bend.x} y1={bend.y}
+                x2={wirePreview.x} y2={wirePreview.y}
+                stroke="#113768" strokeWidth={2}
+                strokeOpacity={0.4} strokeDasharray="4 3"
+                pointerEvents="none"
+              />
+            </>
+          );
+        })()}
+
+        {/* Components */}
+        {sortedComponents.map((comp) => (
+          <SchematicComponentBlock
+            key={comp.id}
+            component={comp}
+            isSelected={comp.id === selectedId || selectedIds.includes(comp.id)}
+            onMouseDown={(e) => handleMouseDown(comp.id, e)}
+            onPinMouseDown={handlePinMouseDown}
+          />
+        ))}
+
+        {/* Selection rectangle */}
+        {selectionRect && (
+          <rect
+            x={Math.min(selectionRect.startX, selectionRect.currentX)}
+            y={Math.min(selectionRect.startY, selectionRect.currentY)}
+            width={Math.abs(selectionRect.currentX - selectionRect.startX)}
+            height={Math.abs(selectionRect.currentY - selectionRect.startY)}
+            fill="rgba(17, 55, 104, 0.08)"
+            stroke="#113768"
+            strokeWidth={1}
+            strokeDasharray="4 2"
             pointerEvents="none"
           />
-        ))
-      )}
+        )}
 
-      {sortedComponents.map((comp) => (
-        <SchematicComponentBlock
-          key={comp.id}
-          component={comp}
-          isSelected={comp.id === selectedId || selectedIds.includes(comp.id)}
-          onMouseDown={(e) => handleMouseDown(comp.id, e)}
-        />
-      ))}
+        {/* Popup — only for ic/connector/generic components (passive/semiconductor don't need it) */}
+        {!readOnly && selectedComponent && !wireDrawMode && (() => {
+          const selDef = resolveComponentDef(selectedComponent, componentDefs);
+          const showPopup = selDef && ["ic", "connector", "generic"].includes(selDef.category);
+          return showPopup;
+        })() && (
+          <foreignObject
+            x={getPopupPos().x}
+            y={getPopupPos().y}
+            width={POPUP_WIDTH + 10}
+            height={POPUP_HEIGHT_ESTIMATE + 50}
+            style={{ overflow: "visible" }}
+          >
+            <ComponentPopup
+              component={selectedComponent}
+              onClose={() => setSelectedId(null)}
+            />
+          </foreignObject>
+        )}
+      </svg>
 
-      {/* Selection rectangle */}
-      {selectionRect && (
-        <rect
-          x={Math.min(selectionRect.startX, selectionRect.currentX)}
-          y={Math.min(selectionRect.startY, selectionRect.currentY)}
-          width={Math.abs(selectionRect.currentX - selectionRect.startX)}
-          height={Math.abs(selectionRect.currentY - selectionRect.startY)}
-          fill="rgba(17, 55, 104, 0.08)"
-          stroke="#113768"
-          strokeWidth={1}
-          strokeDasharray="4 2"
-          pointerEvents="none"
-        />
-      )}
-
-      {/* Popup rendered last = always on top */}
-      {!readOnly && selectedComponent && (
-        <foreignObject
-          x={getPopupPos().x}
-          y={getPopupPos().y}
-          width={POPUP_WIDTH + 10}
-          height={POPUP_HEIGHT_ESTIMATE + 50}
-          style={{ overflow: "visible" }}
-        >
-          <ComponentPopup
-            component={selectedComponent}
-            onClose={() => setSelectedId(null)}
-          />
-        </foreignObject>
-      )}
-    </svg>
-      {/* Zoom controls overlay */}
+      {/* Zoom controls */}
       <div className="absolute bottom-3 right-3 flex items-center gap-1 bg-white/90 border border-neutral-200 rounded-md px-1.5 py-1 shadow-sm text-xs text-neutral-600">
         <button
           onClick={() => panZoom.resetView()}

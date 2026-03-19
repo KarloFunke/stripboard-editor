@@ -4,49 +4,74 @@ import { useState } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { ComponentDef } from "@/types";
 import { COMPONENT_GROUPS } from "@/data/defaultComponents";
+import { getSymbolDef } from "@/data/symbolDefs";
+import { getSymbolBounds } from "./SymbolRenderer";
 
-const THUMB_HOLE = 7;    // spacing between holes in thumbnail
-const THUMB_PAD = 5;     // padding around thumbnail
-const THUMB_PIN_R = 2.5; // pin dot radius
-const THUMB_BODY_SIZE = 6; // body cell square size
+function SymbolThumbnail({ def }: { def: ComponentDef }) {
+  const symbolDef = getSymbolDef(def.symbol);
+  if (!symbolDef) return null;
 
-function FootprintThumbnail({ def }: { def: ComponentDef }) {
-  const allRows = def.pins.map((p) => p.offsetRow);
-  const allCols = def.pins.map((p) => p.offsetCol);
-  if (def.bodyCells) {
-    allRows.push(...def.bodyCells.map((c) => c.row));
-    allCols.push(...def.bodyCells.map((c) => c.col));
-  }
-  const maxRow = Math.max(...allRows, 0);
-  const maxCol = Math.max(...allCols, 0);
-
-  const w = maxCol * THUMB_HOLE + THUMB_PAD * 2;
-  const h = maxRow * THUMB_HOLE + THUMB_PAD * 2;
+  const bounds = getSymbolBounds(def.symbol, 0);
+  const pad = 6;
+  const scale = 0.4;
+  const w = bounds.width * scale + pad * 2;
+  const h = bounds.height * scale + pad * 2;
+  // Center offset: translate so bounds center is at svg center
+  const cx = (bounds.minX + bounds.maxX) / 2;
+  const cy = (bounds.minY + bounds.maxY) / 2;
 
   return (
-    <svg width={w} height={h} className="flex-shrink-0">
-      {/* Body cells */}
-      {def.bodyCells?.map((cell, i) => (
-        <rect
-          key={`b-${i}`}
-          x={THUMB_PAD + cell.col * THUMB_HOLE - THUMB_BODY_SIZE / 2}
-          y={THUMB_PAD + cell.row * THUMB_HOLE - THUMB_BODY_SIZE / 2}
-          width={THUMB_BODY_SIZE}
-          height={THUMB_BODY_SIZE}
-          rx={1}
-          fill="#d4d4d4"
-        />
-      ))}
-      {/* Pins */}
-      {def.pins.map((pin) => (
-        <circle
-          key={pin.id}
-          cx={THUMB_PAD + pin.offsetCol * THUMB_HOLE}
-          cy={THUMB_PAD + pin.offsetRow * THUMB_HOLE}
-          r={THUMB_PIN_R}
-          fill="#404040"
-        />
-      ))}
+    <svg width={Math.max(w, 24)} height={Math.max(h, 24)} className="flex-shrink-0">
+      <g transform={`translate(${Math.max(w, 24) / 2}, ${Math.max(h, 24) / 2}) scale(${scale}) translate(${-cx}, ${-cy})`}>
+        {/* Body paths (includes stubs) */}
+        {symbolDef.bodyPaths.map((path, i) => (
+          <path
+            key={`b-${i}`}
+            d={path.d}
+            fill={path.fill === "currentColor" ? "#333" : (path.fill ?? "none")}
+            stroke={path.stroke ?? "#333"}
+            strokeWidth={1.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        ))}
+        {/* Pin dots */}
+        {symbolDef.pins.map((pin) => (
+          <circle
+            key={pin.pinId}
+            cx={pin.stubEnd.x}
+            cy={pin.stubEnd.y}
+            r={2.5}
+            fill="white"
+            stroke="#999"
+            strokeWidth={1}
+          />
+        ))}
+        {/* Extra elements */}
+        {symbolDef.extraElements?.map((el, i) => {
+          if (el.type === "line") {
+            return (
+              <line
+                key={`e-${i}`}
+                x1={el.props.x1 as number} y1={el.props.y1 as number}
+                x2={el.props.x2 as number} y2={el.props.y2 as number}
+                stroke="#333" strokeWidth={1} strokeLinecap="round"
+              />
+            );
+          }
+          if (el.type === "circle") {
+            return (
+              <circle
+                key={`e-${i}`}
+                cx={el.props.cx as number} cy={el.props.cy as number}
+                r={el.props.r as number}
+                fill="none" stroke="#333" strokeWidth={1}
+              />
+            );
+          }
+          return null;
+        })}
+      </g>
     </svg>
   );
 }
@@ -105,9 +130,9 @@ export default function ComponentLibrary() {
                       className="flex flex-col items-center gap-1 px-2 py-1.5 rounded border border-transparent hover:border-neutral-300 hover:bg-neutral-50 active:bg-neutral-100 transition-colors cursor-grab active:cursor-grabbing"
                       title={def.name}
                     >
-                      <FootprintThumbnail def={def} />
-                      <span className="text-xs text-neutral-500 leading-tight">
-                        {def.name.replace("Inline ", "").replace("Terminal ", "")}
+                      <SymbolThumbnail def={def} />
+                      <span className="text-xs text-neutral-500 leading-tight text-center max-w-[72px]">
+                        {def.name}
                       </span>
                     </button>
                   ))}

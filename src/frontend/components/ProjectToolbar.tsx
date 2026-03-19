@@ -214,7 +214,7 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
       // to ensure both sides have the same shape (defaults stripped, etc.)
       const savedData = saved.data as Record<string, unknown>;
       // Compare only the mutable project fields, not id/name (name compared separately)
-      const fieldsToCompare = ["components", "nets", "netAssignments", "board", "customTags"];
+      const fieldsToCompare = ["components", "nets", "netAssignments", "schematicWires", "board"];
       const pickFields = (obj: Record<string, unknown>) =>
         Object.fromEntries(fieldsToCompare.map((k) => [k, obj[k]]));
       const savedJson = stableStringify(pickFields(savedData));

@@ -57,8 +57,8 @@ export default function PlacedComponent({ component, isSelected, onMouseDown }: 
         {component.label}
       </text>
 
-      {/* Tag below */}
-      {component.tag && (
+      {/* Component name below */}
+      {def && (
         <text
           x={topLeft.x + ((bounds.maxCol - bounds.minCol) * HOLE_SPACING) / 2}
           y={topLeft.y + (bounds.maxRow - bounds.minRow) * HOLE_SPACING + pad + 12}
@@ -67,7 +67,7 @@ export default function PlacedComponent({ component, isSelected, onMouseDown }: 
           fill="#737373"
           pointerEvents="none"
         >
-          {component.tag}
+          {def.name}
         </text>
       )}
 

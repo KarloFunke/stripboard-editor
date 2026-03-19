@@ -103,7 +103,7 @@ export default function ComponentTray({ readOnly = false }: { readOnly?: boolean
             >
               <span className="font-medium">{comp.label}</span>
               <span className="text-neutral-500 text-sm truncate">
-                {comp.tag || def?.name}
+                {def?.name}
               </span>
             </div>
           );
@@ -126,7 +126,7 @@ export default function ComponentTray({ readOnly = false }: { readOnly?: boolean
                 >
                   <span className="font-medium">{comp.label}</span>
                   <span className="text-neutral-500 truncate flex-1">
-                    {comp.tag || def?.name}
+                    {def?.name}
                   </span>
                   <button
                     onClick={() => rotateComponent(comp.id)}

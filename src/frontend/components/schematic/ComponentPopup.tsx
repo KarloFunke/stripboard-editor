@@ -5,11 +5,6 @@ import { useProjectStore } from "@/store/useProjectStore";
 import { Component } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 
-const PRESET_TAGS = [
-  "Capacitor", "Connector", "Crystal", "Diode",
-  "IC", "LED", "Regulator", "Relay", "Resistor",
-];
-
 interface Props {
   component: Component;
   onClose: () => void;
@@ -20,17 +15,14 @@ export default function ComponentPopup({ component, onClose }: Props) {
   const netAssignments = useProjectStore((s) => s.netAssignments);
   const nets = useProjectStore((s) => s.nets);
   const updateLabel = useProjectStore((s) => s.updateLabel);
-  const updateTag = useProjectStore((s) => s.updateTag);
   const updatePinName = useProjectStore((s) => s.updatePinName);
   const removeComponent = useProjectStore((s) => s.removeComponent);
   const setEditingFootprintComponent = useProjectStore((s) => s.setEditingFootprintComponent);
-  const customTags = useProjectStore((s) => s.customTags);
 
   const def = resolveComponentDef(component, componentDefs);
 
   // Local editable state — committed on save or outside click
   const [label, setLabel] = useState(component.label);
-  const [tag, setTag] = useState(component.tag);
   const [pinNames, setPinNames] = useState<Record<string, string>>(() => {
     if (!def) return {};
     const names: Record<string, string> = {};
@@ -39,12 +31,10 @@ export default function ComponentPopup({ component, onClose }: Props) {
     }
     return names;
   });
-  const [showTagPresets, setShowTagPresets] = useState(false);
 
   // Reset local state when component or def changes
   useEffect(() => {
     setLabel(component.label);
-    setTag(component.tag);
     if (def) {
       const names: Record<string, string> = {};
       for (const pin of def.pins) {
@@ -52,7 +42,7 @@ export default function ComponentPopup({ component, onClose }: Props) {
       }
       setPinNames(names);
     }
-  }, [component.id, component.label, component.tag, def]);
+  }, [component.id, component.label, def]);
 
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -60,9 +50,6 @@ export default function ComponentPopup({ component, onClose }: Props) {
     const trimmedLabel = label.trim();
     if (trimmedLabel && trimmedLabel !== component.label) {
       updateLabel(component.id, trimmedLabel);
-    }
-    if (tag !== component.tag) {
-      updateTag(component.id, tag);
     }
     if (def) {
       for (const pin of def.pins) {
@@ -72,7 +59,7 @@ export default function ComponentPopup({ component, onClose }: Props) {
         }
       }
     }
-  }, [label, tag, pinNames, component, def, updateLabel, updateTag, updatePinName]);
+  }, [label, pinNames, component, def, updateLabel, updatePinName]);
 
   // Outside click = save and close
   useEffect(() => {
@@ -99,7 +86,6 @@ export default function ComponentPopup({ component, onClose }: Props) {
   };
 
   const handleCancel = () => {
-    // X = close without saving
     onClose();
   };
 
@@ -132,7 +118,7 @@ export default function ComponentPopup({ component, onClose }: Props) {
       </div>
 
       {/* Label */}
-      <div className="mb-2">
+      <div className="mb-3">
         <label className="block text-xs text-neutral-700 mb-1">Label</label>
         <input
           value={label}
@@ -140,51 +126,6 @@ export default function ComponentPopup({ component, onClose }: Props) {
           onKeyDown={(e) => { if (e.key === "Enter") handleSave(); }}
           className="w-full border border-neutral-300 rounded px-2 py-1 text-xs text-neutral-900 outline-none focus:border-blue-400"
         />
-      </div>
-
-      {/* Tag */}
-      <div className="mb-3">
-        <label className="block text-xs text-neutral-700 mb-1">Tag</label>
-        <div className="flex gap-1">
-          <input
-            value={tag}
-            onChange={(e) => setTag(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") handleSave(); }}
-            placeholder="e.g. Resistor, LED..."
-            className="flex-1 min-w-0 border border-neutral-300 rounded px-2 py-1 text-xs text-neutral-900 outline-none focus:border-blue-400"
-          />
-          <button
-            onClick={() => setShowTagPresets(!showTagPresets)}
-            className={`px-1.5 py-1 rounded border text-xs transition-colors ${
-              showTagPresets
-                ? "bg-blue-50 border-blue-300 text-blue-600"
-                : "bg-neutral-50 border-neutral-300 text-neutral-500 hover:bg-neutral-100"
-            }`}
-            title="Preset tags"
-          >
-            ▾
-          </button>
-        </div>
-        {showTagPresets && (
-          <div className="flex flex-wrap gap-1 mt-1.5">
-            {[...PRESET_TAGS, ...customTags.filter((t) => !PRESET_TAGS.includes(t))].sort().map((preset) => (
-              <button
-                key={preset}
-                onClick={() => {
-                  setTag(preset);
-                  setShowTagPresets(false);
-                }}
-                className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
-                  tag === preset
-                    ? "bg-blue-100 text-blue-700 border border-blue-300"
-                    : "bg-neutral-100 text-neutral-600 border border-transparent hover:border-neutral-300"
-                }`}
-              >
-                {preset}
-              </button>
-            ))}
-          </div>
-        )}
       </div>
 
       {/* Pins */}
