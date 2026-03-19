@@ -25,7 +25,7 @@ export default function SchematicEditor({ readOnly = false }: { readOnly?: boole
             )}
             <button
               onClick={toggleWireDrawMode}
-              className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded transition-colors ${
+              className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded w-[100px] justify-center ${
                 wireDrawMode
                   ? "bg-[#113768] text-white"
                   : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200"
@@ -35,7 +35,7 @@ export default function SchematicEditor({ readOnly = false }: { readOnly?: boole
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
                 <path d="M 2 12 L 2 6 L 12 6 L 12 2" />
               </svg>
-              {wireDrawMode ? "Drawing Wires" : "Draw Wire"}
+              Draw Wire
             </button>
           </div>
         )}

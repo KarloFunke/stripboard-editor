@@ -303,13 +303,12 @@ export const COMPONENT_GROUPS: ComponentGroup[] = [
         category: "ic" as const,
         symbol: "vreg",
         defaultLabelPrefix: "U",
-        ...create3Pin(true),
+        ...create3Pin(false),
         pins: [
           { id: "1", name: "IN", offsetRow: 0, offsetCol: 0 },
-          { id: "2", name: "GND", offsetRow: 2, offsetCol: 0 },
-          { id: "3", name: "OUT", offsetRow: 4, offsetCol: 0 },
+          { id: "2", name: "GND", offsetRow: 1, offsetCol: 0 },
+          { id: "3", name: "OUT", offsetRow: 2, offsetCol: 0 },
         ],
-        footprintPresets: ["def-generic-3pin-compact", "def-generic-3pin-spaced"],
       },
       {
         id: "def-555",

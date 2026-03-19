@@ -182,15 +182,11 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
         return;
       }
 
-      // Escape: cancel wire drawing, exit wire mode, or clear selection
+      // Escape: cancel active wire drawing or clear selection (does NOT exit wire mode)
       if (e.key === "Escape") {
         if (wireDrawingFrom) {
           setSchematicWireDrawing(null);
           setWirePreview(null);
-          return;
-        }
-        if (wireDrawMode) {
-          toggleWireDrawMode();
           return;
         }
         if (selectedIds.length > 0 || selectedWireIds.length > 0) {
@@ -380,7 +376,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
       });
       setSelectedWireId(null);
     },
-    [components, getSVGPoint, pushSnapshot, wireDrawingFrom, captureSchematicDragBindings]
+    [components, getSVGPoint, pushSnapshot, wireDrawMode, wireDrawingFrom, captureSchematicDragBindings]
   );
 
   const handleSvgMouseDown = useCallback(
