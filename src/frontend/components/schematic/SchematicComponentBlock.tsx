@@ -1,17 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { Component } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import SymbolRenderer, { getSymbolBounds, getRotatedPinPositions } from "./SymbolRenderer";
 import { getSymbolDef } from "@/data/symbolDefs";
+import { snapToGrid } from "@/utils/schematicConstants";
 
 interface Props {
   component: Component;
   isSelected: boolean;
   onMouseDown: (e: React.MouseEvent) => void;
   onPinMouseDown?: (componentId: string, pinId: string, e: React.MouseEvent) => void;
+  getSVGPoint?: (e: React.MouseEvent) => { x: number; y: number };
 }
 
 export default function SchematicComponentBlock({
@@ -19,18 +21,25 @@ export default function SchematicComponentBlock({
   isSelected,
   onMouseDown,
   onPinMouseDown,
+  getSVGPoint,
 }: Props) {
   const componentDefs = useProjectStore((s) => s.componentDefs);
   const netAssignments = useProjectStore((s) => s.netAssignments);
   const nets = useProjectStore((s) => s.nets);
   const updateLabel = useProjectStore((s) => s.updateLabel);
   const updatePinName = useProjectStore((s) => s.updatePinName);
+  const updateLabelOffset = useProjectStore((s) => s.updateLabelOffset);
+  const updatePinLabelOffset = useProjectStore((s) => s.updatePinLabelOffset);
+  const pushSnapshot = useProjectStore((s) => s.pushSnapshot);
   const wireDrawMode = useProjectStore((s) => s.schematicWireDrawMode);
 
   const [editingLabel, setEditingLabel] = useState(false);
   const [editLabelValue, setEditLabelValue] = useState("");
   const [editingPinId, setEditingPinId] = useState<string | null>(null);
   const [editPinValue, setEditPinValue] = useState("");
+  const [draggingLabel, setDraggingLabel] = useState(false);
+  const [didDragLabel, setDidDragLabel] = useState(false);
+  const pinLabelSnapshotPushed = useRef(false);
 
   const def = resolveComponentDef(component, componentDefs);
   if (!def) return null;
@@ -38,10 +47,18 @@ export default function SchematicComponentBlock({
   const rotation = component.schematicRotation ?? 0;
   const mirrored = component.schematicMirrored ?? false;
   const symbolDef = getSymbolDef(def.symbol);
-  const labelYOffset = symbolDef?.labelYOffset ?? 0;
+  const symbolLabelYOffset = symbolDef?.labelYOffset ?? 0;
   const bounds = getSymbolBounds(def.symbol, rotation, mirrored);
 
-  // Build pin color map from net assignments
+  // Label position: default above component, offset by user drag
+  const defaultLabelX = (bounds.minX + bounds.maxX) / 2;
+  const defaultLabelY = bounds.minY - 6 - symbolLabelYOffset;
+  const labelOff = component.labelOffset ?? { x: 0, y: 0 };
+  const labelX = defaultLabelX + labelOff.x;
+  const labelY = defaultLabelY + labelOff.y;
+  const hasCustomOffset = labelOff.x !== 0 || labelOff.y !== 0;
+
+  // Build pin color map
   const pinColors: Record<string, string> = {};
   for (const a of netAssignments) {
     if (a.componentId === component.id) {
@@ -50,14 +67,16 @@ export default function SchematicComponentBlock({
     }
   }
 
-  // Build custom pin name map from resolved def
   const pinNames: Record<string, string> = {};
   for (const pin of def.pins) {
     pinNames[pin.id] = pin.name;
   }
 
   const handleLabelClick = (e: React.MouseEvent) => {
-    if (wireDrawMode) return;
+    if (wireDrawMode || didDragLabel) {
+      setDidDragLabel(false);
+      return;
+    }
     e.stopPropagation();
     setEditLabelValue(component.label);
     setEditingLabel(true);
@@ -69,6 +88,33 @@ export default function SchematicComponentBlock({
       updateLabel(component.id, trimmed);
     }
     setEditingLabel(false);
+  };
+
+  const handleLabelDragStart = (e: React.MouseEvent) => {
+    if (wireDrawMode || editingLabel) return;
+    e.stopPropagation();
+    e.preventDefault();
+    pushSnapshot();
+    setDraggingLabel(true);
+    setDidDragLabel(false);
+
+    const handleMove = (me: MouseEvent) => {
+      setDidDragLabel(true);
+      if (!getSVGPoint) return;
+      const svgPt = getSVGPoint(me as unknown as React.MouseEvent);
+      const newOffX = svgPt.x - component.schematicPos.x - defaultLabelX;
+      const newOffY = svgPt.y - component.schematicPos.y - defaultLabelY;
+      updateLabelOffset(component.id, { x: newOffX, y: newOffY });
+    };
+
+    const handleUp = () => {
+      setDraggingLabel(false);
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+    };
+
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
   };
 
   const handlePinLabelClick = (pinId: string, e: React.MouseEvent) => {
@@ -107,11 +153,23 @@ export default function SchematicComponentBlock({
         fill="transparent"
       />
 
-      {/* Label above the topmost point */}
+      {/* Leader line from component center to label (when label is offset) */}
+      {hasCustomOffset && !editingLabel && (
+        <line
+          x1={0} y1={0}
+          x2={labelX} y2={labelY}
+          stroke="#d4d4d4"
+          strokeWidth={0.8}
+          strokeDasharray="2 2"
+          pointerEvents="none"
+        />
+      )}
+
+      {/* Label */}
       {editingLabel ? (
         <foreignObject
-          x={-50}
-          y={bounds.minY - 24 - labelYOffset}
+          x={labelX - 50}
+          y={labelY - 14}
           width={100}
           height={20}
         >
@@ -131,15 +189,15 @@ export default function SchematicComponentBlock({
         </foreignObject>
       ) : (
         <text
-          x={(bounds.minX + bounds.maxX) / 2}
-          y={bounds.minY - 6 - labelYOffset}
+          x={labelX}
+          y={labelY}
           textAnchor="middle"
           fontSize={12}
           fontWeight={600}
           fill="#171717"
-          style={{ cursor: "text", userSelect: "none" }}
+          style={{ cursor: "grab", userSelect: "none" }}
           onClick={handleLabelClick}
-          onMouseDown={(e) => e.stopPropagation()}
+          onMouseDown={handleLabelDragStart}
         >
           {component.label}
         </text>
@@ -184,6 +242,15 @@ export default function SchematicComponentBlock({
         onPinMouseDown={handlePinMouseDown}
         onPinLabelClick={editingPinId ? undefined : handlePinLabelClick}
         pinNames={pinNames}
+        pinLabelOffsets={component.pinLabelOffsets ?? {}}
+        onPinLabelDrag={(pinId, offset) => {
+          if (!pinLabelSnapshotPushed.current) {
+            pushSnapshot();
+            pinLabelSnapshotPushed.current = true;
+          }
+          updatePinLabelOffset(component.id, pinId, offset);
+        }}
+        onPinLabelDragEnd={() => { pinLabelSnapshotPushed.current = false; }}
         showPinLabels={!editingPinId}
       />
     </g>

@@ -27,6 +27,7 @@ export interface SymbolDef {
   extraElements?: SymbolExtraElement[];
   pins: SymbolPinStub[];
   labelYOffset?: number; // extra pixels to push the component label upward
+  hidePinLabels?: boolean; // don't show pin labels (for simple symmetric components)
 }
 
 export interface SymbolExtraElement {
@@ -43,6 +44,7 @@ const resistor: SymbolDef = {
   symbolId: "resistor",
   label: "Resistor",
   labelYOffset: 10,
+  hidePinLabels: true,
   category: "passive",
   bodyPaths: [
     { d: "M 0 -10 L 5 -8 L -5 -3 L 5 2 L -5 7 L 5 12 L 0 14", fill: "none" },
@@ -60,6 +62,7 @@ const capacitor: SymbolDef = {
   symbolId: "capacitor",
   label: "Capacitor",
   category: "passive",
+  hidePinLabels: true,
   bodyPaths: [
     { d: "M -8 -3 L 8 -3", fill: "none" },  // top plate
     { d: "M -8 3 L 8 3", fill: "none" },     // bottom plate
@@ -166,7 +169,7 @@ const npn: SymbolDef = {
     { d: "M -6 -14 L -6 14", fill: "none" },           // base bar
     { d: "M -6 -7 L 12 -18", fill: "none" },            // collector
     { d: "M -6 7 L 12 18", fill: "none" },               // emitter
-    { d: "M 6 13 L 12 18 L 5 17", fill: "none" },        // arrow
+    { d: "M 7 10 L 12 18 L 3 17", fill: "none" },          // arrow
     // Stubs to grid-aligned endpoints
     { d: `M -6 0 L ${-2 * G} 0`, fill: "none" },         // B stub
     { d: `M 12 -18 L ${G} ${-2 * G}`, fill: "none" },    // C stub
@@ -190,7 +193,7 @@ const pnp: SymbolDef = {
     { d: "M -6 -14 L -6 14", fill: "none" },
     { d: "M -6 -7 L 12 -18", fill: "none" },
     { d: "M -6 7 L 12 18", fill: "none" },
-    { d: "M -2 4 L -6 7 L 0 10", fill: "none" },  // arrow inward
+    { d: "M 3 8 L -6 7 L -1 15", fill: "none" },    // arrow inward
     { d: `M -6 0 L ${-2 * G} 0`, fill: "none" },
     { d: `M 12 -18 L ${G} ${-2 * G}`, fill: "none" },
     { d: `M 12 18 L ${G} ${2 * G}`, fill: "none" },
@@ -313,6 +316,7 @@ const inductor: SymbolDef = {
   symbolId: "inductor",
   label: "Inductor",
   category: "passive",
+  hidePinLabels: true,
   bodyPaths: [
     // Coil loops (4 bumps)
     { d: "M 0 -12 A 5 5 0 0 1 0 -4 A 5 5 0 0 1 0 4 A 5 5 0 0 1 0 12", fill: "none" },
@@ -440,6 +444,7 @@ const switchSPST: SymbolDef = {
   symbolId: "switch",
   label: "Switch",
   labelYOffset: 10,
+  hidePinLabels: true,
   category: "passive",
   bodyPaths: [
     // Pin 1 lead

@@ -46,10 +46,13 @@ export interface Component {
   schematicPos: { x: number; y: number };
   schematicRotation: 0 | 90 | 180 | 270;
   schematicMirrored?: boolean; // horizontal mirror (flip X axis)
+  labelOffset?: { x: number; y: number }; // draggable label position offset
+  pinLabelOffsets?: Record<string, { x: number; y: number }>; // per-pin label position offsets
 
   // Position on the stripboard (null until placed)
   boardPos: { row: number; col: number } | null;
   rotation: 0 | 90 | 180 | 270;
+  boardLabelOffset?: { x: number; y: number }; // draggable label offset on stripboard
 
   // For flexible 2-pin components: absolute position of pin 2 (pin 1 is at boardPos)
   flexibleEndPos?: { row: number; col: number };

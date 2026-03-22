@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { Component } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
@@ -13,7 +14,10 @@ import {
   PinPosition,
 } from "./boardLayout";
 
-const PIN_HIT_RADIUS = HOLE_SPACING * 0.5; // must be >= body padding so pins extend beyond body edges
+const PIN_HIT_RADIUS = HOLE_SPACING * 0.35;
+
+// Exported flag to suppress canvas click handlers after label drag
+export let suppressNextCanvasClick = false;
 
 interface Props {
   component: Component;
@@ -26,6 +30,42 @@ export default function PlacedComponent({ component, isSelected, onMouseDown, on
   const componentDefs = useProjectStore((s) => s.componentDefs);
   const netAssignments = useProjectStore((s) => s.netAssignments);
   const nets = useProjectStore((s) => s.nets);
+  const updateBoardLabelOffset = useProjectStore((s) => s.updateBoardLabelOffset);
+  const pushSnapshot = useProjectStore((s) => s.pushSnapshot);
+  const snapshotPushed = useRef(false);
+
+  const handleLabelMouseDown = (e: React.MouseEvent, defaultX: number, defaultY: number) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const startOff = component.boardLabelOffset ?? { x: 0, y: 0 };
+    snapshotPushed.current = false;
+
+    const svgEl = (e.target as SVGElement).ownerSVGElement;
+    const ctm = svgEl?.getScreenCTM();
+    const scaleFactor = ctm ? 1 / ctm.a : 1;
+
+    const handleMove = (me: MouseEvent) => {
+      if (!snapshotPushed.current) {
+        pushSnapshot();
+        snapshotPushed.current = true;
+      }
+      const dx = (me.clientX - startX) * scaleFactor;
+      const dy = (me.clientY - startY) * scaleFactor;
+      updateBoardLabelOffset(component.id, { x: startOff.x + dx, y: startOff.y + dy });
+    };
+    const handleUp = () => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+      if (snapshotPushed.current) {
+        suppressNextCanvasClick = true;
+        requestAnimationFrame(() => { suppressNextCanvasClick = false; });
+      }
+    };
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+  };
 
   const def = resolveComponentDef(component, componentDefs);
   if (!def || !component.boardPos) return null;
@@ -127,8 +167,11 @@ export default function PlacedComponent({ component, isSelected, onMouseDown, on
             onMouseDown={onMouseDown}
           />
           <text
-            x={cx} y={cy - pad - 4}
-            textAnchor="middle" fontSize={11} fontWeight={600} fill="#171717" pointerEvents="none"
+            x={cx + (component.boardLabelOffset?.x ?? 0)}
+            y={cy - pad - 4 + (component.boardLabelOffset?.y ?? 0)}
+            textAnchor="middle" fontSize={11} fontWeight={600} fill="#171717"
+            style={{ cursor: "grab" }}
+            onMouseDown={(e) => handleLabelMouseDown(e, cx, cy - pad - 4)}
           >
             {component.label}
           </text>
@@ -155,9 +198,14 @@ export default function PlacedComponent({ component, isSelected, onMouseDown, on
         onMouseDown={onMouseDown}
       />
       <text
-        x={topLeft.x + ((bounds.maxCol - bounds.minCol) * HOLE_SPACING) / 2}
-        y={topLeft.y - pad - 4}
-        textAnchor="middle" fontSize={11} fontWeight={600} fill="#171717" pointerEvents="none"
+        x={topLeft.x + ((bounds.maxCol - bounds.minCol) * HOLE_SPACING) / 2 + (component.boardLabelOffset?.x ?? 0)}
+        y={topLeft.y - pad - 4 + (component.boardLabelOffset?.y ?? 0)}
+        textAnchor="middle" fontSize={11} fontWeight={600} fill="#171717"
+        style={{ cursor: "grab" }}
+        onMouseDown={(e) => handleLabelMouseDown(e,
+          topLeft.x + ((bounds.maxCol - bounds.minCol) * HOLE_SPACING) / 2,
+          topLeft.y - pad - 4
+        )}
       >
         {component.label}
       </text>

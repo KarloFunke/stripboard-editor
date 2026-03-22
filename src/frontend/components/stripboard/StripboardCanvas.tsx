@@ -26,7 +26,7 @@ import {
   getGroupForWire,
 } from "./connectivity";
 import { StripSegment } from "./stripSegments";
-import PlacedComponent from "./PlacedComponent";
+import PlacedComponent, { suppressNextCanvasClick } from "./PlacedComponent";
 import CutMark from "./CutMark";
 import WireLine from "./WireLine";
 
@@ -478,6 +478,7 @@ export default function StripboardCanvas({ readOnly = false }: { readOnly?: bool
     (e: React.MouseEvent) => {
       if (readOnly) return;
       if (shouldSuppressClick()) return;
+      if (suppressNextCanvasClick) return;
 
       const pt = getSVGPoint(e);
 

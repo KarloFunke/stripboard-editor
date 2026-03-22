@@ -46,6 +46,9 @@ interface ProjectActions {
   // Components
   addComponent: (defId: string, schematicPos: { x: number; y: number }) => void;
   removeComponent: (id: string) => void;
+  updateLabelOffset: (id: string, offset: { x: number; y: number }) => void;
+  updatePinLabelOffset: (id: string, pinId: string, offset: { x: number; y: number }) => void;
+  updateBoardLabelOffset: (id: string, offset: { x: number; y: number }) => void;
   updateLabel: (id: string, label: string) => void;
   updatePinName: (componentId: string, pinId: string, newName: string) => void;
   updateComponentFootprint: (componentId: string, override: FootprintOverride) => void;
@@ -301,6 +304,32 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       ),
     }));
   },
+
+  // No snapshot — called per-pixel during drag
+  updateLabelOffset: (id, offset) =>
+    set((s) => ({
+      components: s.components.map((c) =>
+        c.id === id ? { ...c, labelOffset: offset } : c
+      ),
+    })),
+
+  // No snapshot — called per-pixel during drag
+  updatePinLabelOffset: (id, pinId, offset) =>
+    set((s) => ({
+      components: s.components.map((c) =>
+        c.id === id
+          ? { ...c, pinLabelOffsets: { ...c.pinLabelOffsets, [pinId]: offset } }
+          : c
+      ),
+    })),
+
+  // No snapshot — called per-pixel during drag
+  updateBoardLabelOffset: (id, offset) =>
+    set((s) => ({
+      components: s.components.map((c) =>
+        c.id === id ? { ...c, boardLabelOffset: offset } : c
+      ),
+    })),
 
   updatePinName: (componentId, pinId, newName) => {
     get().pushSnapshot();

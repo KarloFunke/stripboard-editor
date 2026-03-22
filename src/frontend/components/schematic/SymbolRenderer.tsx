@@ -12,6 +12,9 @@ interface SymbolRendererProps {
   onPinMouseDown?: (pinId: string, e: React.MouseEvent) => void;
   onPinLabelClick?: (pinId: string, e: React.MouseEvent) => void;
   pinNames?: Record<string, string>; // pinId → custom display name (overrides defaultName)
+  pinLabelOffsets?: Record<string, { x: number; y: number }>; // per-pin label position offsets
+  onPinLabelDrag?: (pinId: string, offset: { x: number; y: number }) => void;
+  onPinLabelDragEnd?: () => void;
   showPinLabels?: boolean;
   scale?: number;
 }
@@ -114,6 +117,8 @@ function getPinLabelProps(
   }
 }
 
+let _suppressPinLabelClick = false;
+
 export default function SymbolRenderer({
   symbolId,
   rotation = 0,
@@ -123,6 +128,9 @@ export default function SymbolRenderer({
   onPinMouseDown,
   onPinLabelClick,
   pinNames = {},
+  pinLabelOffsets = {},
+  onPinLabelDrag,
+  onPinLabelDragEnd,
   showPinLabels = true,
   scale = 1,
 }: SymbolRendererProps) {
@@ -221,23 +229,64 @@ export default function SymbolRenderer({
               }}
             />
             {/* Pin label — dynamically positioned based on stub direction */}
-            {showPinLabels && (() => {
+            {showPinLabels && !def.hidePinLabels && (() => {
               const lp = getPinLabelProps(pin.stubEnd, pin.side, rotation, mirrored);
+              const pinOff = pinLabelOffsets[pin.pinId];
+              const lx = lp.x + (pinOff?.x ?? 0);
+              const ly = lp.y + (pinOff?.y ?? 0);
               return (
                 <text
-                  x={lp.x} y={lp.y}
+                  x={lx} y={ly}
                   fontSize={9}
                   textAnchor={lp.anchor}
                   dominantBaseline={lp.baseline}
                   fill="#666"
-                  style={{ userSelect: "none", cursor: onPinLabelClick ? "text" : "default" }}
+                  style={{ userSelect: "none", cursor: onPinLabelDrag ? "grab" : onPinLabelClick ? "text" : "default" }}
                   onClick={(e) => {
+                    if (_suppressPinLabelClick) {
+                      _suppressPinLabelClick = false;
+                      return;
+                    }
                     if (onPinLabelClick) {
                       e.stopPropagation();
                       onPinLabelClick(pin.pinId, e);
                     }
                   }}
-                  onMouseDown={(e) => { if (onPinLabelClick) e.stopPropagation(); }}
+                  onMouseDown={(e) => {
+                    if (onPinLabelClick) e.stopPropagation();
+                    if (onPinLabelDrag) {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      const startX = e.clientX;
+                      const startY = e.clientY;
+                      const startOff = pinOff ?? { x: 0, y: 0 };
+                      let didMove = false;
+
+                      const svgEl = (e.target as SVGElement).ownerSVGElement;
+                      const ctm = svgEl?.getScreenCTM();
+                      const scaleFactor = ctm ? 1 / ctm.a : 1;
+
+                      const handleMove = (me: MouseEvent) => {
+                        didMove = true;
+                        const dx = (me.clientX - startX) * scaleFactor;
+                        const dy = (me.clientY - startY) * scaleFactor;
+                        onPinLabelDrag(pin.pinId, {
+                          x: startOff.x + dx,
+                          y: startOff.y + dy,
+                        });
+                      };
+                      const handleUp = () => {
+                        window.removeEventListener("mousemove", handleMove);
+                        window.removeEventListener("mouseup", handleUp);
+                        if (didMove) {
+                          _suppressPinLabelClick = true;
+                          if (onPinLabelDragEnd) onPinLabelDragEnd();
+                        }
+                      };
+                      window.addEventListener("mousemove", handleMove);
+                      window.addEventListener("mouseup", handleUp);
+                    }
+                  }}
                 >
                   {pinNames[pin.pinId] ?? pin.defaultName}
                 </text>
