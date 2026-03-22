@@ -256,7 +256,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
         return;
       }
 
-      // Arrow keys: move selected components and wires
+      // Arrow keys: move selected components and wires atomically
       const moveIds = selectedIds.length > 0 ? selectedIds : selectedId ? [selectedId] : [];
       const moveWireIds = selectedWireIds;
       if ((moveIds.length > 0 || moveWireIds.length > 0) && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
@@ -268,46 +268,103 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
           ArrowLeft: { x: -MOVE_STEP, y: 0 },
           ArrowRight: { x: MOVE_STEP, y: 0 },
         }[e.key]!;
-        for (const id of moveIds) {
-          const comp = components.find((c) => c.id === id);
-          if (comp) {
-            updateSchematicPos(id, {
-              x: snapToGrid(comp.schematicPos.x + delta.x),
-              y: snapToGrid(comp.schematicPos.y + delta.y),
-            });
+        const moveIdSet = new Set(moveIds);
+        const moveWireIdSet = new Set(moveWireIds);
+
+        const s = useProjectStore.getState();
+
+        // 1. Collect old pin positions for moved components (before the move)
+        const movedPinPositions = new Set<string>();
+        for (const comp of s.components) {
+          if (!moveIdSet.has(comp.id)) continue;
+          const def = resolveComponentDef(comp, s.componentDefs);
+          if (!def) continue;
+          const rot = comp.schematicRotation ?? 0;
+          const pins = getRotatedPinPositions(def.symbol, rot, comp.schematicMirrored ?? false);
+          for (const pin of pins) {
+            movedPinPositions.add(pointKey(comp.schematicPos.x + pin.x, comp.schematicPos.y + pin.y));
           }
         }
-        // Move selected wires — only move "free" endpoints (not on any component's pin,
-        // since pin-connected endpoints are already moved by updateSchematicPos)
-        if (moveWireIds.length > 0) {
-          const s = useProjectStore.getState();
-          // Build set of all component pin positions (after the move)
-          const pinPositions = new Set<string>();
-          for (const comp of s.components) {
-            const def = resolveComponentDef(comp, s.componentDefs);
-            if (!def) continue;
-            const rot = comp.schematicRotation ?? 0;
-            const pins = getRotatedPinPositions(def.symbol, rot, comp.schematicMirrored ?? false);
-            for (const pin of pins) {
-              pinPositions.add(pointKey(comp.schematicPos.x + pin.x, comp.schematicPos.y + pin.y));
+
+        // Collect pin positions of NON-moved components (these are anchors that shouldn't move)
+        const staticPinPositions = new Set<string>();
+        for (const comp of s.components) {
+          if (moveIdSet.has(comp.id)) continue;
+          const def = resolveComponentDef(comp, s.componentDefs);
+          if (!def) continue;
+          const rot = comp.schematicRotation ?? 0;
+          const pins = getRotatedPinPositions(def.symbol, rot, comp.schematicMirrored ?? false);
+          for (const pin of pins) {
+            staticPinPositions.add(pointKey(comp.schematicPos.x + pin.x, comp.schematicPos.y + pin.y));
+          }
+        }
+
+        // 2. Flood-fill: find all grid points that should move
+        // Start with moved component pin positions, then propagate through wire chains
+        const pointsToMove = new Set<string>(movedPinPositions);
+        // Also add explicitly selected wire endpoints
+        for (const w of s.schematicWires) {
+          if (moveWireIdSet.has(w.id)) {
+            const sk = pointKey(w.start.x, w.start.y);
+            const ek = pointKey(w.end.x, w.end.y);
+            if (!staticPinPositions.has(sk)) pointsToMove.add(sk);
+            if (!staticPinPositions.has(ek)) pointsToMove.add(ek);
+          }
+        }
+
+        // Build point → wire endpoint adjacency for flood fill
+        const pointToEndpoints: Map<string, { wireId: string; endpoint: "start" | "end"; otherKey: string }[]> = new Map();
+        for (const w of s.schematicWires) {
+          const sk = pointKey(w.start.x, w.start.y);
+          const ek = pointKey(w.end.x, w.end.y);
+          if (!pointToEndpoints.has(sk)) pointToEndpoints.set(sk, []);
+          pointToEndpoints.get(sk)!.push({ wireId: w.id, endpoint: "start", otherKey: ek });
+          if (!pointToEndpoints.has(ek)) pointToEndpoints.set(ek, []);
+          pointToEndpoints.get(ek)!.push({ wireId: w.id, endpoint: "end", otherKey: sk });
+        }
+
+        // Propagate: if a point moves, the other end of its wire also moves (unless anchored to a static pin)
+        let changed = true;
+        while (changed) {
+          changed = false;
+          for (const pt of Array.from(pointsToMove)) {
+            const endpoints = pointToEndpoints.get(pt);
+            if (!endpoints) continue;
+            for (const ep of endpoints) {
+              if (!pointsToMove.has(ep.otherKey) && !staticPinPositions.has(ep.otherKey)) {
+                pointsToMove.add(ep.otherKey);
+                changed = true;
+              }
             }
           }
-          const movedWires = s.schematicWires.map((w) => {
-            if (!moveWireIds.includes(w.id)) return w;
-            const startOnPin = pinPositions.has(pointKey(w.start.x, w.start.y));
-            const endOnPin = pinPositions.has(pointKey(w.end.x, w.end.y));
-            // Only move endpoints that are free grid anchors (not on pins)
-            const moveStart = !startOnPin;
-            const moveEnd = !endOnPin;
-            if (!moveStart && !moveEnd) return w;
-            return {
-              ...w,
-              start: moveStart ? { x: w.start.x + delta.x, y: w.start.y + delta.y } : w.start,
-              end: moveEnd ? { x: w.end.x + delta.x, y: w.end.y + delta.y } : w.end,
-            };
-          });
-          useProjectStore.setState({ schematicWires: movedWires });
         }
+
+        // 3. Move components
+        const newComponents = s.components.map((c) => {
+          if (!moveIdSet.has(c.id)) return c;
+          return {
+            ...c,
+            schematicPos: {
+              x: snapToGrid(c.schematicPos.x + delta.x),
+              y: snapToGrid(c.schematicPos.y + delta.y),
+            },
+          };
+        });
+
+        // 4. Move wire endpoints whose points are in the move set
+        const newWires = s.schematicWires.map((w) => {
+          const moveStart = pointsToMove.has(pointKey(w.start.x, w.start.y));
+          const moveEnd = pointsToMove.has(pointKey(w.end.x, w.end.y));
+
+          if (!moveStart && !moveEnd) return w;
+          return {
+            ...w,
+            start: moveStart ? { x: w.start.x + delta.x, y: w.start.y + delta.y } : w.start,
+            end: moveEnd ? { x: w.end.x + delta.x, y: w.end.y + delta.y } : w.end,
+          };
+        });
+
+        useProjectStore.setState({ components: newComponents, schematicWires: newWires });
         return;
       }
     };
