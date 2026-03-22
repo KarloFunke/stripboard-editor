@@ -694,6 +694,7 @@ export default function StripboardCanvas({ readOnly = false }: { readOnly?: bool
                   component={renderComp}
                   isSelected={comp.id === selectedId || selectedIds.includes(comp.id)}
                   onMouseDown={(e) => handleComponentMouseDown(comp.id, e)}
+                  readOnly={readOnly}
                   onPinDragStart={!readOnly ? (pinId, e) => {
                     e.stopPropagation();
                     pushSnapshot();

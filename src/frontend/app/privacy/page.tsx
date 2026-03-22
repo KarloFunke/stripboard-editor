@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: "Privacy Policy",
-  description: "Privacy policy for the Stripboard Editor — what data is collected and how it is used.",
+  description: "Privacy policy for the Stripboard Editor. What data is collected and how it is used.",
   alternates: { canonical: "https://stripboard-editor.com/privacy" },
 };
 
@@ -32,26 +32,26 @@ export default function PrivacyPage() {
             <h2 className="text-lg font-semibold text-neutral-800">What data is collected</h2>
             <ul className="list-disc pl-5 space-y-1">
               <li>
-                <strong>Account data</strong> — If you create an account, your username and a
+                <strong>Account data:</strong> If you create an account, your username and a
                 hashed version of your password are stored. No email address is required or collected.
               </li>
               <li>
-                <strong>Project data</strong> — Your stripboard projects (components, nets, board layout)
+                <strong>Project data:</strong> Your stripboard projects (components, nets, board layout)
                 are stored on the server so you can access them later.
               </li>
               <li>
-                <strong>Session cookie</strong> — A single session cookie is used to keep you logged in.
+                <strong>Session cookie:</strong> A single session cookie is used to keep you logged in.
                 This is strictly necessary for the application to function and requires no consent.
               </li>
               <li>
-                <strong>Analytics</strong> — This site uses{" "}
+                <strong>Analytics:</strong> This site uses{" "}
                 <a href="https://umami.is" className="text-[#113768] hover:underline" target="_blank" rel="noopener noreferrer">Umami</a>,
                 a privacy-focused, cookieless analytics tool. It collects anonymous page view statistics
                 (no personal data, no tracking across sites, no cookies). The analytics data is
                 self-hosted in Germany.
               </li>
               <li>
-                <strong>Server logs</strong> — Standard web server logs (IP address, timestamp, requested URL)
+                <strong>Server logs:</strong> Standard web server logs (IP address, timestamp, requested URL)
                 are kept for security and debugging purposes and are automatically deleted after 14 days.
               </li>
             </ul>

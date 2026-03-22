@@ -22,7 +22,7 @@ export const metadata: Metadata = {
     template: "%s | Stripboard Editor",
   },
   description:
-    "Free online stripboard layout editor. Copper strips colour-code to your nets in real time so you can instantly see what's connected. Design, place, and verify — no more tracing strips by hand.",
+    "Free online stripboard layout editor with a built-in schematic editor. Draw schematics with standard symbols, then place components on a virtual stripboard. Copper strips colour-code to your nets in real time so you can instantly see what is connected.",
   keywords: [
     "stripboard",
     "veroboard",
@@ -41,13 +41,13 @@ export const metadata: Metadata = {
     siteName: "Stripboard Editor",
     title: "Stripboard Editor - Design Stripboard Layouts Online",
     description:
-      "Free online stripboard editor with live strip colouring. See net connectivity at a glance — strips light up in your net colours.",
+      "Free online stripboard editor with a built-in schematic editor. Draw circuits with standard symbols, wire up nets, and layout on a virtual stripboard with live strip colouring.",
     images: [
       {
         url: "/demo-circuit.png",
         width: 1920,
         height: 963,
-        alt: "Stripboard Editor — layout view",
+        alt: "Stripboard Editor showing schematic and board layout side by side",
       },
     ],
   },
@@ -55,7 +55,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Stripboard Editor - Design Stripboard Layouts Online",
     description:
-      "Free online stripboard editor with live strip colouring. See net connectivity at a glance.",
+      "Free online stripboard editor with a built-in schematic editor. Draw circuits, wire up nets, and layout on a virtual stripboard.",
     images: ["/demo-circuit.png"],
   },
   alternates: {

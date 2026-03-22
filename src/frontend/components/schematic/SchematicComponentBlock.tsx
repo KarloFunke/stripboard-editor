@@ -14,6 +14,7 @@ interface Props {
   onMouseDown: (e: React.MouseEvent) => void;
   onPinMouseDown?: (componentId: string, pinId: string, e: React.MouseEvent) => void;
   getSVGPoint?: (e: React.MouseEvent) => { x: number; y: number };
+  readOnly?: boolean;
 }
 
 export default function SchematicComponentBlock({
@@ -22,6 +23,7 @@ export default function SchematicComponentBlock({
   onMouseDown,
   onPinMouseDown,
   getSVGPoint,
+  readOnly = false,
 }: Props) {
   const componentDefs = useProjectStore((s) => s.componentDefs);
   const netAssignments = useProjectStore((s) => s.netAssignments);
@@ -73,7 +75,7 @@ export default function SchematicComponentBlock({
   }
 
   const handleLabelClick = (e: React.MouseEvent) => {
-    if (wireDrawMode || didDragLabel) {
+    if (readOnly || wireDrawMode || didDragLabel) {
       setDidDragLabel(false);
       return;
     }
@@ -91,7 +93,7 @@ export default function SchematicComponentBlock({
   };
 
   const handleLabelDragStart = (e: React.MouseEvent) => {
-    if (wireDrawMode || editingLabel) return;
+    if (readOnly || wireDrawMode || editingLabel) return;
     e.stopPropagation();
     e.preventDefault();
     pushSnapshot();
@@ -118,7 +120,7 @@ export default function SchematicComponentBlock({
   };
 
   const handlePinLabelClick = (pinId: string, e: React.MouseEvent) => {
-    if (wireDrawMode) return;
+    if (readOnly || wireDrawMode) return;
     e.stopPropagation();
     setEditPinValue(pinNames[pinId] ?? pinId);
     setEditingPinId(pinId);
@@ -240,17 +242,17 @@ export default function SchematicComponentBlock({
         selected={isSelected}
         pinColors={pinColors}
         onPinMouseDown={handlePinMouseDown}
-        onPinLabelClick={editingPinId ? undefined : handlePinLabelClick}
+        onPinLabelClick={readOnly || editingPinId ? undefined : handlePinLabelClick}
         pinNames={pinNames}
         pinLabelOffsets={component.pinLabelOffsets ?? {}}
-        onPinLabelDrag={(pinId, offset) => {
+        onPinLabelDrag={readOnly ? undefined : (pinId, offset) => {
           if (!pinLabelSnapshotPushed.current) {
             pushSnapshot();
             pinLabelSnapshotPushed.current = true;
           }
           updatePinLabelOffset(component.id, pinId, offset);
         }}
-        onPinLabelDragEnd={() => { pinLabelSnapshotPushed.current = false; }}
+        onPinLabelDragEnd={readOnly ? undefined : () => { pinLabelSnapshotPushed.current = false; }}
         showPinLabels={!editingPinId}
       />
     </g>

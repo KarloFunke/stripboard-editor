@@ -67,25 +67,21 @@ export default function ProjectViewPage() {
   return (
     <div className="flex flex-col h-screen bg-[#fafafa]">
       <div className="h-12 bg-[#113768] text-white flex items-center px-5 justify-between text-sm">
-        <span className="font-semibold tracking-wide">
-          {projectName}
-          {ownerName && <span className="font-normal opacity-70 ml-2">by {ownerName}</span>}
-          <span className="font-normal opacity-50 ml-2">(view only)</span>
-        </span>
         <div className="flex items-center gap-2">
-          <button
-            onClick={handleFork}
-            className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 transition-colors"
-          >
-            Fork &amp; Edit
-          </button>
-          <a
-            href="/"
-            className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 transition-colors"
-          >
-            Home
+          <a href="/" className="font-semibold tracking-wide hover:opacity-80 transition-opacity">
+            Home - Stripboard Editor
           </a>
+          <span className="opacity-40">|</span>
+          <span className="font-semibold">{projectName}</span>
+          {ownerName && <span className="opacity-70">by {ownerName}</span>}
+          <span className="opacity-50">(view only)</span>
         </div>
+        <button
+          onClick={handleFork}
+          className="px-3.5 py-1.5 rounded bg-white/10 hover:bg-white/20 transition-colors text-sm"
+        >
+          Fork &amp; Edit
+        </button>
       </div>
       <SplitPane
         left={<SchematicEditor readOnly />}

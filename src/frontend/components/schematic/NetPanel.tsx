@@ -101,18 +101,6 @@ export default function NetPanel({ readOnly = false }: { readOnly?: boolean }) {
                 </span>
               )}
 
-              {!readOnly && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    removeNet(net.id);
-                  }}
-                  className="text-neutral-400 hover:text-red-500 text-sm flex-shrink-0"
-                  title="Delete net"
-                >
-                  ×
-                </button>
-              )}
             </div>
           );
         })}

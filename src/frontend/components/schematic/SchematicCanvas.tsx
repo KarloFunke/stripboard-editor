@@ -73,6 +73,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
   const setSchematicWireDrawing = useProjectStore((s) => s.setSchematicWireDrawing);
   const toggleWireDrawMode = useProjectStore((s) => s.toggleSchematicWireDrawMode);
   const pushSnapshot = useProjectStore((s) => s.pushSnapshot);
+  const highlightedNetId = useProjectStore((s) => s.highlightedNetId);
   const captureSchematicDragBindings = useProjectStore((s) => s.captureSchematicDragBindings);
   const clearSchematicDragBindings = useProjectStore((s) => s.clearSchematicDragBindings);
 
@@ -80,12 +81,13 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
   const [selectedWireId, setSelectedWireId] = useState<string | null>(null);
   const [selectedWireIds, setSelectedWireIds] = useState<string[]>([]);
 
-  // Compute wire colors: propagate net color through connected wire groups
-  const wireColorMap = useMemo(() => {
+  // Compute wire colors and net IDs: propagate through connected wire groups
+  const { wireColorMap, wireNetIdMap } = useMemo(() => {
     const colorMap = new Map<string, string>(); // wireId → color
+    const netIdMap = new Map<string, string>(); // wireId → netId
 
-    // Build point → net color lookup from pin positions
-    const pointNetColor = new Map<string, string>();
+    // Build point → net info lookup from pin positions
+    const pointNetInfo = new Map<string, { color: string; netId: string }>();
     for (const comp of components) {
       const def = resolveComponentDef(comp, componentDefs);
       if (!def) continue;
@@ -99,7 +101,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
           const net = nets.find((n) => n.id === assignment.netId);
           if (net) {
             const key = pointKey(comp.schematicPos.x + pin.x, comp.schematicPos.y + pin.y);
-            pointNetColor.set(key, net.color);
+            pointNetInfo.set(key, { color: net.color, netId: net.id });
           }
         }
       }
@@ -114,22 +116,25 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
       for (let i = 1; i < keys.length; i++) uf.union(keys[0], keys[i]);
     }
 
-    // Find color for each group root
-    const rootColor = new Map<string, string>();
-    for (const [pk, color] of pointNetColor) {
+    // Find color and netId for each group root
+    const rootInfo = new Map<string, { color: string; netId: string }>();
+    for (const [pk, info] of pointNetInfo) {
       const root = uf.find(pk);
-      if (!rootColor.has(root)) rootColor.set(root, color);
+      if (!rootInfo.has(root)) rootInfo.set(root, info);
     }
 
-    // Assign colors to wires
+    // Assign colors and netIds to wires
     for (const wire of schematicWires) {
       const sk = pointKey(wire.start.x, wire.start.y);
       const root = uf.find(sk);
-      const color = rootColor.get(root);
-      if (color) colorMap.set(wire.id, color);
+      const info = rootInfo.get(root);
+      if (info) {
+        colorMap.set(wire.id, info.color);
+        netIdMap.set(wire.id, info.netId);
+      }
     }
 
-    return colorMap;
+    return { wireColorMap: colorMap, wireNetIdMap: netIdMap };
   }, [schematicWires, components, componentDefs, nets, netAssignments]);
 
   // Compute junction points: grid points where 3+ wire endpoints/bends meet
@@ -593,6 +598,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
             wire={wire}
             color={wireColorMap.get(wire.id)}
             isSelected={selectedWireId === wire.id || selectedWireIds.includes(wire.id)}
+            highlighted={!!highlightedNetId && wireNetIdMap.get(wire.id) === highlightedNetId}
             onMouseDown={(e) => {
               if (readOnly) return;
               e.stopPropagation();
@@ -709,6 +715,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
             onMouseDown={(e) => handleMouseDown(comp.id, e)}
             onPinMouseDown={handlePinMouseDown}
             getSVGPoint={getSVGPoint}
+            readOnly={readOnly}
           />
         ))}
 

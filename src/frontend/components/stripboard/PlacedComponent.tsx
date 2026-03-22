@@ -24,9 +24,10 @@ interface Props {
   isSelected: boolean;
   onMouseDown: (e: React.MouseEvent) => void;
   onPinDragStart?: (pinId: string, e: React.MouseEvent) => void;
+  readOnly?: boolean;
 }
 
-export default function PlacedComponent({ component, isSelected, onMouseDown, onPinDragStart }: Props) {
+export default function PlacedComponent({ component, isSelected, onMouseDown, onPinDragStart, readOnly = false }: Props) {
   const componentDefs = useProjectStore((s) => s.componentDefs);
   const netAssignments = useProjectStore((s) => s.netAssignments);
   const nets = useProjectStore((s) => s.nets);
@@ -35,6 +36,7 @@ export default function PlacedComponent({ component, isSelected, onMouseDown, on
   const snapshotPushed = useRef(false);
 
   const handleLabelMouseDown = (e: React.MouseEvent, defaultX: number, defaultY: number) => {
+    if (readOnly) return;
     e.stopPropagation();
     e.preventDefault();
     const startX = e.clientX;

@@ -106,7 +106,7 @@ export default function HomePage() {
             name: "Stripboard Editor",
             url: "https://stripboard-editor.com",
             description:
-              "Free online stripboard layout editor with live strip colouring. Copper strips light up in your net colours so you can instantly see what's connected.",
+              "Free online stripboard layout editor with a built-in schematic editor. Draw circuits with standard symbols, wire up nets, and layout on a virtual stripboard with live strip colouring.",
             applicationCategory: "DesignApplication",
             operatingSystem: "Any",
             offers: {
@@ -162,7 +162,7 @@ export default function HomePage() {
             Design Stripboard Layouts
           </h1>
           <p className="text-neutral-600 text-lg">
-            Create schematics, define nets, and layout components on a virtual stripboard. Copper strips light up in your net colours so you can instantly see what's connected. No more tracing strips by hand.
+            Draw schematics with standard component symbols, wire up your nets, and place everything on a virtual stripboard. Copper strips light up in your net colours so you can instantly see what is connected.
           </p>
         </div>
 
@@ -175,10 +175,10 @@ export default function HomePage() {
             + New Project
           </button>
           <a
-            href="/tutorial"
+            href="/guide"
             className="py-3 px-6 rounded-lg text-sm font-medium border border-[#113768] text-[#113768] hover:bg-[#113768]/5 transition-colors text-center"
           >
-            See Tutorial
+            Quick Guide
           </a>
         </div>
 
@@ -188,7 +188,7 @@ export default function HomePage() {
           <a href="https://stripboard-editor.com/view/2b08cf25-5e23-4952-8df3-0d0fd385b58e">
             <img
               src="/demo-circuit.png"
-              alt="Stripboard Editor — schematic and board layout side by side"
+              alt="Stripboard Editor with schematic and board layout side by side"
               className="rounded-lg border border-neutral-200 shadow-sm w-full hover:shadow-md transition-shadow"
             />
             <p className="text-xs text-neutral-500 mt-2 text-center">Click to view this demo circuit</p>
@@ -201,18 +201,18 @@ export default function HomePage() {
           <div className="grid grid-cols-3 gap-4">
             <div className="bg-white border border-neutral-200 rounded-lg p-4 text-center">
               <div className="text-2xl mb-2 text-[#113768] font-bold">1</div>
-              <p className="text-sm font-medium text-neutral-800">Add Components</p>
-              <p className="text-xs text-neutral-500 mt-1">Pick from a library of common through-hole footprints or create custom ones.</p>
+              <p className="text-sm font-medium text-neutral-800">Draw Schematic</p>
+              <p className="text-xs text-neutral-500 mt-1">Add components with standard symbols from the library and draw wires between pins to define your nets.</p>
             </div>
             <div className="bg-white border border-neutral-200 rounded-lg p-4 text-center">
               <div className="text-2xl mb-2 text-[#113768] font-bold">2</div>
-              <p className="text-sm font-medium text-neutral-800">Define Nets</p>
-              <p className="text-xs text-neutral-500 mt-1">Assign pins to nets to describe your circuit connectivity.</p>
+              <p className="text-sm font-medium text-neutral-800">Place on Board</p>
+              <p className="text-xs text-neutral-500 mt-1">Drag components from the schematic onto the stripboard. Strips colour-code to your nets automatically.</p>
             </div>
             <div className="bg-white border border-neutral-200 rounded-lg p-4 text-center">
               <div className="text-2xl mb-2 text-[#113768] font-bold">3</div>
-              <p className="text-sm font-medium text-neutral-800">Layout on Board</p>
-              <p className="text-xs text-neutral-500 mt-1">Place components, wires and cuts. Strips colour-code to your nets in real time, conflicts turn red instantly.</p>
+              <p className="text-sm font-medium text-neutral-800">Verify and Finish</p>
+              <p className="text-xs text-neutral-500 mt-1">Place cuts and wires to resolve conflicts. Conflicts highlight red instantly so you know exactly what to fix.</p>
             </div>
           </div>
         </div>
@@ -223,23 +223,23 @@ export default function HomePage() {
           <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm text-neutral-600">
             <div className="flex items-start gap-2">
               <span className="text-[#113768] mt-0.5">-</span>
-              <span>Split-screen schematic and stripboard editors</span>
+              <span>Schematic editor with standard component symbols</span>
             </div>
             <div className="flex items-start gap-2">
               <span className="text-[#113768] mt-0.5">-</span>
-              <span>Drag-and-drop component placement</span>
+              <span>Wire-based net definition with automatic net inference</span>
             </div>
             <div className="flex items-start gap-2">
               <span className="text-[#113768] mt-0.5">-</span>
-              <span>Live strip colouring - see net connectivity at a glance</span>
+              <span>Live strip colouring with real-time conflict detection</span>
             </div>
             <div className="flex items-start gap-2">
               <span className="text-[#113768] mt-0.5">-</span>
-              <span>Customizable footprints and per-instance pin naming</span>
+              <span>Flexible footprints for passive components, editable for ICs</span>
             </div>
             <div className="flex items-start gap-2">
               <span className="text-[#113768] mt-0.5">-</span>
-              <span>Pan, zoom, bulk select and move</span>
+              <span>Pan, zoom, bulk select and move on both editors</span>
             </div>
             <div className="flex items-start gap-2">
               <span className="text-[#113768] mt-0.5">-</span>
@@ -247,53 +247,21 @@ export default function HomePage() {
             </div>
             <div className="flex items-start gap-2">
               <span className="text-[#113768] mt-0.5">-</span>
-              <span>Undo/redo</span>
+              <span>Undo/redo with full history</span>
             </div>
             <div className="flex items-start gap-2">
               <span className="text-[#113768] mt-0.5">-</span>
               <span>No account required, start designing immediately</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="text-[#113768] mt-0.5">-</span>
+              <span>Completely free, no ads, no paywalls</span>
             </div>
           </div>
         </div>
 
         </>)}
 
-        {/* Account benefits — only show if not logged in */}
-        {!user && (
-          <div className="mb-10 bg-[#113768]/5 border border-[#113768]/15 rounded-lg p-5">
-            <h2 className="text-lg font-semibold text-[#113768] mb-2">Why Create an Account?</h2>
-            <p className="text-sm text-neutral-600 mb-3">
-              You can use this editor without an account without restrictions. But creating one takes seconds and gives you:
-            </p>
-            <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm text-neutral-700 mb-4">
-              <div className="flex items-start gap-2">
-                <span className="text-[#113768] mt-0.5">-</span>
-                <span>All your projects saved in one place</span>
-              </div>
-              <div className="flex items-start gap-2">
-                <span className="text-[#113768] mt-0.5">-</span>
-                <span>Access your work from any device</span>
-              </div>
-              <div className="flex items-start gap-2">
-                <span className="text-[#113768] mt-0.5">-</span>
-                <span>Shareable edit and view-only links</span>
-              </div>
-              <div className="flex items-start gap-2">
-                <span className="text-[#113768] mt-0.5">-</span>
-                <span>Fork other people's shared projects</span>
-              </div>
-            </div>
-            <p className="text-xs text-neutral-500">
-              No email required, just pick a username and password. Doesnt cost any money ever.
-            </p>
-            <button
-              onClick={() => setShowAuth("register")}
-              className="mt-3 bg-[#113768] text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-[#0d2a50] transition-colors"
-            >
-              Create Free Account
-            </button>
-          </div>
-        )}
 
         {/* Account settings */}
         {user && (

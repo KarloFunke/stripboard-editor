@@ -7,6 +7,7 @@ interface Props {
   wire: SchematicWire;
   color?: string;
   isSelected?: boolean;
+  highlighted?: boolean;
   onMouseDown?: (e: React.MouseEvent) => void;
 }
 
@@ -33,13 +34,21 @@ export function getWirePoints(wire: SchematicWire): { x: number; y: number }[] {
   return [wire.start, bend, wire.end];
 }
 
-export default function SchematicWireLine({ wire, color, isSelected, onMouseDown }: Props) {
+export default function SchematicWireLine({ wire, color, isSelected, highlighted, onMouseDown }: Props) {
   const points = getWirePoints(wire);
-  const strokeWidth = isSelected ? 2.5 : 1.5;
+  const strokeWidth = isSelected ? 2.5 : highlighted ? 2 : 1.5;
   const strokeColor = isSelected ? "#113768" : (color ?? "#666");
+  const filterId = `wire-glow-${wire.id}`;
 
   return (
     <g style={{ cursor: "pointer" }} onMouseDown={onMouseDown}>
+      {highlighted && !isSelected && (
+        <defs>
+          <filter id={filterId} x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur in="SourceGraphic" stdDeviation="8" />
+          </filter>
+        </defs>
+      )}
       {/* Hit areas */}
       {points.length === 2 ? (
         <line
@@ -60,6 +69,33 @@ export default function SchematicWireLine({ wire, color, isSelected, onMouseDown
             stroke="transparent" strokeWidth={10}
           />
         </>
+      )}
+
+      {/* Glow effect for highlighted wires */}
+      {highlighted && !isSelected && (
+        points.length === 2 ? (
+          <line
+            x1={points[0].x} y1={points[0].y}
+            x2={points[1].x} y2={points[1].y}
+            stroke={strokeColor} strokeWidth={6} strokeLinecap="round"
+            filter={`url(#${filterId})`} opacity={0.7}
+          />
+        ) : (
+          <>
+            <line
+              x1={points[0].x} y1={points[0].y}
+              x2={points[1].x} y2={points[1].y}
+              stroke={strokeColor} strokeWidth={4} strokeLinecap="round"
+              filter={`url(#${filterId})`} opacity={0.5}
+            />
+            <line
+              x1={points[1].x} y1={points[1].y}
+              x2={points[2].x} y2={points[2].y}
+              stroke={strokeColor} strokeWidth={4} strokeLinecap="round"
+              filter={`url(#${filterId})`} opacity={0.5}
+            />
+          </>
+        )
       )}
 
       {/* Visible wire */}
