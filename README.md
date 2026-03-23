@@ -2,7 +2,7 @@
 
 A web-based stripboard layout editor with a built-in schematic editor. Draw schematics with standard component symbols, wire up nets, and place components on a virtual stripboard with live strip colouring and conflict detection.
 
-**Live at [stripboard-editor.com](https://stripboard-editor.com)**
+**Live at [stripboard-editor.com](https://stripboard-editor.com?utm_source=github)**
 
 ![Stripboard Editor](src/frontend/public/demo-circuit.png)
 

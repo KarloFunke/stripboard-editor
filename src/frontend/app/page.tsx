@@ -528,7 +528,10 @@ export default function HomePage() {
             {"© " + new Date().getFullYear() + " "}
             <a href="https://karl-funke.com?utm_source=stripboard-editor" className="text-neutral-500 dark:text-neutral-400 hover:text-[#113768] dark:hover:text-[#5b9bd5] transition-colors">Karl Funke</a>
           </span>
-          <a href="/privacy" className="text-neutral-500 dark:text-neutral-400 hover:text-[#113768] dark:hover:text-[#5b9bd5] transition-colors">Privacy Policy</a>
+          <div className="flex items-center gap-3">
+            <a href="https://github.com/KarloFunke/stripboard-editor" target="_blank" rel="noopener noreferrer" className="text-neutral-500 dark:text-neutral-400 hover:text-[#113768] dark:hover:text-[#5b9bd5] transition-colors">GitHub</a>
+            <a href="/privacy" className="text-neutral-500 dark:text-neutral-400 hover:text-[#113768] dark:hover:text-[#5b9bd5] transition-colors">Privacy Policy</a>
+          </div>
         </div>
       </div>
     </div>
