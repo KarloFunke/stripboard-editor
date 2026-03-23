@@ -1,0 +1,59 @@
+"""
+Proof-of-Work challenge system using database storage.
+
+Flow:
+1. Client requests GET /api/pow/challenge/ → { challenge, difficulty }
+2. Client finds nonce where SHA256(challenge + nonce) starts with `difficulty` zero hex chars
+3. Client sends { pow_challenge, pow_nonce } alongside the protected request
+4. Server verifies the solution and deletes the challenge (one-time use)
+
+Difficulty 4 = ~65K hashes ≈ 50-200ms on a modern browser.
+"""
+
+import hashlib
+import secrets
+
+from django.utils import timezone
+from datetime import timedelta
+
+CHALLENGE_TTL = timedelta(minutes=5)
+DIFFICULTY = 4  # number of leading zero hex chars required (~65K hashes ≈ 50-200ms)
+
+
+def create_challenge() -> str:
+    """Generate a new PoW challenge and store it in the database."""
+    from .models import PowChallenge
+
+    # Clean up expired challenges opportunistically
+    PowChallenge.objects.filter(expires_at__lt=timezone.now()).delete()
+
+    challenge = secrets.token_hex(16)
+    PowChallenge.objects.create(
+        challenge=challenge,
+        expires_at=timezone.now() + CHALLENGE_TTL,
+    )
+    return challenge
+
+
+def verify_and_consume(challenge: str, nonce: str) -> bool:
+    """
+    Verify a PoW solution and consume the challenge (one-time use).
+    Returns True if valid, False otherwise.
+    """
+    if not challenge or not nonce:
+        return False
+
+    # Verify the hash BEFORE consuming the challenge
+    digest = hashlib.sha256((challenge + nonce).encode()).hexdigest()
+    if digest[:DIFFICULTY] != "0" * DIFFICULTY:
+        return False  # invalid solution, challenge stays available for retry
+
+    from .models import PowChallenge
+
+    # Atomically consume the challenge (one-time use)
+    deleted_count, _ = PowChallenge.objects.filter(
+        challenge=challenge,
+        expires_at__gt=timezone.now(),
+    ).delete()
+
+    return deleted_count > 0  # False if unknown, already consumed, or expired

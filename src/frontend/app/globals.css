@@ -1,14 +1,68 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   color-scheme: light;
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #fafafa;
+  --foreground: #1a1a1a;
+  --accent: #113768;
+  --accent-light: #5b9bd5;
+
+  /* SVG semantic colors */
+  --board-bg: white;
+  --hole-fill: white;
+  --hole-stroke: #d4d4d4;
+  --grid-dot: #c4c4c4;
+  --strip-color: #D4A853;
+  --strip-conflict: #dc2626;
+  --component-stroke: #a3a3a3;
+  --component-fill: rgba(255, 255, 255, 0.85);
+  --component-text: #171717;
+  --component-subtext: #525252;
+  --pin-text: #666;
+  --selection-fill: rgba(17, 55, 104, 0.08);
+  --selection-stroke: #113768;
+  --label-text: #737373;
+  --symbol-stroke: #333;
+  --symbol-stroke-selected: #113768;
+  --cut-stroke: #dc2626;
+  --wire-default: #666;
+  --junction-dot: #666;
+}
+
+:root.dark {
+  color-scheme: dark;
+  --background: #121212;
+  --foreground: #e5e5e5;
+  --accent: #113768;
+  --accent-light: #5b9bd5;
+
+  --board-bg: #1a1a1a;
+  --hole-fill: #252525;
+  --hole-stroke: #555;
+  --grid-dot: #3a3a3a;
+  --strip-color: #c9a43a;
+  --strip-conflict: #ef4444;
+  --component-stroke: #777;
+  --component-fill: rgba(35, 35, 35, 0.9);
+  --component-text: #e5e5e5;
+  --component-subtext: #aaa;
+  --pin-text: #999;
+  --selection-fill: rgba(91, 155, 213, 0.12);
+  --selection-stroke: #5b9bd5;
+  --label-text: #999;
+  --symbol-stroke: #ccc;
+  --symbol-stroke-selected: #5b9bd5;
+  --cut-stroke: #ef4444;
+  --wire-default: #999;
+  --junction-dot: #999;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-accent: var(--accent);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
@@ -16,5 +70,5 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
 }

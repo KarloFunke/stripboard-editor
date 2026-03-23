@@ -3,13 +3,14 @@ import { ComponentDef, Component, Cut, BodyCell } from "@/types";
 // Grid constants
 export const HOLE_SPACING = 30;
 export const HOLE_RADIUS = 4.5;
-export const BOARD_PADDING = 40;
+export const BOARD_PADDING = 60;
 export const STRIP_HEIGHT = 6;
 export const LABEL_FONT_SIZE = 11;
 
-// Copper strip color
+// Copper strip color — default values kept for JS logic (segment coloring).
+// CSS variables --strip-color and --strip-conflict-color are used in SVG rendering.
 export const STRIP_COLOR = "#D4A853";
-export const STRIP_CONFLICT_COLOR = "#ef4444";
+export const STRIP_CONFLICT_COLOR = "#dc2626";
 
 /** Convert grid coordinates to SVG pixel coordinates */
 export function holeCenter(row: number, col: number): { x: number; y: number } {
@@ -126,6 +127,50 @@ export function getRotatedBodyCells(
       col: boardPos.col + rotated.c,
     };
   });
+}
+
+/** Get pin positions for any component — handles both flexible and fixed */
+export function getComponentPinPositions(
+  comp: Component,
+  def: ComponentDef,
+): PinPosition[] {
+  if (!comp.boardPos) return [];
+  if (def.flexible) {
+    return getFlexiblePinPositions(comp, def);
+  }
+  return getRotatedPinPositions(def, comp.boardPos, comp.rotation);
+}
+
+/** Get pin positions for a flexible 2-pin component */
+export function getFlexiblePinPositions(
+  comp: Component,
+  def: ComponentDef,
+): PinPosition[] {
+  if (!comp.boardPos) return [];
+  const pin1Pos = comp.boardPos;
+  const pin2Pos = comp.flexibleEndPos ?? {
+    row: pin1Pos.row + (def.pins[1]?.offsetRow ?? 1),
+    col: pin1Pos.col + (def.pins[1]?.offsetCol ?? 0),
+  };
+  return [
+    { pinId: def.pins[0]?.id ?? "1", row: pin1Pos.row, col: pin1Pos.col },
+    { pinId: def.pins[1]?.id ?? "2", row: pin2Pos.row, col: pin2Pos.col },
+  ];
+}
+
+/** Get bounding box for a flexible 2-pin component */
+export function getFlexibleBounds(
+  comp: Component,
+  def: ComponentDef,
+): { minRow: number; minCol: number; maxRow: number; maxCol: number } {
+  const pins = getFlexiblePinPositions(comp, def);
+  if (pins.length < 2) return { minRow: 0, minCol: 0, maxRow: 0, maxCol: 0 };
+  return {
+    minRow: Math.min(pins[0].row, pins[1].row),
+    minCol: Math.min(pins[0].col, pins[1].col),
+    maxRow: Math.max(pins[0].row, pins[1].row),
+    maxCol: Math.max(pins[0].col, pins[1].col),
+  };
 }
 
 /** Get the bounding box of a component on the board (pins + body cells) */

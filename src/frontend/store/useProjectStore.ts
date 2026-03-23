@@ -7,41 +7,23 @@ import {
   NetAssignment,
   BoardPosition,
   Cut,
-  Jumper,
   ComponentDef,
-  PinDef,
-  BodyCell,
   Wire,
+  SchematicWire,
 } from "@/types";
 import { DEFAULT_COMPONENTS } from "@/data/defaultComponents";
-
-export const AUTO_NET_ID = "__auto_new__";
+import { resolveComponentDef } from "@/utils/resolveComponentDef";
+import { getComponentBounds } from "@/components/stripboard/boardLayout";
+import { recalculateNets } from "@/components/schematic/netInference";
+import { getRotatedPinPositions } from "@/components/schematic/SymbolRenderer";
+import { pointKey } from "@/utils/schematicConstants";
+import { createFootprintSymbol, registerCustomSymbol } from "@/data/symbolDefs";
 
 function generateId(): string {
   return crypto.randomUUID();
 }
 
-const TAG_PREFIXES: Record<string, string> = {
-  Resistor: "R",
-  Capacitor: "C",
-  Diode: "D",
-  LED: "D",
-  Connector: "J",
-  IC: "U",
-  Regulator: "U",
-  Relay: "K",
-  Crystal: "Y",
-};
-
-function prefixForTag(tag: string): string {
-  if (TAG_PREFIXES[tag]) return TAG_PREFIXES[tag];
-  // For custom tags, use first letter uppercase, fallback to X
-  const first = tag.charAt(0).toUpperCase();
-  return /[A-Z]/.test(first) ? first : "X";
-}
-
-function nextLabel(components: Component[], tag: string): string {
-  const prefix = prefixForTag(tag);
+function nextLabel(components: Component[], prefix: string): string {
   const existing = components
     .filter((c) => c.label.startsWith(prefix))
     .map((c) => {
@@ -55,6 +37,7 @@ function nextLabel(components: Component[], tag: string): string {
 interface ProjectActions {
   // Component definitions
   addComponentDef: (def: ComponentDef) => void;
+  removeComponentDef: (defId: string) => void;
   updateComponentDef: (
     defId: string,
     updates: Partial<Pick<ComponentDef, "width" | "height" | "pins" | "bodyCells">>
@@ -63,122 +46,221 @@ interface ProjectActions {
   // Components
   addComponent: (defId: string, schematicPos: { x: number; y: number }) => void;
   removeComponent: (id: string) => void;
+  updateLabelOffset: (id: string, offset: { x: number; y: number }) => void;
+  updatePinLabelOffset: (id: string, pinId: string, offset: { x: number; y: number }) => void;
+  updateBoardLabelOffset: (id: string, offset: { x: number; y: number }) => void;
   updateLabel: (id: string, label: string) => void;
-  updateTag: (id: string, tag: string) => void;
   updatePinName: (componentId: string, pinId: string, newName: string) => void;
   updateComponentFootprint: (componentId: string, override: FootprintOverride) => void;
   updateSchematicPos: (id: string, pos: { x: number; y: number }) => void;
+  rotateSchematicComponent: (id: string) => void;
+  mirrorSchematicComponent: (id: string) => void;
   placeOnBoard: (id: string, pos: { row: number; col: number }) => void;
-  moveComponentsOnBoard: (ids: string[], deltaRow: number, deltaCol: number) => void;
+  moveComponentsOnBoard: (ids: string[], deltaRow: number, deltaCol: number, wireIds?: string[], cutPositions?: { row: number; col: number }[]) => void;
   removeFromBoard: (id: string) => void;
+  setFlexibleEndPos: (id: string, pos: { row: number; col: number }) => void;
   rotateComponent: (id: string) => void;
 
-  // Nets
-  addNet: (name: string, color: string) => void;
+  // Schematic wires
+  addSchematicWire: (start: { x: number; y: number }, end: { x: number; y: number }) => void;
+  removeSchematicWire: (id: string) => void;
+  splitSchematicWire: (wireId: string, splitPoint: { x: number; y: number }) => void;
+
+  // Nets (kept for rename/recolor, but auto-managed by wire system)
   updateNet: (id: string, updates: Partial<Pick<Net, "name" | "color">>) => void;
   removeNet: (id: string) => void;
-
-  // Net assignments
-  assignNet: (netId: string, componentId: string, pinId: string) => void;
-  unassignNet: (componentId: string, pinId: string) => void;
 
   // Board
   placeCut: (cut: Cut) => void;
   removeCut: (cut: Cut) => void;
-  addJumper: (from: BoardPosition, to: BoardPosition, netId: string) => void;
-  removeJumper: (from: BoardPosition, to: BoardPosition) => void;
-
-  // Wires
+  // Board wires
   setBoardSize: (rows: number, cols: number) => void;
   addWire: (from: BoardPosition, to: BoardPosition) => void;
   removeWire: (wireId: string) => void;
 
   // UI state
-  setActiveNet: (netId: string | null) => void;
-  togglePinNet: (componentId: string, pinId: string) => void;
-  setEditingFootprintComponent: (componentId: string | null) => void;
+
   startWirePlacement: () => void;
   cancelWirePlacement: () => void;
   setWirePlacementFrom: (pos: BoardPosition) => void;
-  setShowNetLines: (show: boolean) => void;
-  setActiveTag: (tag: string | null) => void;
-  addCustomTag: (tag: string) => void;
-  removeCustomTag: (tag: string) => void;
+  setTrayDragComponentId: (id: string | null) => void;
+  setHighlightedNetId: (id: string | null) => void;
+  toggleSchematicWireDrawMode: () => void;
+  setSchematicWireDrawing: (from: { x: number; y: number } | null) => void;
+  captureSchematicDragBindings: (componentId: string) => void;
+  clearSchematicDragBindings: () => void;
+
+  // Project persistence
+  setProjectName: (name: string) => void;
+  exportProject: () => Project;
+  loadProject: (data: Project) => void;
+  resetProject: () => void;
+
+  // Undo/redo
+  pushSnapshot: () => void;
+  undo: () => void;
+  redo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
 }
 
 interface UIState {
-  activeNetId: string | null;
-  activeTag: string | null;
-  editingFootprintComponentId: string | null;
+
   wirePlacementMode: boolean;
   wirePlacementFrom: BoardPosition | null;
-  showNetLines: boolean;
+  trayDragComponentId: string | null;
+  highlightedNetId: string | null;
+  schematicWireDrawMode: boolean;
+  schematicWireDrawingFrom: { x: number; y: number } | null;
+  schematicWireDirection: "horizontal-first" | "vertical-first" | null; // locked on first significant mouse move
+  // Captured at drag start: which wire endpoints to move with the dragged component
+  _dragWireBindings: { wireId: string; endpoint: "start" | "end" }[] | null;
 }
 
-type ProjectStore = Project & UIState & ProjectActions;
-
-const AUTO_NET_COLORS = [
-  "#22c55e", "#3b82f6", "#8b5cf6", "#ec4899",
-  "#06b6d4", "#f97316", "#eab308", "#14b8a6",
-  "#f43f5e", "#6366f1", "#84cc16", "#a855f7",
-];
-
-function randomAutoNetColor(nets: Net[]): string {
-  const usedColors = new Set(nets.map((n) => n.color));
-  const available = AUTO_NET_COLORS.filter((c) => !usedColors.has(c));
-  if (available.length > 0) {
-    return available[Math.floor(Math.random() * available.length)];
-  }
-  // Fallback: random hue
-  const hue = Math.floor(Math.random() * 360);
-  return `hsl(${hue}, 70%, 50%)`;
+interface HistoryState {
+  _history: Project[];
+  _redoStack: Project[];
+  isDirty: boolean;
+  markClean: () => void;
 }
 
-function nextNetName(nets: Net[]): string {
-  let num = 1;
-  while (nets.some((n) => n.name === `net${num}`)) num++;
-  return `net${num}`;
-}
+type ProjectStore = Project & UIState & ProjectActions & HistoryState;
 
 const initialProject: Project = {
-  id: generateId(),
   name: "Untitled Project",
   componentDefs: [...DEFAULT_COMPONENTS],
   components: [],
-  nets: [
-    { id: generateId(), name: "VCC", color: "#ef4444" },
-    { id: generateId(), name: "GND", color: "#171717" },
-  ],
+  nets: [],
   netAssignments: [],
+  schematicWires: [],
   board: {
     rows: 20,
     cols: 20,
     cuts: [],
-    jumpers: [],
     wires: [],
   },
-  customTags: [],
 };
 
-export const useProjectStore = create<ProjectStore>((set) => ({
+const MAX_HISTORY = 80;
+
+function snapshotProject(s: Project): Project {
+  return JSON.parse(JSON.stringify({
+    name: s.name,
+    componentDefs: s.componentDefs,
+    components: s.components,
+    nets: s.nets,
+    netAssignments: s.netAssignments,
+    schematicWires: s.schematicWires,
+    board: s.board,
+  }));
+}
+
+function restoreProject(snapshot: Project): Partial<ProjectStore> {
+  return {
+    name: snapshot.name,
+    componentDefs: snapshot.componentDefs,
+    components: snapshot.components,
+    nets: snapshot.nets,
+    netAssignments: snapshot.netAssignments,
+    schematicWires: snapshot.schematicWires,
+    board: snapshot.board,
+  };
+}
+
+/**
+ * Shared helper: transform a schematic component (rotate, mirror, etc.)
+ * and move connected wire endpoints to follow the pin position changes.
+ */
+function transformSchematicComponent(
+  s: ProjectStore,
+  id: string,
+  getUpdates: (comp: Component) => Partial<Component>,
+): Partial<ProjectStore> {
+  const comp = s.components.find((c) => c.id === id);
+  if (!comp) return s;
+  const def = resolveComponentDef(comp, s.componentDefs);
+  if (!def) return s;
+
+  const oldRotation = comp.schematicRotation ?? 0;
+  const oldMirrored = comp.schematicMirrored ?? false;
+  const updates = getUpdates(comp);
+  const newRotation = (updates.schematicRotation ?? oldRotation) as 0 | 90 | 180 | 270;
+  const newMirrored = updates.schematicMirrored ?? oldMirrored;
+
+  // Compute pin position deltas
+  const oldPins = getRotatedPinPositions(def.symbol, oldRotation, oldMirrored);
+  const newPins = getRotatedPinPositions(def.symbol, newRotation, newMirrored);
+  const pinMoves = new Map<string, { dx: number; dy: number }>();
+  for (const oldPin of oldPins) {
+    const newPin = newPins.find((p) => p.pinId === oldPin.pinId);
+    if (newPin) {
+      pinMoves.set(
+        pointKey(comp.schematicPos.x + oldPin.x, comp.schematicPos.y + oldPin.y),
+        { dx: newPin.x - oldPin.x, dy: newPin.y - oldPin.y },
+      );
+    }
+  }
+
+  const newComponents = s.components.map((c) =>
+    c.id === id ? { ...c, ...updates } : c
+  );
+
+  const newWires = s.schematicWires.map((w) => {
+    const startMove = pinMoves.get(pointKey(w.start.x, w.start.y));
+    const endMove = pinMoves.get(pointKey(w.end.x, w.end.y));
+    if (!startMove && !endMove) return w;
+    return {
+      ...w,
+      start: startMove ? { x: w.start.x + startMove.dx, y: w.start.y + startMove.dy } : w.start,
+      end: endMove ? { x: w.end.x + endMove.dx, y: w.end.y + endMove.dy } : w.end,
+    };
+  });
+
+  return { components: newComponents, schematicWires: newWires };
+}
+
+export const useProjectStore = create<ProjectStore>((set, get) => ({
   ...initialProject,
-  activeNetId: null,
-  activeTag: null,
-  editingFootprintComponentId: null,
+
   wirePlacementMode: false,
   wirePlacementFrom: null,
-  showNetLines: true,
+  trayDragComponentId: null,
+  highlightedNetId: null,
+  schematicWireDrawMode: false,
+  schematicWireDrawingFrom: null,
+  schematicWireDirection: null,
+  _dragWireBindings: null,
+  _history: [],
+  _redoStack: [],
+  canUndo: false,
+  canRedo: false,
+  isDirty: false,
+  markClean: () => set({ isDirty: false }),
 
-  addComponentDef: (def) =>
-    set((s) => ({ componentDefs: [...s.componentDefs, def] })),
+  addComponentDef: (def) => {
+    get().pushSnapshot();
+    set((s) => ({ componentDefs: [...s.componentDefs, def] }));
+  },
 
-  updateComponentDef: (defId, updates) =>
+  removeComponentDef: (defId) => {
+    get().pushSnapshot();
+    set((s) => ({
+      componentDefs: s.componentDefs.filter((d) => d.id !== defId),
+      // Remove all instances of this component and their net assignments/wires
+      components: s.components.filter((c) => c.defId !== defId),
+      netAssignments: s.netAssignments.filter((a) =>
+        s.components.some((c) => c.defId !== defId && c.id === a.componentId) ||
+        !s.components.some((c) => c.id === a.componentId)
+      ),
+    }));
+  },
+
+  updateComponentDef: (defId, updates) => {
+    get().pushSnapshot();
     set((s) => {
       const newDefs = s.componentDefs.map((d) =>
         d.id === defId ? { ...d, ...updates } : d
       );
-
-      // Clean up orphaned net assignments if pins changed
       let newAssignments = s.netAssignments;
       if (updates.pins) {
         const newPinIds = new Set(updates.pins.map((p) => p.id));
@@ -191,48 +273,72 @@ export const useProjectStore = create<ProjectStore>((set) => ({
             newPinIds.has(a.pinId)
         );
       }
-
       return { componentDefs: newDefs, netAssignments: newAssignments };
-    }),
+    });
+  },
 
-  addComponent: (defId, schematicPos) =>
+  addComponent: (defId, schematicPos) => {
+    get().pushSnapshot();
     set((s) => {
-      const tag = s.activeTag ?? "";
+      const def = s.componentDefs.find((d) => d.id === defId);
+      const prefix = def?.defaultLabelPrefix ?? "X";
       return {
         components: [
           ...s.components,
           {
             id: generateId(),
             defId,
-            label: nextLabel(s.components, tag || "X"),
-            tag,
+            label: nextLabel(s.components, prefix),
             schematicPos,
+            schematicRotation: 0,
             boardPos: null,
             rotation: 0,
           },
         ],
       };
-    }),
+    });
+  },
 
-  updateLabel: (id, label) =>
+  updateLabel: (id, label) => {
+    get().pushSnapshot();
     set((s) => ({
       components: s.components.map((c) =>
         c.id === id ? { ...c, label } : c
       ),
-    })),
+    }));
+  },
 
-  updateTag: (id, tag) =>
+  // No snapshot — called per-pixel during drag
+  updateLabelOffset: (id, offset) =>
     set((s) => ({
       components: s.components.map((c) =>
-        c.id === id ? { ...c, tag } : c
+        c.id === id ? { ...c, labelOffset: offset } : c
       ),
     })),
 
-  updatePinName: (componentId, pinId, newName) =>
+  // No snapshot — called per-pixel during drag
+  updatePinLabelOffset: (id, pinId, offset) =>
+    set((s) => ({
+      components: s.components.map((c) =>
+        c.id === id
+          ? { ...c, pinLabelOffsets: { ...c.pinLabelOffsets, [pinId]: offset } }
+          : c
+      ),
+    })),
+
+  // No snapshot — called per-pixel during drag
+  updateBoardLabelOffset: (id, offset) =>
+    set((s) => ({
+      components: s.components.map((c) =>
+        c.id === id ? { ...c, boardLabelOffset: offset } : c
+      ),
+    })),
+
+  updatePinName: (componentId, pinId, newName) => {
+    get().pushSnapshot();
     set((s) => ({
       components: s.components.map((c) => {
         if (c.id !== componentId) return c;
-        // If component has a footprint override, update pin name there
         if (c.footprintOverride) {
           return {
             ...c,
@@ -244,7 +350,6 @@ export const useProjectStore = create<ProjectStore>((set) => ({
             },
           };
         }
-        // Otherwise, create an override from the base def with the renamed pin
         const baseDef = s.componentDefs.find((d) => d.id === c.defId);
         if (!baseDef) return c;
         return {
@@ -259,44 +364,105 @@ export const useProjectStore = create<ProjectStore>((set) => ({
           },
         };
       }),
-    })),
+    }));
+  },
 
-  updateComponentFootprint: (componentId, override) =>
+  updateComponentFootprint: (componentId, override) => {
+    get().pushSnapshot();
     set((s) => {
       const newComponents = s.components.map((c) =>
         c.id === componentId ? { ...c, footprintOverride: override } : c
       );
-      // Clean up orphaned net assignments for this component
       const newPinIds = new Set(override.pins.map((p) => p.id));
       const newAssignments = s.netAssignments.filter(
         (a) => a.componentId !== componentId || newPinIds.has(a.pinId)
       );
       return { components: newComponents, netAssignments: newAssignments };
-    }),
+    });
+  },
 
-  removeComponent: (id) =>
+  removeComponent: (id) => {
+    get().pushSnapshot();
     set((s) => ({
       components: s.components.filter((c) => c.id !== id),
       netAssignments: s.netAssignments.filter((a) => a.componentId !== id),
-    })),
+    }));
+    // Recalculate nets — wires are positional so they stay, but pin assignments change
+    const s = get();
+    const result = recalculateNets(s.schematicWires, s.nets, s.netAssignments, s.components, s.componentDefs);
+    set({ nets: result.nets, netAssignments: result.netAssignments });
+  },
 
+  // No auto-snapshot: called per-pixel during drag.
+  // Moves wire endpoints that were captured at drag start via captureSchematicDragBindings.
   updateSchematicPos: (id, pos) =>
-    set((s) => ({
-      components: s.components.map((c) =>
+    set((s) => {
+      const comp = s.components.find((c) => c.id === id);
+      if (!comp) return s;
+
+      const dx = pos.x - comp.schematicPos.x;
+      const dy = pos.y - comp.schematicPos.y;
+
+      const newComponents = s.components.map((c) =>
         c.id === id ? { ...c, schematicPos: pos } : c
-      ),
-    })),
+      );
 
-  placeOnBoard: (id, pos) =>
-    set((s) => ({
-      components: s.components.map((c) =>
-        c.id === id ? { ...c, boardPos: pos } : c
-      ),
-    })),
+      // Move wire endpoints using pre-captured bindings
+      let newWires = s.schematicWires;
+      if (s._dragWireBindings && s._dragWireBindings.length > 0 && (dx !== 0 || dy !== 0)) {
+        const bindingSet = new Set(s._dragWireBindings.map((b) => `${b.wireId}:${b.endpoint}`));
+        newWires = s.schematicWires.map((w) => {
+          const moveStart = bindingSet.has(`${w.id}:start`);
+          const moveEnd = bindingSet.has(`${w.id}:end`);
+          if (!moveStart && !moveEnd) return w;
+          return {
+            ...w,
+            start: moveStart ? { x: w.start.x + dx, y: w.start.y + dy } : w.start,
+            end: moveEnd ? { x: w.end.x + dx, y: w.end.y + dy } : w.end,
+          };
+        });
+      }
 
-  moveComponentsOnBoard: (ids, deltaRow, deltaCol) =>
+      return { components: newComponents, schematicWires: newWires };
+    }),
+
+  rotateSchematicComponent: (id) => {
+    get().pushSnapshot();
+    set((s) => transformSchematicComponent(s, id, (comp) => {
+      const newRotation = (((comp.schematicRotation ?? 0) + 90) % 360) as Component["schematicRotation"];
+      return { schematicRotation: newRotation };
+    }));
+  },
+
+  mirrorSchematicComponent: (id) => {
+    get().pushSnapshot();
+    set((s) => transformSchematicComponent(s, id, (comp) => {
+      return { schematicMirrored: !(comp.schematicMirrored ?? false) };
+    }));
+  },
+
+  placeOnBoard: (id, pos) => {
+    get().pushSnapshot();
     set((s) => ({
       components: s.components.map((c) => {
+        if (c.id !== id) return c;
+        const def = resolveComponentDef(c, s.componentDefs);
+        // For flexible components, initialize flexibleEndPos on first placement
+        let flexEnd = c.flexibleEndPos;
+        if (def?.flexible && !flexEnd && def.pins.length >= 2) {
+          flexEnd = {
+            row: pos.row + def.pins[1].offsetRow,
+            col: pos.col + def.pins[1].offsetCol,
+          };
+        }
+        return { ...c, boardPos: pos, flexibleEndPos: flexEnd };
+      }),
+    }));
+  },
+
+  moveComponentsOnBoard: (ids, deltaRow, deltaCol, wireIds, cutPositions) =>
+    set((s) => {
+      const newComponents = s.components.map((c) => {
         if (!ids.includes(c.id) || !c.boardPos) return c;
         return {
           ...c,
@@ -304,70 +470,222 @@ export const useProjectStore = create<ProjectStore>((set) => ({
             row: c.boardPos.row + deltaRow,
             col: c.boardPos.col + deltaCol,
           },
+          flexibleEndPos: c.flexibleEndPos ? {
+            row: c.flexibleEndPos.row + deltaRow,
+            col: c.flexibleEndPos.col + deltaCol,
+          } : undefined,
         };
-      }),
-    })),
+      });
 
-  removeFromBoard: (id) =>
+      let newWires = s.board.wires;
+      if (wireIds && wireIds.length > 0) {
+        newWires = newWires.map((w) => {
+          if (!wireIds.includes(w.id)) return w;
+          return {
+            ...w,
+            from: { row: w.from.row + deltaRow, col: w.from.col + deltaCol },
+            to: { row: w.to.row + deltaRow, col: w.to.col + deltaCol },
+          };
+        });
+      }
+
+      let newCuts = s.board.cuts;
+      if (cutPositions && cutPositions.length > 0) {
+        newCuts = newCuts.map((c) => {
+          const match = cutPositions.find((cp) => cp.row === c.row && cp.col === c.col);
+          if (!match) return c;
+          return { row: c.row + deltaRow, col: c.col + deltaCol };
+        });
+      }
+
+      return {
+        components: newComponents,
+        board: { ...s.board, wires: newWires, cuts: newCuts },
+      };
+    }),
+
+  removeFromBoard: (id) => {
+    get().pushSnapshot();
     set((s) => ({
       components: s.components.map((c) =>
-        c.id === id ? { ...c, boardPos: null } : c
+        c.id === id ? { ...c, boardPos: null, flexibleEndPos: undefined } : c
+      ),
+    }));
+  },
+
+  // Set pin 2 position for flexible components (no snapshot — called per-pixel during drag)
+  setFlexibleEndPos: (id, pos) =>
+    set((s) => ({
+      components: s.components.map((c) =>
+        c.id === id ? { ...c, flexibleEndPos: pos } : c
       ),
     })),
 
-  rotateComponent: (id) =>
-    set((s) => ({
-      components: s.components.map((c) =>
-        c.id === id
-          ? { ...c, rotation: ((c.rotation + 90) % 360) as Component["rotation"] }
-          : c
+  rotateComponent: (id) => {
+    const s = get();
+    const comp = s.components.find((c) => c.id === id);
+    if (!comp || !comp.boardPos) return;
+    const def = resolveComponentDef(comp, s.componentDefs);
+    if (!def) return;
+
+    // Flexible component: rotate pin positions 90° around midpoint
+    if (def.flexible && comp.boardPos) {
+      const pin1 = comp.boardPos;
+      const pin2 = comp.flexibleEndPos ?? {
+        row: pin1.row + (def.pins[1]?.offsetRow ?? 1),
+        col: pin1.col + (def.pins[1]?.offsetCol ?? 0),
+      };
+      // Midpoint
+      const midRow = (pin1.row + pin2.row) / 2;
+      const midCol = (pin1.col + pin2.col) / 2;
+      // Rotate 90° CW around midpoint: (r,c) → (midR + (c-midC), midC - (r-midR))
+      const new1Row = Math.round(midRow + (pin1.col - midCol));
+      const new1Col = Math.round(midCol - (pin1.row - midRow));
+      const new2Row = Math.round(midRow + (pin2.col - midCol));
+      const new2Col = Math.round(midCol - (pin2.row - midRow));
+      // Bounds check
+      if (new1Row < 0 || new1Col < 0 || new2Row < 0 || new2Col < 0 ||
+          new1Row >= s.board.rows || new1Col >= s.board.cols ||
+          new2Row >= s.board.rows || new2Col >= s.board.cols) {
+        return;
+      }
+      get().pushSnapshot();
+      set((s2) => ({
+        components: s2.components.map((c) =>
+          c.id === id ? { ...c, boardPos: { row: new1Row, col: new1Col }, flexibleEndPos: { row: new2Row, col: new2Col } } : c
+        ),
+      }));
+      return;
+    }
+
+    // Fixed component: standard rotation
+    const newRotation = ((comp.rotation + 90) % 360) as Component["rotation"];
+    const bounds = getComponentBounds(def, comp.boardPos, newRotation);
+    if (bounds.minRow < 0 || bounds.minCol < 0 ||
+        bounds.maxRow >= s.board.rows || bounds.maxCol >= s.board.cols) {
+      return;
+    }
+    get().pushSnapshot();
+    set((s2) => ({
+      components: s2.components.map((c) =>
+        c.id === id ? { ...c, rotation: newRotation } : c
       ),
-    })),
+    }));
+  },
 
-  addNet: (name, color) =>
-    set((s) => ({
-      nets: [...s.nets, { id: generateId(), name, color }],
-    })),
+  // ── Schematic wires ──────────────────────────────────
 
-  updateNet: (id, updates) =>
+  addSchematicWire: (start, end) => {
+    // Prevent zero-length wires
+    if (Math.round(start.x) === Math.round(end.x) && Math.round(start.y) === Math.round(end.y)) return;
+    get().pushSnapshot();
+    const s = get();
+    // Use direction from mouse movement if available, otherwise fallback to distance-based
+    const dx = Math.abs(end.x - start.x);
+    const dy = Math.abs(end.y - start.y);
+    const routeDirection = s.schematicWireDirection ?? (dx >= dy ? "horizontal-first" as const : "vertical-first" as const);
+    const newWire: SchematicWire = { id: generateId(), start, end, routeDirection };
+    const newWires = [...s.schematicWires, newWire];
+    const result = recalculateNets(newWires, s.nets, s.netAssignments, s.components, s.componentDefs);
+    set({
+      schematicWires: newWires,
+      nets: result.nets,
+      netAssignments: result.netAssignments,
+    });
+  },
+
+  removeSchematicWire: (id) => {
+    get().pushSnapshot();
+    const s = get();
+    const newWires = s.schematicWires.filter((w) => w.id !== id);
+    const result = recalculateNets(newWires, s.nets, s.netAssignments, s.components, s.componentDefs);
+    set({
+      schematicWires: newWires,
+      nets: result.nets,
+      netAssignments: result.netAssignments,
+    });
+  },
+
+  // Split a wire at a grid point into two wires meeting at that point
+  splitSchematicWire: (wireId, splitPoint) => {
+    get().pushSnapshot();
+    const s = get();
+    const wire = s.schematicWires.find((w) => w.id === wireId);
+    if (!wire) return;
+
+    // Don't split if the split point is at the start or end (would create zero-length wire)
+    const atStart = Math.round(wire.start.x) === Math.round(splitPoint.x) && Math.round(wire.start.y) === Math.round(splitPoint.y);
+    const atEnd = Math.round(wire.end.x) === Math.round(splitPoint.x) && Math.round(wire.end.y) === Math.round(splitPoint.y);
+    if (atStart || atEnd) return; // no split needed
+
+    // Create two new wires: start→splitPoint and splitPoint→end
+    const wire1: SchematicWire = {
+      id: generateId(),
+      start: wire.start,
+      end: splitPoint,
+      routeDirection: wire.routeDirection,
+    };
+    const wire2: SchematicWire = {
+      id: generateId(),
+      start: splitPoint,
+      end: wire.end,
+      routeDirection: wire.routeDirection,
+    };
+
+    const newWires = [
+      ...s.schematicWires.filter((w) => w.id !== wireId),
+      wire1,
+      wire2,
+    ];
+    const result = recalculateNets(newWires, s.nets, s.netAssignments, s.components, s.componentDefs);
+    set({
+      schematicWires: newWires,
+      nets: result.nets,
+      netAssignments: result.netAssignments,
+    });
+  },
+
+  // ── Nets ─────────────────────────────────────────────
+
+  updateNet: (id, updates) => {
+    get().pushSnapshot();
     set((s) => ({
       nets: s.nets.map((n) => (n.id === id ? { ...n, ...updates } : n)),
-    })),
+    }));
+  },
 
-  removeNet: (id) =>
-    set((s) => ({
-      nets: s.nets.filter((n) => n.id !== id),
-      netAssignments: s.netAssignments.filter((a) => a.netId !== id),
-    })),
+  removeNet: (id) => {
+    get().pushSnapshot();
+    set((s) => {
+      // Remove the net and all its assignments
+      const newAssignments = s.netAssignments.filter((a) => a.netId !== id);
+      // Also remove schematic wires that connected pins of this net
+      // (We need to recalculate after removing assignments)
+      return {
+        nets: s.nets.filter((n) => n.id !== id),
+        netAssignments: newAssignments,
+      };
+    });
+  },
 
-  assignNet: (netId, componentId, pinId) =>
-    set((s) => ({
-      netAssignments: [
-        ...s.netAssignments.filter(
-          (a) => !(a.componentId === componentId && a.pinId === pinId)
-        ),
-        { netId, componentId, pinId },
-      ],
-    })),
+  // ── Board ────────────────────────────────────────────
 
-  unassignNet: (componentId, pinId) =>
-    set((s) => ({
-      netAssignments: s.netAssignments.filter(
-        (a) => !(a.componentId === componentId && a.pinId === pinId)
-      ),
-    })),
-
-  setBoardSize: (rows, cols) =>
+  setBoardSize: (rows, cols) => {
+    get().pushSnapshot();
     set((s) => ({
       board: { ...s.board, rows, cols },
-    })),
+    }));
+  },
 
-  placeCut: (cut) =>
+  placeCut: (cut) => {
+    get().pushSnapshot();
     set((s) => ({
       board: { ...s.board, cuts: [...s.board.cuts, cut] },
-    })),
+    }));
+  },
 
-  removeCut: (cut) =>
+  removeCut: (cut) => {
+    get().pushSnapshot();
     set((s) => ({
       board: {
         ...s.board,
@@ -375,33 +693,12 @@ export const useProjectStore = create<ProjectStore>((set) => ({
           (c) => !(c.row === cut.row && c.col === cut.col)
         ),
       },
-    })),
+    }));
+  },
 
-  addJumper: (from, to, netId) =>
-    set((s) => ({
-      board: {
-        ...s.board,
-        jumpers: [...s.board.jumpers, { from, to, netId }],
-      },
-    })),
 
-  removeJumper: (from, to) =>
-    set((s) => ({
-      board: {
-        ...s.board,
-        jumpers: s.board.jumpers.filter(
-          (j) =>
-            !(
-              j.from.row === from.row &&
-              j.from.col === from.col &&
-              j.to.row === to.row &&
-              j.to.col === to.col
-            )
-        ),
-      },
-    })),
-
-  addWire: (from, to) =>
+  addWire: (from, to) => {
+    get().pushSnapshot();
     set((s) => ({
       board: {
         ...s.board,
@@ -409,71 +706,22 @@ export const useProjectStore = create<ProjectStore>((set) => ({
       },
       wirePlacementMode: false,
       wirePlacementFrom: null,
-    })),
+    }));
+  },
 
-  removeWire: (wireId) =>
+  removeWire: (wireId) => {
+    get().pushSnapshot();
     set((s) => ({
       board: {
         ...s.board,
         wires: s.board.wires.filter((w) => w.id !== wireId),
       },
-    })),
+    }));
+  },
 
-  setActiveNet: (netId) => set({ activeNetId: netId }),
+  // ── UI State ─────────────────────────────────────────
 
-  togglePinNet: (componentId, pinId) =>
-    set((s) => {
-      const existing = s.netAssignments.find(
-        (a) => a.componentId === componentId && a.pinId === pinId
-      );
-      const isAutoNet = s.activeNetId === AUTO_NET_ID;
 
-      // Auto New mode: create a new net and assign pin to it
-      if (isAutoNet) {
-        if (existing) {
-          // Already assigned — unassign
-          return {
-            netAssignments: s.netAssignments.filter(
-              (a) => !(a.componentId === componentId && a.pinId === pinId)
-            ),
-          };
-        }
-        const newNetId = generateId();
-        const name = nextNetName(s.nets);
-        const color = randomAutoNetColor(s.nets);
-        return {
-          nets: [...s.nets, { id: newNetId, name, color }],
-          netAssignments: [
-            ...s.netAssignments,
-            { netId: newNetId, componentId, pinId },
-          ],
-          activeNetId: newNetId,
-        };
-      }
-
-      // Normal paint mode: toggle assignment to active net
-      if (s.activeNetId) {
-        if (existing && existing.netId === s.activeNetId) {
-          return {
-            netAssignments: s.netAssignments.filter(
-              (a) => !(a.componentId === componentId && a.pinId === pinId)
-            ),
-          };
-        }
-        return {
-          netAssignments: [
-            ...s.netAssignments.filter(
-              (a) => !(a.componentId === componentId && a.pinId === pinId)
-            ),
-            { netId: s.activeNetId, componentId, pinId },
-          ],
-        };
-      }
-
-      return s;
-    }),
-
-  setEditingFootprintComponent: (componentId) => set({ editingFootprintComponentId: componentId }),
 
   startWirePlacement: () =>
     set({ wirePlacementMode: true, wirePlacementFrom: null }),
@@ -483,18 +731,186 @@ export const useProjectStore = create<ProjectStore>((set) => ({
 
   setWirePlacementFrom: (pos) => set({ wirePlacementFrom: pos }),
 
-  setShowNetLines: (show) => set({ showNetLines: show }),
-  setActiveTag: (tag) => set({ activeTag: tag }),
+  setTrayDragComponentId: (id) => set({ trayDragComponentId: id }),
+  setHighlightedNetId: (id) => set({ highlightedNetId: id }),
+  toggleSchematicWireDrawMode: () => set((s) => ({
+    schematicWireDrawMode: !s.schematicWireDrawMode,
+    schematicWireDrawingFrom: null,
+    schematicWireDirection: null,
+  })),
+  setSchematicWireDrawing: (from) => set({ schematicWireDrawingFrom: from, schematicWireDirection: null }),
 
-  addCustomTag: (tag) =>
-    set((s) => {
-      if (s.customTags.includes(tag)) return s;
-      return { customTags: [...s.customTags, tag].sort() };
-    }),
+  // Capture which wire endpoints should move with a component during drag.
+  // Called once at drag start. Only captures endpoints at this component's pin positions
+  // that are NOT also at another component's pin position.
+  captureSchematicDragBindings: (componentId) => {
+    const s = get();
+    const comp = s.components.find((c) => c.id === componentId);
+    if (!comp) { set({ _dragWireBindings: null }); return; }
 
-  removeCustomTag: (tag) =>
-    set((s) => ({
-      customTags: s.customTags.filter((t) => t !== tag),
-      activeTag: s.activeTag === tag ? null : s.activeTag,
-    })),
+    const def = resolveComponentDef(comp, s.componentDefs);
+    if (!def) { set({ _dragWireBindings: null }); return; }
+
+    // This component's pin positions
+    const rotation = comp.schematicRotation ?? 0;
+    const mirrored = comp.schematicMirrored ?? false;
+    const pins = getRotatedPinPositions(def.symbol, rotation, mirrored);
+    const myPinKeys = new Set<string>();
+    for (const pin of pins) {
+      myPinKeys.add(pointKey(comp.schematicPos.x + pin.x, comp.schematicPos.y + pin.y));
+    }
+
+    // Other components' pin positions (exclude from moving)
+    const otherPinKeys = new Set<string>();
+    for (const other of s.components) {
+      if (other.id === componentId) continue;
+      const otherDef = resolveComponentDef(other, s.componentDefs);
+      if (!otherDef) continue;
+      const otherRot = other.schematicRotation ?? 0;
+      const otherMir = other.schematicMirrored ?? false;
+      const otherPins = getRotatedPinPositions(otherDef.symbol, otherRot, otherMir);
+      for (const pin of otherPins) {
+        otherPinKeys.add(pointKey(other.schematicPos.x + pin.x, other.schematicPos.y + pin.y));
+      }
+    }
+
+    // Find wire endpoints at this component's pins but not other components' pins
+    const bindings: { wireId: string; endpoint: "start" | "end" }[] = [];
+    for (const w of s.schematicWires) {
+      const startKey = pointKey(w.start.x, w.start.y);
+      const endKey = pointKey(w.end.x, w.end.y);
+      if (myPinKeys.has(startKey) && !otherPinKeys.has(startKey)) {
+        bindings.push({ wireId: w.id, endpoint: "start" });
+      }
+      if (myPinKeys.has(endKey) && !otherPinKeys.has(endKey)) {
+        bindings.push({ wireId: w.id, endpoint: "end" });
+      }
+    }
+
+    set({ _dragWireBindings: bindings });
+  },
+
+  clearSchematicDragBindings: () => set({ _dragWireBindings: null }),
+
+  // ── Project persistence ──────────────────────────────
+
+  setProjectName: (name) => set({ name }),
+
+  exportProject: (): Project => {
+    const s = get();
+    const defaultIds = new Set(DEFAULT_COMPONENTS.map((d) => d.id));
+    const customDefs = s.componentDefs.filter((d) => !defaultIds.has(d.id));
+    return {
+      name: s.name,
+      componentDefs: customDefs,
+      components: s.components,
+      nets: s.nets,
+      netAssignments: s.netAssignments,
+      schematicWires: s.schematicWires,
+      board: s.board,
+    };
+  },
+
+  loadProject: (data) => {
+    const savedDefs = data.componentDefs ?? [];
+    const defaultIds = new Set(DEFAULT_COMPONENTS.map((d) => d.id));
+    const customDefs = savedDefs.filter((d) => !defaultIds.has(d.id));
+    const mergedDefs = [...DEFAULT_COMPONENTS, ...customDefs];
+
+    // Register custom footprint symbols for custom components
+    for (const def of customDefs) {
+      if (def.symbol.startsWith("custom-footprint-")) {
+        const symbol = createFootprintSymbol(def.pins, def.width, def.height);
+        registerCustomSymbol(def.id, { ...symbol, symbolId: def.symbol });
+      }
+    }
+
+    set({
+      name: data.name ?? "Untitled Project",
+      componentDefs: mergedDefs,
+      components: (data.components ?? []).map((c) => ({
+        ...c,
+        schematicRotation: c.schematicRotation ?? 0,
+      })),
+      nets: data.nets ?? [],
+      netAssignments: data.netAssignments ?? [],
+      schematicWires: data.schematicWires ?? [],
+      board: {
+        rows: data.board?.rows ?? 20,
+        cols: data.board?.cols ?? 20,
+        cuts: data.board?.cuts ?? [],
+        wires: data.board?.wires ?? [],
+      },
+      wirePlacementMode: false,
+      wirePlacementFrom: null,
+      schematicWireDrawMode: false,
+      schematicWireDrawingFrom: null,
+      schematicWireDirection: null,
+      isDirty: false,
+      _history: [],
+      _redoStack: [],
+      canUndo: false,
+      canRedo: false,
+    });
+  },
+
+  resetProject: () => set({
+    name: "Untitled Project",
+    componentDefs: [...DEFAULT_COMPONENTS],
+    components: [],
+    nets: [],
+    netAssignments: [],
+    schematicWires: [],
+    board: { rows: 20, cols: 20, cuts: [], wires: [] },
+    wirePlacementMode: false,
+    wirePlacementFrom: null,
+    schematicWireDrawMode: false,
+    schematicWireDrawingFrom: null,
+    schematicWireDirection: null,
+    isDirty: false,
+    _history: [],
+    _redoStack: [],
+    canUndo: false,
+    canRedo: false,
+  }),
+
+  // ── Undo/Redo ────────────────────────────────────────
+
+  pushSnapshot: () => {
+    const s = get();
+    const snapshot = snapshotProject(s);
+    const history = [...s._history, snapshot];
+    if (history.length > MAX_HISTORY) history.shift();
+    set({ _history: history, _redoStack: [], canUndo: true, canRedo: false, isDirty: true });
+  },
+
+  undo: () => {
+    const s = get();
+    if (s._history.length === 0) return;
+    const history = [...s._history];
+    const snapshot = history.pop()!;
+    const redoStack = [...s._redoStack, snapshotProject(s)];
+    set({
+      ...restoreProject(snapshot),
+      _history: history,
+      _redoStack: redoStack,
+      canUndo: history.length > 0,
+      canRedo: true,
+    });
+  },
+
+  redo: () => {
+    const s = get();
+    if (s._redoStack.length === 0) return;
+    const redoStack = [...s._redoStack];
+    const snapshot = redoStack.pop()!;
+    const history = [...s._history, snapshotProject(s)];
+    set({
+      ...restoreProject(snapshot),
+      _history: history,
+      _redoStack: redoStack,
+      canUndo: true,
+      canRedo: redoStack.length > 0,
+    });
+  },
 }));

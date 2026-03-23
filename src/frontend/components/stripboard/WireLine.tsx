@@ -1,7 +1,7 @@
 "use client";
 
 import { Wire } from "@/types";
-import { holeCenter } from "./boardLayout";
+import { holeCenter, STRIP_CONFLICT_COLOR } from "./boardLayout";
 
 interface Props {
   wire: Wire;
@@ -14,7 +14,7 @@ export default function WireLine({ wire, color, isConflict, onClick }: Props) {
   const from = holeCenter(wire.from.row, wire.from.col);
   const to = holeCenter(wire.to.row, wire.to.col);
 
-  const strokeColor = isConflict ? "#ef4444" : color;
+  const strokeColor = isConflict ? STRIP_CONFLICT_COLOR : color;
 
   return (
     <g

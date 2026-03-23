@@ -22,7 +22,7 @@ export default function CutMark({ cut }: Props) {
         y1={midY - size}
         x2={midX + size}
         y2={midY + size}
-        stroke="#dc2626"
+        stroke="var(--cut-stroke)"
         strokeWidth={2}
         strokeLinecap="round"
       />
@@ -31,7 +31,7 @@ export default function CutMark({ cut }: Props) {
         y1={midY - size}
         x2={midX - size}
         y2={midY + size}
-        stroke="#dc2626"
+        stroke="var(--cut-stroke)"
         strokeWidth={2}
         strokeLinecap="round"
       />

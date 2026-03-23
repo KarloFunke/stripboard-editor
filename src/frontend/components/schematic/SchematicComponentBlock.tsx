@@ -1,74 +1,84 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useState, useRef } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { Component } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
-import { getBlockSize } from "./blockLayout";
-
-const PIN_RADIUS = 5;
-const PIN_SPACING = 24;
-const PIN_LABEL_HEIGHT = 14;
-const PADDING_X = 16;
-const PADDING_TOP = 16;
+import SymbolRenderer, { getSymbolBounds, getRotatedPinPositions } from "./SymbolRenderer";
+import { getSymbolDef } from "@/data/symbolDefs";
+import { snapToGrid } from "@/utils/schematicConstants";
 
 interface Props {
   component: Component;
   isSelected: boolean;
   onMouseDown: (e: React.MouseEvent) => void;
-  onSelect: () => void;
+  onPinMouseDown?: (componentId: string, pinId: string, e: React.MouseEvent) => void;
+  getSVGPoint?: (e: React.MouseEvent) => { x: number; y: number };
+  readOnly?: boolean;
 }
 
 export default function SchematicComponentBlock({
   component,
   isSelected,
   onMouseDown,
-  onSelect,
+  onPinMouseDown,
+  getSVGPoint,
+  readOnly = false,
 }: Props) {
   const componentDefs = useProjectStore((s) => s.componentDefs);
   const netAssignments = useProjectStore((s) => s.netAssignments);
   const nets = useProjectStore((s) => s.nets);
-  const togglePinNet = useProjectStore((s) => s.togglePinNet);
-  const activeNetId = useProjectStore((s) => s.activeNetId);
-  const activeTag = useProjectStore((s) => s.activeTag);
   const updateLabel = useProjectStore((s) => s.updateLabel);
-  const updateTag = useProjectStore((s) => s.updateTag);
+  const updatePinName = useProjectStore((s) => s.updatePinName);
+  const updateLabelOffset = useProjectStore((s) => s.updateLabelOffset);
+  const updatePinLabelOffset = useProjectStore((s) => s.updatePinLabelOffset);
+  const pushSnapshot = useProjectStore((s) => s.pushSnapshot);
+  const wireDrawMode = useProjectStore((s) => s.schematicWireDrawMode);
 
-  const mouseDownPos = useRef<{ x: number; y: number } | null>(null);
   const [editingLabel, setEditingLabel] = useState(false);
   const [editLabelValue, setEditLabelValue] = useState("");
+  const [editingPinId, setEditingPinId] = useState<string | null>(null);
+  const [editPinValue, setEditPinValue] = useState("");
+  const [draggingLabel, setDraggingLabel] = useState(false);
+  const [didDragLabel, setDidDragLabel] = useState(false);
+  const pinLabelSnapshotPushed = useRef(false);
 
   const def = resolveComponentDef(component, componentDefs);
   if (!def) return null;
 
-  const { blockWidth, blockHeight } = getBlockSize(def);
+  const rotation = component.schematicRotation ?? 0;
+  const mirrored = component.schematicMirrored ?? false;
+  const symbolDef = getSymbolDef(def.symbol);
+  const symbolLabelYOffset = symbolDef?.labelYOffset ?? 0;
+  const bounds = getSymbolBounds(def.symbol, rotation, mirrored);
 
-  const getPinColor = (pinId: string): string => {
-    const assignment = netAssignments.find(
-      (a) => a.componentId === component.id && a.pinId === pinId
-    );
-    if (!assignment) return "#9ca3af";
-    const net = nets.find((n) => n.id === assignment.netId);
-    return net?.color ?? "#9ca3af";
-  };
+  // Label position: default above component, offset by user drag
+  const defaultLabelX = (bounds.minX + bounds.maxX) / 2;
+  const defaultLabelY = bounds.minY - 6 - symbolLabelYOffset;
+  const labelOff = component.labelOffset ?? { x: 0, y: 0 };
+  const labelX = defaultLabelX + labelOff.x;
+  const labelY = defaultLabelY + labelOff.y;
+  const hasCustomOffset = labelOff.x !== 0 || labelOff.y !== 0;
 
-  const handlePinClick = (pinId: string) => {
-    togglePinNet(component.id, pinId);
-  };
-
-  const handleMouseDown = (e: React.MouseEvent) => {
-    mouseDownPos.current = { x: e.clientX, y: e.clientY };
-    onMouseDown(e);
-  };
-
-  const handleMouseUp = () => {
-    if (mouseDownPos.current) {
-      onSelect();
+  // Build pin color map
+  const pinColors: Record<string, string> = {};
+  for (const a of netAssignments) {
+    if (a.componentId === component.id) {
+      const net = nets.find((n) => n.id === a.netId);
+      if (net) pinColors[a.pinId] = net.color;
     }
-    mouseDownPos.current = null;
-  };
+  }
+
+  const pinNames: Record<string, string> = {};
+  for (const pin of def.pins) {
+    pinNames[pin.id] = pin.name;
+  }
 
   const handleLabelClick = (e: React.MouseEvent) => {
+    if (readOnly || wireDrawMode || didDragLabel) {
+      setDidDragLabel(false);
+      return;
+    }
     e.stopPropagation();
     setEditLabelValue(component.label);
     setEditingLabel(true);
@@ -82,34 +92,89 @@ export default function SchematicComponentBlock({
     setEditingLabel(false);
   };
 
-  const handleTagClick = (e: React.MouseEvent) => {
+  const handleLabelDragStart = (e: React.MouseEvent) => {
+    if (readOnly || wireDrawMode || editingLabel) return;
     e.stopPropagation();
-    if (activeTag) {
-      // Paint mode: apply active tag
-      updateTag(component.id, activeTag);
+    e.preventDefault();
+    pushSnapshot();
+    setDraggingLabel(true);
+    setDidDragLabel(false);
+
+    const handleMove = (me: MouseEvent) => {
+      setDidDragLabel(true);
+      if (!getSVGPoint) return;
+      const svgPt = getSVGPoint(me as unknown as React.MouseEvent);
+      const newOffX = svgPt.x - component.schematicPos.x - defaultLabelX;
+      const newOffY = svgPt.y - component.schematicPos.y - defaultLabelY;
+      updateLabelOffset(component.id, { x: newOffX, y: newOffY });
+    };
+
+    const handleUp = () => {
+      setDraggingLabel(false);
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+    };
+
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+  };
+
+  const handlePinLabelClick = (pinId: string, e: React.MouseEvent) => {
+    if (readOnly || wireDrawMode) return;
+    e.stopPropagation();
+    setEditPinValue(pinNames[pinId] ?? pinId);
+    setEditingPinId(pinId);
+  };
+
+  const commitPinName = () => {
+    if (editingPinId) {
+      const trimmed = editPinValue.trim();
+      if (trimmed && trimmed !== pinNames[editingPinId]) {
+        updatePinName(component.id, editingPinId, trimmed);
+      }
+      setEditingPinId(null);
     }
+  };
+
+  const handlePinMouseDown = (pinId: string, e: React.MouseEvent) => {
+    onPinMouseDown?.(component.id, pinId, e);
   };
 
   return (
     <g
       transform={`translate(${component.schematicPos.x}, ${component.schematicPos.y})`}
       style={{ cursor: "grab" }}
-      onMouseDown={handleMouseDown}
-      onMouseUp={handleMouseUp}
+      onMouseDown={onMouseDown}
     >
-      {/* Body */}
+      {/* Invisible hit area for dragging */}
       <rect
-        width={blockWidth}
-        height={blockHeight}
-        rx={4}
-        fill="white"
-        stroke={isSelected ? "#3b82f6" : "#404040"}
-        strokeWidth={isSelected ? 2 : 1.5}
+        x={bounds.minX - 5}
+        y={bounds.minY - 5}
+        width={bounds.width + 10}
+        height={bounds.height + 10}
+        fill="transparent"
       />
 
-      {/* Label above — click to edit inline */}
+      {/* Leader line from component center to label (when label is offset) */}
+      {hasCustomOffset && !editingLabel && (
+        <line
+          x1={0} y1={0}
+          x2={labelX} y2={labelY}
+          stroke="var(--hole-stroke)"
+          strokeWidth={0.8}
+          strokeDasharray="2 2"
+          pointerEvents="none"
+        />
+      )}
+
+      {/* Label */}
       {editingLabel ? (
-        <foreignObject x={-10} y={-22} width={blockWidth + 20} height={20}>
+        <foreignObject
+          x={labelX - 50}
+          y={labelY - 14}
+          width={100}
+          height={20}
+        >
           <input
             autoFocus
             value={editLabelValue}
@@ -119,89 +184,77 @@ export default function SchematicComponentBlock({
               if (e.key === "Enter") commitLabel();
               if (e.key === "Escape") setEditingLabel(false);
             }}
-            className="w-full bg-white border border-blue-400 rounded px-1 text-xs text-center text-neutral-900 outline-none"
+            className="w-full bg-white dark:bg-neutral-800 border border-[#113768] dark:border-[#5b9bd5] rounded px-1 text-xs text-center text-neutral-900 dark:text-neutral-100 outline-none"
             onClick={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
           />
         </foreignObject>
       ) : (
         <text
-          x={blockWidth / 2}
-          y={-6}
+          x={labelX}
+          y={labelY}
           textAnchor="middle"
           fontSize={12}
           fontWeight={600}
-          fill="#171717"
-          style={{ cursor: "text" }}
+          fill="var(--component-text)"
+          style={{ cursor: "grab", userSelect: "none" }}
           onClick={handleLabelClick}
-          onMouseDown={(e) => e.stopPropagation()}
+          onMouseDown={handleLabelDragStart}
         >
           {component.label}
         </text>
       )}
 
-      {/* Tag below — click to apply active tag */}
-      <text
-        x={blockWidth / 2}
-        y={blockHeight + 14}
-        textAnchor="middle"
-        fontSize={10}
-        fill={activeTag ? "#16a34a" : "#404040"}
-        style={{ cursor: activeTag ? "pointer" : "default" }}
-        onClick={handleTagClick}
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        {component.tag || def.name}
-      </text>
-
-      {/* Pins */}
-      {def.pins.map((pin) => {
-        const px = PADDING_X + pin.offsetCol * PIN_SPACING;
-        const py = PADDING_TOP + pin.offsetRow * PIN_SPACING;
-        const color = getPinColor(pin.id);
-        const isAssigned = netAssignments.some(
-          (a) => a.componentId === component.id && a.pinId === pin.id
-        );
-
+      {/* Inline pin name editing overlay */}
+      {editingPinId && (() => {
+        const pinPositions = getRotatedPinPositions(def.symbol, rotation, mirrored);
+        const pinPos = pinPositions.find((p) => p.pinId === editingPinId);
+        if (!pinPos) return null;
         return (
-          <g key={pin.id} data-pin={pin.id}>
-            {/* Pin clickable area */}
-            <circle
-              cx={px}
-              cy={py}
-              r={PIN_RADIUS + 3}
-              fill="transparent"
-              style={{ cursor: activeNetId ? "pointer" : "default" }}
-              onClick={(e) => {
-                e.stopPropagation();
-                handlePinClick(pin.id);
+          <foreignObject
+            x={pinPos.x - 30}
+            y={pinPos.y - 10}
+            width={60}
+            height={20}
+          >
+            <input
+              autoFocus
+              value={editPinValue}
+              onChange={(e) => setEditPinValue(e.target.value)}
+              onBlur={commitPinName}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commitPinName();
+                if (e.key === "Escape") setEditingPinId(null);
               }}
+              className="w-full bg-white dark:bg-neutral-800 border border-[#113768] dark:border-[#5b9bd5] rounded px-1 text-[9px] text-center text-neutral-900 dark:text-neutral-100 outline-none"
+              onClick={(e) => e.stopPropagation()}
               onMouseDown={(e) => e.stopPropagation()}
             />
-            {/* Pin dot */}
-            <circle
-              cx={px}
-              cy={py}
-              r={PIN_RADIUS}
-              fill={isAssigned ? color : "white"}
-              stroke={color}
-              strokeWidth={2}
-              pointerEvents="none"
-            />
-            {/* Pin label */}
-            <text
-              x={px}
-              y={py + PIN_RADIUS + 11}
-              textAnchor="middle"
-              fontSize={8}
-              fill="#171717"
-              pointerEvents="none"
-            >
-              {pin.name}
-            </text>
-          </g>
+          </foreignObject>
         );
-      })}
+      })()}
+
+      {/* Symbol */}
+      <SymbolRenderer
+        symbolId={def.symbol}
+        rotation={rotation}
+        mirrored={mirrored}
+        selected={isSelected}
+        pinColors={pinColors}
+        onPinMouseDown={handlePinMouseDown}
+        onPinLabelClick={readOnly || editingPinId ? undefined : handlePinLabelClick}
+        pinNames={pinNames}
+        pinLabelOffsets={component.pinLabelOffsets ?? {}}
+        onPinLabelDrag={readOnly ? undefined : (pinId, offset) => {
+          if (!pinLabelSnapshotPushed.current) {
+            pushSnapshot();
+            pinLabelSnapshotPushed.current = true;
+          }
+          updatePinLabelOffset(component.id, pinId, offset);
+        }}
+        onPinLabelDragEnd={readOnly ? undefined : () => { pinLabelSnapshotPushed.current = false; }}
+        showPinLabels={!editingPinId}
+      />
     </g>
   );
 }

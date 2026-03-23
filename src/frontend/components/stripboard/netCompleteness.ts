@@ -6,7 +6,7 @@ import {
   Wire,
 } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
-import { getRotatedPinPositions } from "./boardLayout";
+import { getComponentPinPositions } from "./boardLayout";
 import { StripSegment } from "./stripSegments";
 import { ConnectedGroup } from "./connectivity";
 
@@ -87,7 +87,7 @@ export function checkNetCompleteness(
       }
 
       // Find board position of this pin
-      const pinPositions = getRotatedPinPositions(def, comp.boardPos, comp.rotation);
+      const pinPositions = getComponentPinPositions(comp, def);
       const pinPos = pinPositions.find((p) => p.pinId === assignment.pinId);
       if (!pinPos) continue;
 

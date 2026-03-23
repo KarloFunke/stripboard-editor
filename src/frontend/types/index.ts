@@ -16,11 +16,15 @@ export interface BodyCell {
 export interface ComponentDef {
   id: string;
   name: string;
-  category: "resistor" | "capacitor" | "led" | "terminal" | "ic" | "custom";
-  width: number;  // columns spanned
-  height: number; // rows spanned
+  category: "passive" | "semiconductor" | "ic" | "connector" | "generic";
+  symbol: string; // references SymbolDef.symbolId for schematic rendering
+  defaultLabelPrefix: string; // e.g. "R", "C", "D", "Q", "U", "J", "X"
+  width: number;  // columns spanned (stripboard footprint)
+  height: number; // rows spanned (stripboard footprint)
   pins: PinDef[];
   bodyCells?: BodyCell[]; // cells occupied by body but not pins; inferred as bounding rect if absent
+  footprintPresets?: string[]; // alternative footprint def IDs the user can choose from
+  flexible?: boolean; // 2-pin components with draggable pin positions
 }
 
 // ── Component Instance (single object for both editors) ──
@@ -37,14 +41,21 @@ export interface Component {
   id: string;
   defId: string;   // references ComponentDef.id
   label: string;   // short identifier, e.g. "R1", "U1"
-  tag: string;     // descriptive label, e.g. "Resistor", "Output Connector"
 
   // Position on the schematic canvas (always set)
   schematicPos: { x: number; y: number };
+  schematicRotation: 0 | 90 | 180 | 270;
+  schematicMirrored?: boolean; // horizontal mirror (flip X axis)
+  labelOffset?: { x: number; y: number }; // draggable label position offset
+  pinLabelOffsets?: Record<string, { x: number; y: number }>; // per-pin label position offsets
 
   // Position on the stripboard (null until placed)
   boardPos: { row: number; col: number } | null;
   rotation: 0 | 90 | 180 | 270;
+  boardLabelOffset?: { x: number; y: number }; // draggable label offset on stripboard
+
+  // For flexible 2-pin components: absolute position of pin 2 (pin 1 is at boardPos)
+  flexibleEndPos?: { row: number; col: number };
 
   // Per-instance footprint override; when set, takes priority over the ComponentDef
   footprintOverride?: FootprintOverride;
@@ -64,17 +75,23 @@ export interface NetAssignment {
   pinId: string;       // references PinDef.id within the ComponentDef
 }
 
+// ── Schematic Wires ───────────────────────────────────
+
+// A wire connects two grid-aligned points with an auto-routed L-shape.
+// No component references — net inference is purely spatial.
+// The bend point is derived from start/end, not stored.
+export interface SchematicWire {
+  id: string;
+  start: { x: number; y: number };
+  end: { x: number; y: number };
+  routeDirection: "horizontal-first" | "vertical-first";
+}
+
 // ── Board ──────────────────────────────────────────────
 
 export interface BoardPosition {
   row: number;
   col: number;
-}
-
-export interface Jumper {
-  from: BoardPosition;
-  to: BoardPosition;
-  netId: string;
 }
 
 // A cut between two adjacent holes on the same row.
@@ -94,19 +111,17 @@ export interface Board {
   rows: number;
   cols: number;
   cuts: Cut[];
-  jumpers: Jumper[];
   wires: Wire[];
 }
 
 // ── Project (top-level, serializable to JSON) ──────────
 
 export interface Project {
-  id: string;
   name: string;
   componentDefs: ComponentDef[];
   components: Component[];
   nets: Net[];
   netAssignments: NetAssignment[];
+  schematicWires: SchematicWire[];
   board: Board;
-  customTags: string[];
 }

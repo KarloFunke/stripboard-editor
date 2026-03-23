@@ -1,0 +1,32 @@
+name: stripboard-editor
+
+services:
+  django:
+    build:
+      context: ./src/backend
+    env_file: /etc/stripboard-editor/.env
+    volumes:
+      - /etc/stripboard-editor/data:/etc/stripboard-editor/data
+    expose:
+      - "8000"
+    restart: unless-stopped
+
+  nextjs:
+    build:
+      context: ./src/frontend
+      args:
+        NEXT_PUBLIC_API_URL: https://stripboard-editor.com/api
+    expose:
+      - "3000"
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "16005:80"
+    volumes:
+      - ./src/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - django
+      - nextjs
+    restart: unless-stopped
