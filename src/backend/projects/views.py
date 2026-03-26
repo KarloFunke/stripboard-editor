@@ -255,6 +255,7 @@ def pow_challenge(request):
 
 
 @api_view(["GET"])
+@permission_classes([AllowAny])
 def db_backup(request):
     if not django_settings.BACKUP_TOKEN:
         return Response({"error": "Backup not configured"}, status=status.HTTP_501_NOT_IMPLEMENTED)
