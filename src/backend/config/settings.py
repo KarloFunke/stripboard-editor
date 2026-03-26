@@ -18,6 +18,7 @@ SECRET_KEY = env("DJANGO_SECRET_KEY")
 DEBUG = env("DJANGO_DEBUG").lower() in ("true", "1", "yes")
 ALLOWED_HOSTS = [h.strip() for h in env("DJANGO_ALLOWED_HOSTS").split(",")]
 CORS_ALLOWED_ORIGINS = [o.strip() for o in env("CORS_ALLOWED_ORIGINS").split(",")]
+BACKUP_TOKEN = os.environ.get("BACKUP_TOKEN")
 
 INSTALLED_APPS = [
     "django.contrib.admin",

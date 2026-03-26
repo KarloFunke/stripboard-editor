@@ -1,6 +1,14 @@
+import gzip
+import hmac
+import os
+import sqlite3
+import tempfile
+
+from django.conf import settings as django_settings
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
 from django.contrib.sessions.models import Session
+from django.http import FileResponse
 from django.middleware.csrf import get_token
 from django.utils import timezone
 from rest_framework import status
@@ -244,3 +252,36 @@ def csrf_token(request):
 def pow_challenge(request):
     challenge = create_challenge()
     return Response({"challenge": challenge, "difficulty": DIFFICULTY})
+
+
+@api_view(["GET"])
+def db_backup(request):
+    if not django_settings.BACKUP_TOKEN:
+        return Response({"error": "Backup not configured"}, status=status.HTTP_501_NOT_IMPLEMENTED)
+
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    if not hmac.compare_digest(token, django_settings.BACKUP_TOKEN):
+        return Response(status=status.HTTP_403_FORBIDDEN)
+
+    db_path = django_settings.DATABASES["default"]["NAME"]
+    fd, backup_path = tempfile.mkstemp(suffix=".sqlite3")
+    os.close(fd)
+    source = sqlite3.connect(db_path)
+    dest = sqlite3.connect(backup_path)
+    source.backup(dest)
+    source.close()
+    dest.close()
+
+    gz_path = backup_path + ".gz"
+    with open(backup_path, "rb") as f_in, gzip.open(gz_path, "wb") as f_out:
+        f_out.writelines(f_in)
+    os.unlink(backup_path)
+
+    response = FileResponse(
+        open(gz_path, "rb"),
+        content_type="application/gzip",
+        as_attachment=True,
+        filename="db.sqlite3.gz",
+    )
+    os.unlink(gz_path)
+    return response

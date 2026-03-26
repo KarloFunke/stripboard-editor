@@ -21,4 +21,7 @@ urlpatterns = [
 
     # Proof of Work
     path("pow/challenge/", views.pow_challenge, name="pow-challenge"),
+
+    # Backup
+    path("backup/db/", views.db_backup, name="db-backup"),
 ]
