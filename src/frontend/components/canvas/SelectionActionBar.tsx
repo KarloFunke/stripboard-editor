@@ -11,6 +11,8 @@ export interface CanvasAction {
   title: string;
   icon: ReactNode;
   onClick: () => void;
+  /** Keyboard shortcut label shown as a subtle keycap on the button (e.g. "R", "Del") */
+  shortcut?: string;
   /** "danger" gives the button a red hover (used for destructive actions) */
   variant?: "default" | "danger";
 }
@@ -39,6 +41,11 @@ export function SelectionActionBar({ actions }: { actions: CanvasAction[] }) {
         >
           {a.icon}
           {a.label}
+          {a.shortcut && (
+            <kbd className="ml-0.5 px-1 py-0.5 text-[10px] leading-none font-mono rounded border border-neutral-300/80 dark:border-neutral-600/80 text-neutral-400 dark:text-neutral-500">
+              {a.shortcut}
+            </kbd>
+          )}
         </button>
       ))}
     </div>

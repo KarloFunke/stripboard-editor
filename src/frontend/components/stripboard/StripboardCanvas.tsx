@@ -868,14 +868,16 @@ export default function StripboardCanvas({
           actions.push({
             key: "rotate",
             label: "Rotate",
-            title: "Rotate selected component 90° (R)",
+            title: "Rotate selected component 90°",
+            shortcut: "R",
             icon: RotateIcon,
             onClick: () => rotateComponent(selectedId),
           });
           actions.push({
             key: "delete",
             label: "Delete",
-            title: "Remove selected component from board (Del)",
+            title: "Remove selected component from board",
+            shortcut: "Del",
             icon: DeleteIcon,
             variant: "danger",
             onClick: () => {

@@ -233,11 +233,20 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
             />
           ) : (
             <span
-              className="opacity-80 cursor-pointer hover:opacity-100 transition-opacity"
+              className="inline-flex items-center gap-1 opacity-80 cursor-pointer hover:opacity-100 transition-opacity"
               onClick={() => setEditingName(true)}
               title="Click to rename"
             >
               {name}
+              <svg
+                width="11" height="11" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                className="opacity-60"
+                aria-hidden="true"
+              >
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+              </svg>
             </span>
           )}
           {lastSaved && (
@@ -343,6 +352,14 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
               </button>
             </>
           )}
+          <button
+            onClick={() => window.dispatchEvent(new Event("toggle-shortcuts"))}
+            className="px-2 py-1.5 rounded bg-white/10 hover:bg-white/20 transition-colors text-sm"
+            title="Keyboard shortcuts (?)"
+            aria-label="Show keyboard shortcuts"
+          >
+            ?
+          </button>
           <ThemeToggle />
         </div>
       </div>

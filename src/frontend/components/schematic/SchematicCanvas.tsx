@@ -804,21 +804,24 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
             {
               key: "rotate",
               label: "Rotate",
-              title: "Rotate selected component 90° (R)",
+              title: "Rotate selected component 90°",
+              shortcut: "R",
               icon: RotateIcon,
               onClick: () => rotateSchematicComponent(selectedId),
             },
             {
               key: "mirror",
               label: "Mirror",
-              title: "Mirror selected component (M)",
+              title: "Mirror selected component",
+              shortcut: "M",
               icon: MirrorIcon,
               onClick: () => mirrorSchematicComponent(selectedId),
             },
             {
               key: "delete",
               label: "Delete",
-              title: "Delete selected component (Del)",
+              title: "Delete selected component",
+              shortcut: "Del",
               icon: DeleteIcon,
               variant: "danger",
               onClick: () => {

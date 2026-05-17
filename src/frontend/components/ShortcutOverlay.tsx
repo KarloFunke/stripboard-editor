@@ -33,14 +33,20 @@ export default function ShortcutOverlay() {
   const [show, setShow] = useState(false);
 
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
+    const toggle = () => setShow((s) => !s);
+    const keyHandler = (e: KeyboardEvent) => {
       if (e.key === "?" && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) {
         e.preventDefault();
-        setShow((s) => !s);
+        toggle();
       }
     };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
+    // Also openable from UI (e.g. the "?" button in the project toolbar)
+    window.addEventListener("keydown", keyHandler);
+    window.addEventListener("toggle-shortcuts", toggle);
+    return () => {
+      window.removeEventListener("keydown", keyHandler);
+      window.removeEventListener("toggle-shortcuts", toggle);
+    };
   }, []);
 
   if (!show) return null;
