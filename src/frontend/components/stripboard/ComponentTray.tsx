@@ -7,15 +7,13 @@ import { checkNetCompleteness } from "./netCompleteness";
 
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 
-export default function ComponentTray({ readOnly = false, onEditFootprint }: { readOnly?: boolean; onEditFootprint?: (componentId: string) => void }) {
+export default function ComponentTray({ readOnly = false }: { readOnly?: boolean }) {
   const components = useProjectStore((s) => s.components);
   const componentDefs = useProjectStore((s) => s.componentDefs);
   const nets = useProjectStore((s) => s.nets);
   const netAssignments = useProjectStore((s) => s.netAssignments);
 
   const { segments, connectivity } = useStripSegments();
-  const removeFromBoard = useProjectStore((s) => s.removeFromBoard);
-  const rotateComponent = useProjectStore((s) => s.rotateComponent);
 
   const unplaced = components.filter((c) => c.boardPos === null);
   const placed = components.filter((c) => c.boardPos !== null);
@@ -121,7 +119,6 @@ export default function ComponentTray({ readOnly = false, onEditFootprint }: { r
           <div className="px-2.5 pb-2.5">
             {placed.map((comp) => {
               const def = resolveComponentDef(comp, componentDefs);
-              const isFlexible = def?.flexible ?? false;
               return (
                 <div
                   key={comp.id}
@@ -131,33 +128,6 @@ export default function ComponentTray({ readOnly = false, onEditFootprint }: { r
                   <span className="text-neutral-500 dark:text-neutral-400 truncate flex-1">
                     {def?.name}
                   </span>
-                  {!isFlexible && onEditFootprint && (
-                    <button
-                      onClick={() => onEditFootprint(comp.id)}
-                      className="text-neutral-400 dark:text-neutral-500 hover:text-[#113768] dark:hover:text-[#5b9bd5] px-1"
-                      title="Edit footprint"
-                    >
-                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-                        <rect x="1" y="1" width="10" height="10" rx="1" />
-                        <circle cx="3.5" cy="3.5" r="1" fill="currentColor" />
-                        <circle cx="8.5" cy="8.5" r="1" fill="currentColor" />
-                      </svg>
-                    </button>
-                  )}
-                  <button
-                    onClick={() => rotateComponent(comp.id)}
-                    className="text-neutral-400 dark:text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300 px-1"
-                    title="Rotate"
-                  >
-                    ↻
-                  </button>
-                  <button
-                    onClick={() => removeFromBoard(comp.id)}
-                    className="text-neutral-400 dark:text-neutral-500 hover:text-red-500 dark:hover:text-red-400 px-1"
-                    title="Remove from board"
-                  >
-                    ×
-                  </button>
                 </div>
               );
             })}

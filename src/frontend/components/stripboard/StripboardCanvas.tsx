@@ -29,8 +29,15 @@ import { StripSegment } from "./stripSegments";
 import PlacedComponent, { suppressNextCanvasClick } from "./PlacedComponent";
 import CutMark from "./CutMark";
 import WireLine from "./WireLine";
+import { SelectionActionBar, RotateIcon, DeleteIcon, FootprintIcon, type CanvasAction } from "@/components/canvas/SelectionActionBar";
 
-export default function StripboardCanvas({ readOnly = false }: { readOnly?: boolean }) {
+export default function StripboardCanvas({
+  readOnly = false,
+  onEditFootprint,
+}: {
+  readOnly?: boolean;
+  onEditFootprint?: (componentId: string) => void;
+}) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const panZoom = usePanZoom();
@@ -839,6 +846,46 @@ export default function StripboardCanvas({ readOnly = false }: { readOnly?: bool
             />
           )}
         </svg>
+
+        {/* Selection actions — shown when a placed component is selected.
+            No mirror: a stripboard is physical hardware, so a mirrored
+            footprint can't be built with a real through-hole part. */}
+        {!readOnly && selectedId && (() => {
+          const comp = components.find((c) => c.id === selectedId);
+          if (!comp || !comp.boardPos) return null;
+          const def = resolveComponentDef(comp, componentDefs);
+          const isFlexible = def?.flexible ?? false;
+          const actions: CanvasAction[] = [];
+          if (!isFlexible && onEditFootprint) {
+            actions.push({
+              key: "footprint",
+              label: "Edit Footprint",
+              title: "Edit this component's footprint",
+              icon: FootprintIcon,
+              onClick: () => onEditFootprint(selectedId),
+            });
+          }
+          actions.push({
+            key: "rotate",
+            label: "Rotate",
+            title: "Rotate selected component 90° (R)",
+            icon: RotateIcon,
+            onClick: () => rotateComponent(selectedId),
+          });
+          actions.push({
+            key: "delete",
+            label: "Delete",
+            title: "Remove selected component from board (Del)",
+            icon: DeleteIcon,
+            variant: "danger",
+            onClick: () => {
+              removeFromBoard(selectedId);
+              clearSelection();
+            },
+          });
+          return <SelectionActionBar actions={actions} />;
+        })()}
+
         {/* Zoom controls overlay */}
         <div className="absolute bottom-3 right-3 flex items-center gap-1 bg-white/90 dark:bg-neutral-800/90 border border-neutral-200 dark:border-neutral-700 rounded-md px-1.5 py-1 shadow-sm dark:shadow-neutral-900/30 text-xs text-neutral-600 dark:text-neutral-400">
           <button

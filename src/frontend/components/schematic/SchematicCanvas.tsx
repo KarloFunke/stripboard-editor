@@ -10,6 +10,7 @@ import SchematicWireLine, { getWirePoints } from "./SchematicWireLine";
 import { UnionFind } from "./netInference";
 import { getRotatedPinPositions, getSymbolBounds } from "./SymbolRenderer";
 import { GRID_SIZE, snapToGrid, pointKey } from "@/utils/schematicConstants";
+import { SelectionActionBar, RotateIcon, MirrorIcon, DeleteIcon, type CanvasAction } from "@/components/canvas/SelectionActionBar";
 
 const MOVE_STEP = GRID_SIZE;
 const PIN_SNAP_RADIUS = 15;
@@ -795,6 +796,39 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
         )}
 
       </svg>
+
+      {/* Selection actions — shown when a single component is selected */}
+      {!readOnly && selectedId && (
+        <SelectionActionBar
+          actions={[
+            {
+              key: "rotate",
+              label: "Rotate",
+              title: "Rotate selected component 90° (R)",
+              icon: RotateIcon,
+              onClick: () => rotateSchematicComponent(selectedId),
+            },
+            {
+              key: "mirror",
+              label: "Mirror",
+              title: "Mirror selected component (M)",
+              icon: MirrorIcon,
+              onClick: () => mirrorSchematicComponent(selectedId),
+            },
+            {
+              key: "delete",
+              label: "Delete",
+              title: "Delete selected component (Del)",
+              icon: DeleteIcon,
+              variant: "danger",
+              onClick: () => {
+                removeComponent(selectedId); // pushes its own undo snapshot
+                clearSelection();
+              },
+            },
+          ] satisfies CanvasAction[]}
+        />
+      )}
 
       {/* Zoom controls */}
       <div className="absolute bottom-3 right-3 flex items-center gap-1 bg-white/90 dark:bg-neutral-800/90 border border-neutral-200 dark:border-neutral-700 rounded-md px-1.5 py-1 shadow-sm dark:shadow-neutral-900/30 text-xs text-neutral-600 dark:text-neutral-400">

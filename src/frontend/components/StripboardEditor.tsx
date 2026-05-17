@@ -89,13 +89,13 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
           ) : (
             <ResizableSidebar defaultWidth={200} minWidth={140} maxWidth={360}>
               <div className="flex flex-col h-full overflow-hidden border-r border-neutral-200 dark:border-neutral-700">
-                <ComponentTray onEditFootprint={setEditFootprintId} />
+                <ComponentTray />
               </div>
             </ResizableSidebar>
           )
         )}
         <div className="flex-1 min-w-0">
-          <StripboardCanvas readOnly={readOnly} />
+          <StripboardCanvas readOnly={readOnly} onEditFootprint={setEditFootprintId} />
         </div>
       </div>
       {editFootprintId && (
