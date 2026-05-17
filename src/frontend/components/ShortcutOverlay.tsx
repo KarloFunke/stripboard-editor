@@ -5,8 +5,7 @@ import { useEffect, useState } from "react";
 const SHORTCUTS = [
   { section: "General", items: [
     ["Ctrl + Z", "Undo"],
-    ["Ctrl + Y", "Redo"],
-    ["Ctrl + S", "Save"],
+    ["Ctrl + Y / Ctrl + Shift + Z", "Redo"],
     ["?", "Toggle this overlay"],
   ]},
   { section: "Schematic", items: [

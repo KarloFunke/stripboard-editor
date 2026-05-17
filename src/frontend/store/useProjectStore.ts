@@ -120,8 +120,13 @@ interface UIState {
 interface HistoryState {
   _history: Project[];
   _redoStack: Project[];
+  // While true, nested pushSnapshot() calls are skipped so a multi-mutation
+  // operation (e.g. bulk delete) produces a single undo entry.
+  _suppressSnapshot: boolean;
   isDirty: boolean;
   markClean: () => void;
+  /** Run fn as one undoable step: one snapshot up front, none in between. */
+  transact: (fn: () => void) => void;
 }
 
 type ProjectStore = Project & UIState & ProjectActions & HistoryState;
@@ -232,6 +237,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   _dragWireBindings: null,
   _history: [],
   _redoStack: [],
+  _suppressSnapshot: false,
   canUndo: false,
   canRedo: false,
   isDirty: false,
@@ -441,8 +447,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }));
   },
 
+  // No auto-snapshot: called per-pixel during board dragging. Discrete callers
+  // (e.g. tray→board drop) must call pushSnapshot() once themselves; drag
+  // gestures push a single snapshot at the start of the gesture.
   placeOnBoard: (id, pos) => {
-    get().pushSnapshot();
     set((s) => ({
       components: s.components.map((c) => {
         if (c.id !== id) return c;
@@ -878,10 +886,24 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   pushSnapshot: () => {
     const s = get();
+    // Inside a transact(): the single up-front snapshot already covers the
+    // whole operation, so skip nested ones (bulk delete = one undo step).
+    if (s._suppressSnapshot) return;
     const snapshot = snapshotProject(s);
     const history = [...s._history, snapshot];
     if (history.length > MAX_HISTORY) history.shift();
     set({ _history: history, _redoStack: [], canUndo: true, canRedo: false, isDirty: true });
+  },
+
+  transact: (fn) => {
+    if (get()._suppressSnapshot) { fn(); return; } // already batching — just run
+    get().pushSnapshot();              // one snapshot for the whole batch
+    set({ _suppressSnapshot: true });
+    try {
+      fn();
+    } finally {
+      set({ _suppressSnapshot: false });
+    }
   },
 
   undo: () => {

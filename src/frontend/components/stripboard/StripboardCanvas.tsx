@@ -115,12 +115,30 @@ export default function StripboardCanvas({
   const removeFromBoard = useProjectStore((s) => s.removeFromBoard);
   const moveComponentsOnBoard = useProjectStore((s) => s.moveComponentsOnBoard);
 
+  // A drag gesture (component body or flexible pin) arms this on mousedown and
+  // commits exactly one snapshot the first time the position actually changes.
+  // A plain click never moves anything, so it never snapshots — keeping the
+  // redo stack intact and the history one-entry-per-drag.
+  const pendingSnapshotRef = useRef(false);
+  const commitSnapshotOnce = useCallback(() => {
+    if (pendingSnapshotRef.current) {
+      pendingSnapshotRef.current = false;
+      pushSnapshot();
+    }
+  }, [pushSnapshot]);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (readOnly) return;
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
+
+      // Auto-repeat (held key): only arrow-move may repeat (it dedupes its own
+      // snapshot below). Every other shortcut is discrete — holding it must not
+      // spin the action or flood undo history.
+      const isArrowKey = e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "ArrowLeft" || e.key === "ArrowRight";
+      if (e.repeat && !isArrowKey) return;
 
       if (e.key === "Escape") {
         if (wirePlacementFrom) {
@@ -140,7 +158,9 @@ export default function StripboardCanvas({
       const hasSelection = moveIds.length > 0 || selectedWireIds.length > 0 || selectedCuts.length > 0;
       if (hasSelection && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
         e.preventDefault();
-        pushSnapshot();
+        // One snapshot per held-key gesture: snapshot on the initial press,
+        // keep moving on auto-repeat. One Ctrl+Z reverts the whole nudge.
+        if (!e.repeat) pushSnapshot();
         const delta = {
           ArrowUp: { row: -1, col: 0 },
           ArrowDown: { row: 1, col: 0 },
@@ -269,11 +289,12 @@ export default function StripboardCanvas({
       const pt = getSVGPoint(e);
       const hole = nearestHole(pt.x, pt.y, board.rows, board.cols);
       if (hole && isValidPlacement(componentId, hole)) {
+        pushSnapshot(); // discrete action — placeOnBoard no longer snapshots itself
         placeOnBoard(componentId, hole);
       }
       setTrayGhost(null);
     },
-    [getSVGPoint, board.rows, board.cols, isValidPlacement, placeOnBoard]
+    [getSVGPoint, board.rows, board.cols, isValidPlacement, placeOnBoard, pushSnapshot]
   );
 
   const handleDragLeave = useCallback(() => {
@@ -289,7 +310,9 @@ export default function StripboardCanvas({
       if (wirePlacementMode || wirePlacementFrom) return;
       e.stopPropagation();
       e.preventDefault();
-      pushSnapshot();
+      // Defer the snapshot until the drag actually moves the component (see
+      // commitSnapshotOnce). A plain select-click must not touch history.
+      pendingSnapshotRef.current = true;
       setSelectedId(componentId);
 
       // Compute offset: where within the component the user clicked
@@ -352,22 +375,30 @@ export default function StripboardCanvas({
           const comp = components.find((c) => c.id === flexPinDrag.componentId);
           if (comp && comp.boardPos) {
             if (flexPinDrag.pinId === "1") {
-              // Lock pin 2 absolute position before moving pin 1
-              if (!comp.flexibleEndPos) {
-                const def = resolveComponentDef(comp, componentDefs);
-                if (def) {
-                  const pin2Offset = def.pins[1];
-                  if (pin2Offset) {
-                    setFlexibleEndPos(flexPinDrag.componentId, {
-                      row: comp.boardPos.row + pin2Offset.offsetRow,
-                      col: comp.boardPos.col + pin2Offset.offsetCol,
-                    });
+              // Only mutate (and snapshot) when pin 1 actually moves to a new hole
+              if (hole.row !== comp.boardPos.row || hole.col !== comp.boardPos.col) {
+                commitSnapshotOnce();
+                // Lock pin 2 absolute position before moving pin 1
+                if (!comp.flexibleEndPos) {
+                  const def = resolveComponentDef(comp, componentDefs);
+                  if (def) {
+                    const pin2Offset = def.pins[1];
+                    if (pin2Offset) {
+                      setFlexibleEndPos(flexPinDrag.componentId, {
+                        row: comp.boardPos.row + pin2Offset.offsetRow,
+                        col: comp.boardPos.col + pin2Offset.offsetCol,
+                      });
+                    }
                   }
                 }
+                placeOnBoard(flexPinDrag.componentId, hole);
               }
-              placeOnBoard(flexPinDrag.componentId, hole);
             } else {
-              setFlexibleEndPos(flexPinDrag.componentId, hole);
+              const end = comp.flexibleEndPos;
+              if (!end || hole.row !== end.row || hole.col !== end.col) {
+                commitSnapshotOnce();
+                setFlexibleEndPos(flexPinDrag.componentId, hole);
+              }
             }
           }
         }
@@ -402,6 +433,7 @@ export default function StripboardCanvas({
       if (dragging.didDrag && previewHole) {
         const comp = components.find((c) => c.id === dragging.componentId);
         if (comp?.boardPos && (previewHole.row !== comp.boardPos.row || previewHole.col !== comp.boardPos.col)) {
+          commitSnapshotOnce();
           const dDef = resolveComponentDef(comp, componentDefs);
           if (dDef?.flexible && comp.flexibleEndPos) {
             const dr = previewHole.row - comp.boardPos.row;
@@ -415,11 +447,14 @@ export default function StripboardCanvas({
         }
       }
     },
-    [dragging, selectionRect, getSVGPoint, board.rows, board.cols, wirePlacementFrom, updateSelectionRect, checkDragThreshold, flexPinDrag, components, placeOnBoard, setFlexibleEndPos]
+    [dragging, selectionRect, getSVGPoint, board.rows, board.cols, wirePlacementFrom, updateSelectionRect, checkDragThreshold, flexPinDrag, components, componentDefs, placeOnBoard, setFlexibleEndPos, commitSnapshotOnce]
   );
 
   const handleMouseUp = useCallback(() => {
     panZoom.handlePanEnd();
+    // Gesture over: disarm a pending snapshot that was never triggered
+    // (e.g. a click that selected without moving anything).
+    pendingSnapshotRef.current = false;
 
     // End flexible pin drag
     if (flexPinDrag) {
@@ -580,6 +615,7 @@ export default function StripboardCanvas({
           onMouseUp={handleMouseUp}
           onMouseLeave={() => {
             panZoom.handlePanEnd();
+            pendingSnapshotRef.current = false;
             setDragging(null);
             setDragPreviewPos(null);
             setWireMousePos(null);
@@ -707,7 +743,9 @@ export default function StripboardCanvas({
                   readOnly={readOnly}
                   onPinDragStart={!readOnly ? (pinId, e) => {
                     e.stopPropagation();
-                    pushSnapshot();
+                    // Defer snapshot until the leg actually moves (a click on a
+                    // pin without a drag must not touch history/redo).
+                    pendingSnapshotRef.current = true;
                     setFlexPinDrag({ componentId: comp.id, pinId });
                   } : undefined}
                 />

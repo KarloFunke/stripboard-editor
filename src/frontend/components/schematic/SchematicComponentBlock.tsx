@@ -42,6 +42,7 @@ export default function SchematicComponentBlock({
   const [draggingLabel, setDraggingLabel] = useState(false);
   const [didDragLabel, setDidDragLabel] = useState(false);
   const pinLabelSnapshotPushed = useRef(false);
+  const labelSnapshotPushed = useRef(false);
 
   const def = resolveComponentDef(component, componentDefs);
   if (!def) return null;
@@ -96,7 +97,9 @@ export default function SchematicComponentBlock({
     if (readOnly || wireDrawMode || editingLabel) return;
     e.stopPropagation();
     e.preventDefault();
-    pushSnapshot();
+    // Defer the snapshot until the label actually moves — a click on the
+    // label (e.g. to rename) must not push a no-op entry / wipe redo.
+    labelSnapshotPushed.current = false;
     setDraggingLabel(true);
     setDidDragLabel(false);
 
@@ -106,11 +109,16 @@ export default function SchematicComponentBlock({
       const svgPt = getSVGPoint(me as unknown as React.MouseEvent);
       const newOffX = svgPt.x - component.schematicPos.x - defaultLabelX;
       const newOffY = svgPt.y - component.schematicPos.y - defaultLabelY;
+      if (!labelSnapshotPushed.current) {
+        pushSnapshot();
+        labelSnapshotPushed.current = true;
+      }
       updateLabelOffset(component.id, { x: newOffX, y: newOffY });
     };
 
     const handleUp = () => {
       setDraggingLabel(false);
+      labelSnapshotPushed.current = false;
       window.removeEventListener("mousemove", handleMove);
       window.removeEventListener("mouseup", handleUp);
     };

@@ -90,7 +90,7 @@ export default function GuidePage() {
               ["Delete", "Remove selected component or wire"],
               ["Escape", "Cancel current action or exit wire mode"],
               ["Ctrl + Z", "Undo"],
-              ["Ctrl + Y", "Redo"],
+              ["Ctrl + Y / Ctrl + Shift + Z", "Redo"],
               ["Arrow keys", "Move selected components (bulk move)"],
               ["Right-click drag", "Pan the canvas"],
               ["Scroll wheel", "Zoom in / out"],

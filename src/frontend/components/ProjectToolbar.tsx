@@ -124,11 +124,19 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
   // Global undo/redo keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
+      // Don't hijack Ctrl+Z/Y while editing text — let the field's native
+      // undo work and never revert the whole project from a text field.
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      if (!(e.ctrlKey || e.metaKey)) return;
+      // Normalize: with Shift held the browser reports e.key as "Z"/"Y", not
+      // "z"/"y" — comparing against lowercase made Ctrl+Shift+Z never match.
+      const key = e.key.toLowerCase();
+      if (key === "z" && !e.shiftKey) {
         e.preventDefault();
         undo();
       }
-      if ((e.ctrlKey || e.metaKey) && ((e.key === "z" && e.shiftKey) || e.key === "y")) {
+      if ((key === "z" && e.shiftKey) || key === "y") {
         e.preventDefault();
         redo();
       }
@@ -268,7 +276,7 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
             onClick={redo}
             disabled={!canRedo}
             className="px-2 py-1.5 rounded bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm"
-            title="Redo (Ctrl+Shift+Z)"
+            title="Redo (Ctrl+Y or Ctrl+Shift+Z)"
           >
             ↷
           </button>

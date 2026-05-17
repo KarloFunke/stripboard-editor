@@ -74,9 +74,22 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
   const setSchematicWireDrawing = useProjectStore((s) => s.setSchematicWireDrawing);
   const toggleWireDrawMode = useProjectStore((s) => s.toggleSchematicWireDrawMode);
   const pushSnapshot = useProjectStore((s) => s.pushSnapshot);
+  const transact = useProjectStore((s) => s.transact);
   const highlightedNetId = useProjectStore((s) => s.highlightedNetId);
   const captureSchematicDragBindings = useProjectStore((s) => s.captureSchematicDragBindings);
   const clearSchematicDragBindings = useProjectStore((s) => s.clearSchematicDragBindings);
+
+  // A component drag arms this on mousedown and commits exactly one snapshot
+  // the first time the position actually changes. A plain select-click never
+  // moves anything, so it never snapshots — keeping the redo stack intact and
+  // history at one entry per drag. (updateSchematicPos is snapshot-free.)
+  const pendingSnapshotRef = useRef(false);
+  const commitSnapshotOnce = useCallback(() => {
+    if (pendingSnapshotRef.current) {
+      pendingSnapshotRef.current = false;
+      pushSnapshot();
+    }
+  }, [pushSnapshot]);
 
   const [wirePreview, setWirePreview] = useState<{ x: number; y: number } | null>(null);
   const [selectedWireId, setSelectedWireId] = useState<string | null>(null);
@@ -182,6 +195,12 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
 
+      // Auto-repeat (held key): only arrow-move may repeat (it dedupes its own
+      // snapshot below). Every other shortcut is discrete — holding it must not
+      // spin the action or flood undo history.
+      const isArrowKey = e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "ArrowLeft" || e.key === "ArrowRight";
+      if (e.repeat && !isArrowKey) return;
+
       // W: toggle wire draw mode
       if (e.key === "w" || e.key === "W") {
         toggleWireDrawMode();
@@ -230,25 +249,22 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
       if (e.key === "Delete") {
         const hasSelection = selectedId || selectedWireId || selectedIds.length > 0 || selectedWireIds.length > 0;
         if (!hasSelection) return;
-        pushSnapshot();
 
-        // Delete bulk-selected wires
         const wireIdsToDelete = [...selectedWireIds];
         if (selectedWireId && !wireIdsToDelete.includes(selectedWireId)) {
           wireIdsToDelete.push(selectedWireId);
         }
-        for (const wid of wireIdsToDelete) {
-          removeSchematicWire(wid);
-        }
-
-        // Delete bulk-selected components
         const compIdsToDelete = [...selectedIds];
         if (selectedId && !compIdsToDelete.includes(selectedId)) {
           compIdsToDelete.push(selectedId);
         }
-        for (const cid of compIdsToDelete) {
-          removeComponent(cid);
-        }
+
+        // One undo step for the whole delete: transact() takes a single
+        // snapshot; removeSchematicWire/removeComponent skip their own.
+        transact(() => {
+          for (const wid of wireIdsToDelete) removeSchematicWire(wid);
+          for (const cid of compIdsToDelete) removeComponent(cid);
+        });
 
         setSelectedId(null);
         setSelectedWireId(null);
@@ -262,7 +278,9 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
       const moveWireIds = selectedWireIds;
       if ((moveIds.length > 0 || moveWireIds.length > 0) && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
         e.preventDefault();
-        pushSnapshot();
+        // One snapshot per held-key gesture: snapshot on the initial press,
+        // keep moving on auto-repeat. One Ctrl+Z reverts the whole nudge.
+        if (!e.repeat) pushSnapshot();
         const delta = {
           ArrowUp: { x: 0, y: -MOVE_STEP },
           ArrowDown: { x: 0, y: MOVE_STEP },
@@ -371,7 +389,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selectedId, selectedIds, selectedWireId, selectedWireIds, wireDrawingFrom, wireDrawMode, components, schematicWires, updateSchematicPos, removeComponent, removeSchematicWire, rotateSchematicComponent, pushSnapshot, setSchematicWireDrawing, toggleWireDrawMode]);
+  }, [selectedId, selectedIds, selectedWireId, selectedWireIds, wireDrawingFrom, wireDrawMode, components, schematicWires, updateSchematicPos, removeComponent, removeSchematicWire, rotateSchematicComponent, pushSnapshot, transact, setSchematicWireDrawing, toggleWireDrawMode]);
 
   const getSVGPoint = useCallback((e: React.MouseEvent) => {
     const svg = svgRef.current;
@@ -430,7 +448,9 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
       const comp = components.find((c) => c.id === componentId);
       if (!comp) return;
 
-      pushSnapshot();
+      // Defer the snapshot until the drag actually moves the component (see
+      // commitSnapshotOnce). A plain select-click must not touch history/redo.
+      pendingSnapshotRef.current = true;
       captureSchematicDragBindings(componentId);
       const pt = getSVGPoint(e);
       setDragging({
@@ -510,13 +530,22 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
       const pt = getSVGPoint(e);
       const newX = snapToGrid(pt.x - dragging.offsetX);
       const newY = snapToGrid(pt.y - dragging.offsetY);
-      updateSchematicPos(dragging.componentId, { x: newX, y: newY });
+      // Only mutate (and snapshot) when the snapped position actually changes,
+      // so sub-grid jitter from a click never touches history.
+      const comp = components.find((c) => c.id === dragging.componentId);
+      if (comp && (comp.schematicPos.x !== newX || comp.schematicPos.y !== newY)) {
+        commitSnapshotOnce();
+        updateSchematicPos(dragging.componentId, { x: newX, y: newY });
+      }
     },
-    [dragging, selectionRect, getSVGPoint, updateSchematicPos, panZoom.handlePanMove, updateSelectionRect, checkDragThreshold, wireDrawMode, wireDrawingFrom, wireDirection]
+    [dragging, selectionRect, getSVGPoint, updateSchematicPos, panZoom.handlePanMove, updateSelectionRect, checkDragThreshold, wireDrawMode, wireDrawingFrom, wireDirection, components, commitSnapshotOnce]
   );
 
   const handleMouseUp = useCallback(() => {
     panZoom.handlePanEnd();
+    // Gesture over: disarm a pending snapshot that was never triggered
+    // (e.g. a click that selected without moving the component).
+    pendingSnapshotRef.current = false;
 
     const rectHandled = finalizeSelectionRect((x1, y1, x2, y2) => {
       const selected: string[] = [];
@@ -634,6 +663,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
         onMouseUp={handleMouseUp}
         onMouseLeave={() => {
           panZoom.handlePanEnd();
+          pendingSnapshotRef.current = false;
           setDragging(null);
           clearSchematicDragBindings();
           cancelSelectionRect();
