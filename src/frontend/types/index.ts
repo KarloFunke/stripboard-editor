@@ -25,6 +25,7 @@ export interface ComponentDef {
   bodyCells?: BodyCell[]; // cells occupied by body but not pins; inferred as bounding rect if absent
   footprintPresets?: string[]; // alternative footprint def IDs the user can choose from
   flexible?: boolean; // 2-pin components with draggable pin positions
+  hasValue?: boolean; // shows an editable value field (e.g. resistance) — passives/discretes only
 }
 
 // ── Component Instance (single object for both editors) ──
@@ -41,6 +42,7 @@ export interface Component {
   id: string;
   defId: string;   // references ComponentDef.id
   label: string;   // short identifier, e.g. "R1", "U1"
+  value?: string;  // freeform value, e.g. "10k", "100nF", "1N4148"
 
   // Position on the schematic canvas (always set)
   schematicPos: { x: number; y: number };
@@ -124,4 +126,5 @@ export interface Project {
   netAssignments: NetAssignment[];
   schematicWires: SchematicWire[];
   board: Board;
+  showValuesOnBoard?: boolean;
 }

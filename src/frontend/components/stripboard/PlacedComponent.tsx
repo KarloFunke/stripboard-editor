@@ -32,6 +32,7 @@ export default function PlacedComponent({ component, isSelected, onMouseDown, on
   const netAssignments = useProjectStore((s) => s.netAssignments);
   const nets = useProjectStore((s) => s.nets);
   const updateBoardLabelOffset = useProjectStore((s) => s.updateBoardLabelOffset);
+  const showValues = useProjectStore((s) => s.showValuesOnBoard);
   const pushSnapshot = useProjectStore((s) => s.pushSnapshot);
   const snapshotPushed = useRef(false);
 
@@ -71,6 +72,7 @@ export default function PlacedComponent({ component, isSelected, onMouseDown, on
 
   const def = resolveComponentDef(component, componentDefs);
   if (!def || !component.boardPos) return null;
+  const allowsValue = def.hasValue ?? false;
 
   const isFlexible = def.flexible ?? false;
 
@@ -175,7 +177,12 @@ export default function PlacedComponent({ component, isSelected, onMouseDown, on
             style={{ cursor: "grab" }}
             onMouseDown={(e) => handleLabelMouseDown(e, cx, cy - pad - 4)}
           >
-            {component.label}
+            <tspan x={cx + (component.boardLabelOffset?.x ?? 0)}>{component.label}</tspan>
+            {showValues && allowsValue && component.value && (
+              <tspan x={cx + (component.boardLabelOffset?.x ?? 0)} dy="1.15em" fontWeight={400} fillOpacity={0.7}>
+                {component.value}
+              </tspan>
+            )}
           </text>
           {pins.map(renderPin)}
         </g>
@@ -209,7 +216,17 @@ export default function PlacedComponent({ component, isSelected, onMouseDown, on
           topLeft.y - pad - 4
         )}
       >
-        {component.label}
+        {(() => {
+          const lx = topLeft.x + ((bounds.maxCol - bounds.minCol) * HOLE_SPACING) / 2 + (component.boardLabelOffset?.x ?? 0);
+          return (
+            <>
+              <tspan x={lx}>{component.label}</tspan>
+              {showValues && allowsValue && component.value && (
+                <tspan x={lx} dy="1.15em" fontWeight={400} fillOpacity={0.7}>{component.value}</tspan>
+              )}
+            </>
+          );
+        })()}
       </text>
       {pins.map(renderPin)}
     </g>

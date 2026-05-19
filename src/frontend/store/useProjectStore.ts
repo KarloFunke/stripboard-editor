@@ -50,6 +50,8 @@ interface ProjectActions {
   updatePinLabelOffset: (id: string, pinId: string, offset: { x: number; y: number }) => void;
   updateBoardLabelOffset: (id: string, offset: { x: number; y: number }) => void;
   updateLabel: (id: string, label: string) => void;
+  updateComponentValue: (id: string, value: string) => void;
+  setShowValuesOnBoard: (show: boolean) => void;
   updatePinName: (componentId: string, pinId: string, newName: string) => void;
   updateComponentFootprint: (componentId: string, override: FootprintOverride) => void;
   updateSchematicPos: (id: string, pos: { x: number; y: number }) => void;
@@ -150,6 +152,7 @@ const initialProject: Project = {
     cuts: [],
     wires: [],
   },
+  showValuesOnBoard: false,
 };
 
 const MAX_HISTORY = 80;
@@ -259,6 +262,7 @@ function prepareProjectState(data: Project) {
       cuts: data.board?.cuts ?? [],
       wires: data.board?.wires ?? [],
     },
+    showValuesOnBoard: data.showValuesOnBoard ?? false,
     wirePlacementMode: false,
     wirePlacementFrom: null,
     schematicWireDrawMode: false,
@@ -357,6 +361,20 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         c.id === id ? { ...c, label } : c
       ),
     }));
+  },
+
+  updateComponentValue: (id, value) => {
+    get().pushSnapshot();
+    set((s) => ({
+      components: s.components.map((c) =>
+        c.id === id ? { ...c, value } : c
+      ),
+    }));
+  },
+
+  setShowValuesOnBoard: (show) => {
+    get().pushSnapshot();
+    set({ showValuesOnBoard: show });
   },
 
   // No snapshot — called per-pixel during drag
@@ -862,6 +880,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       netAssignments: s.netAssignments,
       schematicWires: s.schematicWires,
       board: s.board,
+      showValuesOnBoard: s.showValuesOnBoard,
     };
   },
 
@@ -889,6 +908,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     netAssignments: [],
     schematicWires: [],
     board: { rows: 20, cols: 20, cuts: [], wires: [] },
+    showValuesOnBoard: false,
     wirePlacementMode: false,
     wirePlacementFrom: null,
     schematicWireDrawMode: false,

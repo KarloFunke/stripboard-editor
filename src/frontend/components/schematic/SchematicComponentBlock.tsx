@@ -29,6 +29,8 @@ export default function SchematicComponentBlock({
   const netAssignments = useProjectStore((s) => s.netAssignments);
   const nets = useProjectStore((s) => s.nets);
   const updateLabel = useProjectStore((s) => s.updateLabel);
+  const updateComponentValue = useProjectStore((s) => s.updateComponentValue);
+  const transact = useProjectStore((s) => s.transact);
   const updatePinName = useProjectStore((s) => s.updatePinName);
   const updateLabelOffset = useProjectStore((s) => s.updateLabelOffset);
   const updatePinLabelOffset = useProjectStore((s) => s.updatePinLabelOffset);
@@ -37,6 +39,7 @@ export default function SchematicComponentBlock({
 
   const [editingLabel, setEditingLabel] = useState(false);
   const [editLabelValue, setEditLabelValue] = useState("");
+  const [editValueValue, setEditValueValue] = useState("");
   const [editingPinId, setEditingPinId] = useState<string | null>(null);
   const [editPinValue, setEditPinValue] = useState("");
   const [draggingLabel, setDraggingLabel] = useState(false);
@@ -46,6 +49,7 @@ export default function SchematicComponentBlock({
 
   const def = resolveComponentDef(component, componentDefs);
   if (!def) return null;
+  const allowsValue = def.hasValue ?? false;
 
   const rotation = component.schematicRotation ?? 0;
   const mirrored = component.schematicMirrored ?? false;
@@ -82,13 +86,20 @@ export default function SchematicComponentBlock({
     }
     e.stopPropagation();
     setEditLabelValue(component.label);
+    setEditValueValue(component.value ?? "");
     setEditingLabel(true);
   };
 
   const commitLabel = () => {
-    const trimmed = editLabelValue.trim();
-    if (trimmed && trimmed !== component.label) {
-      updateLabel(component.id, trimmed);
+    const trimmedLabel = editLabelValue.trim();
+    const trimmedValue = editValueValue.trim();
+    const labelChanged = !!trimmedLabel && trimmedLabel !== component.label;
+    const valueChanged = allowsValue && trimmedValue !== (component.value ?? "");
+    if (labelChanged || valueChanged) {
+      transact(() => {
+        if (labelChanged) updateLabel(component.id, trimmedLabel);
+        if (valueChanged) updateComponentValue(component.id, trimmedValue);
+      });
     }
     setEditingLabel(false);
   };
@@ -178,24 +189,43 @@ export default function SchematicComponentBlock({
       {/* Label */}
       {editingLabel ? (
         <foreignObject
-          x={labelX - 50}
-          y={labelY - 14}
-          width={100}
-          height={20}
+          x={labelX - 55}
+          y={labelY - 16}
+          width={110}
+          height={46}
         >
-          <input
-            autoFocus
-            value={editLabelValue}
-            onChange={(e) => setEditLabelValue(e.target.value)}
-            onBlur={commitLabel}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") commitLabel();
-              if (e.key === "Escape") setEditingLabel(false);
+          <div
+            className="flex flex-col gap-0.5"
+            onBlur={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) commitLabel();
             }}
-            className="w-full bg-white dark:bg-neutral-800 border border-[#113768] dark:border-[#5b9bd5] rounded px-1 text-xs text-center text-neutral-900 dark:text-neutral-100 outline-none"
             onClick={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
-          />
+          >
+            <input
+              autoFocus
+              value={editLabelValue}
+              onChange={(e) => setEditLabelValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commitLabel();
+                if (e.key === "Escape") setEditingLabel(false);
+              }}
+              placeholder="Ref"
+              className="w-full bg-white dark:bg-neutral-800 border border-[#113768] dark:border-[#5b9bd5] rounded px-1 text-xs text-center text-neutral-900 dark:text-neutral-100 outline-none"
+            />
+            {allowsValue && (
+              <input
+                value={editValueValue}
+                onChange={(e) => setEditValueValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") commitLabel();
+                  if (e.key === "Escape") setEditingLabel(false);
+                }}
+                placeholder="Value"
+                className="w-full bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded px-1 text-[10px] text-center text-neutral-700 dark:text-neutral-300 outline-none"
+              />
+            )}
+          </div>
         </foreignObject>
       ) : (
         <text
@@ -209,7 +239,12 @@ export default function SchematicComponentBlock({
           onClick={handleLabelClick}
           onMouseDown={handleLabelDragStart}
         >
-          {component.label}
+          <tspan x={labelX}>{component.label}</tspan>
+          {allowsValue && component.value && (
+            <tspan x={labelX} dy="1.2em" fontWeight={400} fillOpacity={0.7}>
+              {component.value}
+            </tspan>
+          )}
         </text>
       )}
 

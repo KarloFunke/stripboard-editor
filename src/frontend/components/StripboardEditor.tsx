@@ -18,6 +18,8 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
   const netAssignments = useProjectStore((s) => s.netAssignments);
   const isActive = useProjectStore((s) => s.activeEditor === "stripboard");
   const setActiveEditor = useProjectStore((s) => s.setActiveEditor);
+  const showValuesOnBoard = useProjectStore((s) => s.showValuesOnBoard);
+  const setShowValuesOnBoard = useProjectStore((s) => s.setShowValuesOnBoard);
   const [editFootprintId, setEditFootprintId] = useState<string | null>(null);
 
   const { segments, connectivity, conflictCount } = useStripSegments();
@@ -82,6 +84,15 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
                 className="w-[4.5rem] border border-neutral-300 dark:border-neutral-600 rounded px-2 py-1 text-sm text-neutral-900 dark:text-neutral-100 dark:bg-neutral-800 outline-none focus:border-blue-400 text-center"
               />
             </div>
+            <label className="flex items-center gap-1.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={!!showValuesOnBoard}
+                onChange={(e) => setShowValuesOnBoard(e.target.checked)}
+                className="cursor-pointer accent-[#113768] dark:accent-[#5b9bd5]"
+              />
+              <span>show component Values</span>
+            </label>
           </div>
         )}
       </div>}
