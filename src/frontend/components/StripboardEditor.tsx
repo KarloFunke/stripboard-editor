@@ -16,6 +16,8 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
   const componentDefs = useProjectStore((s) => s.componentDefs);
   const nets = useProjectStore((s) => s.nets);
   const netAssignments = useProjectStore((s) => s.netAssignments);
+  const isActive = useProjectStore((s) => s.activeEditor === "stripboard");
+  const setActiveEditor = useProjectStore((s) => s.setActiveEditor);
   const [editFootprintId, setEditFootprintId] = useState<string | null>(null);
 
   const { segments, connectivity, conflictCount } = useStripSegments();
@@ -43,7 +45,10 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div
+      className="relative flex h-full flex-col"
+      onMouseDownCapture={readOnly ? undefined : () => setActiveEditor("stripboard")}
+    >
       {!hideSidebar && <div className="border-b border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-900 px-5 h-12 font-semibold text-sm text-[#113768] dark:text-[#5b9bd5] flex items-center justify-between">
         <div className="flex items-center gap-3">
           <span>Stripboard Layout</span>
@@ -103,6 +108,9 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
           componentId={editFootprintId}
           onClose={() => setEditFootprintId(null)}
         />
+      )}
+      {!readOnly && isActive && (
+        <div className="pointer-events-none absolute inset-0 z-30 ring-2 ring-inset ring-[#113768]/60 dark:ring-[#5b9bd5]/60" />
       )}
     </div>
   );

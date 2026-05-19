@@ -10,9 +10,14 @@ export default function SchematicEditor({ readOnly = false, hideSidebar = false 
   const wireDrawMode = useProjectStore((s) => s.schematicWireDrawMode);
   const wireDrawingFrom = useProjectStore((s) => s.schematicWireDrawingFrom);
   const toggleWireDrawMode = useProjectStore((s) => s.toggleSchematicWireDrawMode);
+  const isActive = useProjectStore((s) => s.activeEditor === "schematic");
+  const setActiveEditor = useProjectStore((s) => s.setActiveEditor);
 
   return (
-    <div className="flex h-full flex-col">
+    <div
+      className="relative flex h-full flex-col"
+      onMouseDownCapture={readOnly ? undefined : () => setActiveEditor("schematic")}
+    >
       {/* Header */}
       {!hideSidebar && <div className="border-b border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-900 px-5 h-12 font-semibold text-sm text-[#113768] dark:text-[#5b9bd5] flex items-center justify-between">
         <span>Schematic / Net Editor</span>
@@ -60,6 +65,9 @@ export default function SchematicEditor({ readOnly = false, hideSidebar = false 
           <SchematicCanvas readOnly={readOnly} />
         </div>
       </div>
+      {!readOnly && isActive && (
+        <div className="pointer-events-none absolute inset-0 z-30 ring-2 ring-inset ring-[#113768]/60 dark:ring-[#5b9bd5]/60" />
+      )}
     </div>
   );
 }

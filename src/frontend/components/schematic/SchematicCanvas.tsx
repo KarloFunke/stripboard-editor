@@ -192,6 +192,9 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (readOnly) return;
+      // Both editors are mounted at once; only the last-interacted pane owns
+      // the keyboard so one keypress doesn't act on both canvases.
+      if (useProjectStore.getState().activeEditor !== "schematic") return;
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
 

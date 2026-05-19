@@ -85,6 +85,7 @@ interface ProjectActions {
   setWirePlacementFrom: (pos: BoardPosition) => void;
   setTrayDragComponentId: (id: string | null) => void;
   setHighlightedNetId: (id: string | null) => void;
+  setActiveEditor: (editor: "schematic" | "stripboard") => void;
   toggleSchematicWireDrawMode: () => void;
   setSchematicWireDrawing: (from: { x: number; y: number } | null) => void;
   captureSchematicDragBindings: (componentId: string) => void;
@@ -115,6 +116,9 @@ interface UIState {
   schematicWireDirection: "horizontal-first" | "vertical-first" | null; // locked on first significant mouse move
   // Captured at drag start: which wire endpoints to move with the dragged component
   _dragWireBindings: { wireId: string; endpoint: "start" | "end" }[] | null;
+  // Which editor pane last received interaction — keyboard shortcuts target it
+  // so the schematic and stripboard canvases don't both react to one keypress.
+  activeEditor: "schematic" | "stripboard";
 }
 
 interface HistoryState {
@@ -234,6 +238,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   schematicWireDrawMode: false,
   schematicWireDrawingFrom: null,
   schematicWireDirection: null,
+  activeEditor: "schematic",
   _dragWireBindings: null,
   _history: [],
   _redoStack: [],
@@ -741,6 +746,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   setTrayDragComponentId: (id) => set({ trayDragComponentId: id }),
   setHighlightedNetId: (id) => set({ highlightedNetId: id }),
+  setActiveEditor: (editor) => set({ activeEditor: editor }),
   toggleSchematicWireDrawMode: () => set((s) => ({
     schematicWireDrawMode: !s.schematicWireDrawMode,
     schematicWireDrawingFrom: null,
