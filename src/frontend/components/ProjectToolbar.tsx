@@ -10,9 +10,10 @@ import ThemeToggle from "./ThemeToggle";
 interface Props {
   editUuid?: string;
   viewUuid?: string | null;
-  onSave?: () => void | Promise<void>;
+  onSave?: () => Promise<boolean>;
   saving?: boolean;
   lastSaved?: Date | null;
+  saveError?: boolean;
   autoSave?: boolean;
   onToggleAutoSave?: () => void;
 }
@@ -53,7 +54,21 @@ function FeedbackButton({
   );
 }
 
-export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, lastSaved, autoSave, onToggleAutoSave }: Props) {
+function isValidProjectShape(d: unknown): boolean {
+  if (!d || typeof d !== "object" || Array.isArray(d)) return false;
+  const o = d as Record<string, unknown>;
+  const arrays = ["components", "nets", "netAssignments", "schematicWires"];
+  for (const k of arrays) {
+    if (!Array.isArray(o[k])) return false;
+  }
+  if (o.componentDefs !== undefined && !Array.isArray(o.componentDefs)) return false;
+  const board = o.board as Record<string, unknown> | undefined;
+  if (!board || typeof board !== "object" ||
+      typeof board.rows !== "number" || typeof board.cols !== "number") return false;
+  return true;
+}
+
+export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, lastSaved, saveError, autoSave, onToggleAutoSave }: Props) {
   const router = useRouter();
   const name = useProjectStore((s) => s.name);
   const undo = useProjectStore((s) => s.undo);
@@ -62,7 +77,7 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
   const canRedo = useProjectStore((s) => s.canRedo);
   const setProjectName = useProjectStore((s) => s.setProjectName);
   const exportProject = useProjectStore((s) => s.exportProject);
-  const loadProject = useProjectStore((s) => s.loadProject);
+  const importProject = useProjectStore((s) => s.importProject);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showShare, setShowShare] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
@@ -171,22 +186,35 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
+      let data: unknown;
       try {
-        const data = JSON.parse(ev.target?.result as string);
-        loadProject(data);
-        track("project-import");
+        data = JSON.parse(ev.target?.result as string);
       } catch {
-        alert("Invalid project file.");
+        alert("Invalid project file: not valid JSON.");
+        return;
       }
+      if (!isValidProjectShape(data)) {
+        alert("This file doesn't look like a Stripboard Editor project.");
+        return;
+      }
+      if (
+        useProjectStore.getState().isDirty &&
+        !window.confirm("Importing replaces your current project. You have unsaved changes — continue? (You can still undo with Ctrl+Z.)")
+      ) {
+        return;
+      }
+      importProject(data as Parameters<typeof importProject>[0]);
+      track("project-import");
     };
     reader.readAsText(file);
     e.target.value = "";
   };
 
-  const handleSave = () => {
-    if (onSave) {
-      onSave();
-      track("project-save");
+  const handleSave = async () => {
+    if (!onSave) return;
+    track("project-save");
+    const ok = await onSave();
+    if (ok) {
       setSaveFlash(true);
       setTimeout(() => setSaveFlash(false), 1500);
       if (!user && !hasShownSaveNotice.current) {
@@ -257,11 +285,13 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
               </svg>
             </span>
           )}
-          {lastSaved && (
+          {saveError ? (
+            <span className="text-red-300 font-medium">Save failed</span>
+          ) : lastSaved ? (
             <span className="opacity-40">
               saved {lastSaved.toLocaleTimeString()}
             </span>
-          )}
+          ) : null}
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -281,19 +311,22 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
             ↷
           </button>
           <span className="opacity-20">|</span>
-          {onSave && !autoSave && (
+          {onSave && (
             <button
               onClick={handleSave}
               disabled={saving || saveFlash}
               className={`px-3.5 py-1.5 rounded transition-all text-sm ${
                 saveFlash
                   ? "bg-green-500/80 text-white"
+                  : saveError
+                  ? "bg-red-500/80 text-white hover:bg-red-600/80"
                   : saving
                   ? "bg-white/10 opacity-60"
                   : "bg-white/10 hover:bg-white/20"
               }`}
+              title={saveError ? "Last save failed — click to retry" : undefined}
             >
-              {saveFlash ? "Saved!" : saving ? "Saving..." : "Save"}
+              {saveFlash ? "Saved!" : saving ? "Saving..." : saveError ? "Retry save" : "Save"}
             </button>
           )}
           {onToggleAutoSave && editUuid && (
@@ -467,10 +500,8 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
               </button>
               <button
                 onClick={async () => {
-                  if (onSave) {
-                    await onSave();
-                  }
-                  router.push("/");
+                  const ok = onSave ? await onSave() : true;
+                  if (ok) router.push("/");
                 }}
                 className="px-4 py-2 text-sm rounded bg-[#113768] text-white font-medium hover:bg-[#0d2a50] transition-colors"
               >

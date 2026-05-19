@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useProjectStore } from "@/store/useProjectStore";
 import { createProject } from "@/lib/api";
@@ -29,12 +29,15 @@ export default function NewProjectPage() {
 
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
+  const [saveError, setSaveError] = useState(false);
   const [editUuid, setEditUuid] = useState<string | null>(null);
   const [viewUuid, setViewUuid] = useState<string | null>(null);
 
-  const handleSave = async () => {
+  const handleSave = useCallback(async (): Promise<boolean> => {
     setSaving(true);
+    let ok = false;
     try {
+      const seq = useProjectStore.getState()._editSeq;
       const projectData = exportProject();
       if (!editUuid) {
         // First save: create in DB
@@ -44,22 +47,23 @@ export default function NewProjectPage() {
         );
         setEditUuid(project.edit_uuid);
         setViewUuid(project.view_uuid);
-        setLastSaved(new Date());
-        markClean();
         // Replace URL without full reload so state is preserved
         window.history.replaceState(null, "", `/project/${project.edit_uuid}`);
       } else {
         // Subsequent saves: update existing
         const { saveProject } = await import("@/lib/api");
         await saveProject(editUuid, projectData.name, projectData as unknown as Record<string, unknown>);
-        setLastSaved(new Date());
-        markClean();
       }
+      if (useProjectStore.getState()._editSeq === seq) markClean();
+      setLastSaved(new Date());
+      setSaveError(false);
+      ok = true;
     } catch {
-      alert("Failed to save project.");
+      setSaveError(true);
     }
     setSaving(false);
-  };
+    return ok;
+  }, [editUuid, exportProject, markClean]);
 
   if (isMobile) {
     return (
@@ -95,6 +99,7 @@ export default function NewProjectPage() {
         onSave={handleSave}
         saving={saving}
         lastSaved={lastSaved}
+        saveError={saveError}
       />
       <SplitPane
         left={<SchematicEditor />}

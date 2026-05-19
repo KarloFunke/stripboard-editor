@@ -95,6 +95,7 @@ interface ProjectActions {
   setProjectName: (name: string) => void;
   exportProject: () => Project;
   loadProject: (data: Project) => void;
+  importProject: (data: Project) => void;
   resetProject: () => void;
 
   // Undo/redo
@@ -127,6 +128,7 @@ interface HistoryState {
   // While true, nested pushSnapshot() calls are skipped so a multi-mutation
   // operation (e.g. bulk delete) produces a single undo entry.
   _suppressSnapshot: boolean;
+  _editSeq: number;
   isDirty: boolean;
   markClean: () => void;
   /** Run fn as one undoable step: one snapshot up front, none in between. */
@@ -228,6 +230,43 @@ function transformSchematicComponent(
   return { components: newComponents, schematicWires: newWires };
 }
 
+function prepareProjectState(data: Project) {
+  const savedDefs = data.componentDefs ?? [];
+  const defaultIds = new Set(DEFAULT_COMPONENTS.map((d) => d.id));
+  const customDefs = savedDefs.filter((d) => !defaultIds.has(d.id));
+  const mergedDefs = [...DEFAULT_COMPONENTS, ...customDefs];
+
+  for (const def of customDefs) {
+    if (def.symbol.startsWith("custom-footprint-")) {
+      const symbol = createFootprintSymbol(def.pins, def.width, def.height);
+      registerCustomSymbol(def.id, { ...symbol, symbolId: def.symbol });
+    }
+  }
+
+  return {
+    name: data.name ?? "Untitled Project",
+    componentDefs: mergedDefs,
+    components: (data.components ?? []).map((c) => ({
+      ...c,
+      schematicRotation: c.schematicRotation ?? 0,
+    })),
+    nets: data.nets ?? [],
+    netAssignments: data.netAssignments ?? [],
+    schematicWires: data.schematicWires ?? [],
+    board: {
+      rows: data.board?.rows ?? 20,
+      cols: data.board?.cols ?? 20,
+      cuts: data.board?.cuts ?? [],
+      wires: data.board?.wires ?? [],
+    },
+    wirePlacementMode: false,
+    wirePlacementFrom: null,
+    schematicWireDrawMode: false,
+    schematicWireDrawingFrom: null,
+    schematicWireDirection: null,
+  };
+}
+
 export const useProjectStore = create<ProjectStore>((set, get) => ({
   ...initialProject,
 
@@ -243,6 +282,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   _history: [],
   _redoStack: [],
   _suppressSnapshot: false,
+  _editSeq: 0,
   canUndo: false,
   canRedo: false,
   isDirty: false,
@@ -826,46 +866,19 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   loadProject: (data) => {
-    const savedDefs = data.componentDefs ?? [];
-    const defaultIds = new Set(DEFAULT_COMPONENTS.map((d) => d.id));
-    const customDefs = savedDefs.filter((d) => !defaultIds.has(d.id));
-    const mergedDefs = [...DEFAULT_COMPONENTS, ...customDefs];
-
-    // Register custom footprint symbols for custom components
-    for (const def of customDefs) {
-      if (def.symbol.startsWith("custom-footprint-")) {
-        const symbol = createFootprintSymbol(def.pins, def.width, def.height);
-        registerCustomSymbol(def.id, { ...symbol, symbolId: def.symbol });
-      }
-    }
-
     set({
-      name: data.name ?? "Untitled Project",
-      componentDefs: mergedDefs,
-      components: (data.components ?? []).map((c) => ({
-        ...c,
-        schematicRotation: c.schematicRotation ?? 0,
-      })),
-      nets: data.nets ?? [],
-      netAssignments: data.netAssignments ?? [],
-      schematicWires: data.schematicWires ?? [],
-      board: {
-        rows: data.board?.rows ?? 20,
-        cols: data.board?.cols ?? 20,
-        cuts: data.board?.cuts ?? [],
-        wires: data.board?.wires ?? [],
-      },
-      wirePlacementMode: false,
-      wirePlacementFrom: null,
-      schematicWireDrawMode: false,
-      schematicWireDrawingFrom: null,
-      schematicWireDirection: null,
+      ...prepareProjectState(data),
       isDirty: false,
       _history: [],
       _redoStack: [],
       canUndo: false,
       canRedo: false,
     });
+  },
+
+  importProject: (data) => {
+    get().pushSnapshot();
+    set({ ...prepareProjectState(data), isDirty: true });
   },
 
   resetProject: () => set({
@@ -898,7 +911,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const snapshot = snapshotProject(s);
     const history = [...s._history, snapshot];
     if (history.length > MAX_HISTORY) history.shift();
-    set({ _history: history, _redoStack: [], canUndo: true, canRedo: false, isDirty: true });
+    set({ _history: history, _redoStack: [], canUndo: true, canRedo: false, isDirty: true, _editSeq: s._editSeq + 1 });
   },
 
   transact: (fn) => {

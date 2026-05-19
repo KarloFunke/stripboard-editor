@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { useProjectStore } from "@/store/useProjectStore";
 import { getProject, saveProject } from "@/lib/api";
@@ -18,8 +18,6 @@ export default function ProjectEditorPage() {
   const loadProject = useProjectStore((s) => s.loadProject);
   const isMobile = useIsMobile();
   const setProjectName = useProjectStore((s) => s.setProjectName);
-  const exportProject = useProjectStore((s) => s.exportProject);
-  const markClean = useProjectStore((s) => s.markClean);
   const [autoSave, setAutoSave] = useState(false);
 
   const [loading, setLoading] = useState(true);
@@ -27,6 +25,9 @@ export default function ProjectEditorPage() {
   const [viewUuid, setViewUuid] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
+  const [saveError, setSaveError] = useState(false);
+  const savingRef = useRef(false);
+  const rerunRef = useRef(false);
 
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
@@ -52,42 +53,54 @@ export default function ProjectEditorPage() {
       });
   }, [editUuid, loadProject]);
 
-  const handleSave = async () => {
-    setSaving(true);
-    try {
-      const projectData = exportProject();
-      await saveProject(editUuid, projectData.name, projectData as unknown as Record<string, unknown>);
-      setLastSaved(new Date());
-      markClean();
-    } catch {
-      alert("Failed to save project.");
+  const doSave = useCallback(async (): Promise<boolean> => {
+    if (savingRef.current) {
+      rerunRef.current = true;
+      return false;
     }
-    setSaving(false);
-  };
+    savingRef.current = true;
+    setSaving(true);
+    let ok = false;
+    try {
+      const store = useProjectStore.getState();
+      const seq = store._editSeq;
+      const data = store.exportProject();
+      await saveProject(editUuid, data.name, data as unknown as Record<string, unknown>);
+      if (useProjectStore.getState()._editSeq === seq) {
+        useProjectStore.getState().markClean();
+      }
+      setLastSaved(new Date());
+      setSaveError(false);
+      ok = true;
+    } catch {
+      setSaveError(true);
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+    if (rerunRef.current) {
+      rerunRef.current = false;
+      void doSave();
+    }
+    return ok;
+  }, [editUuid]);
 
-  // Auto-save: subscribe to store changes and save to server
+  const handleSave = doSave;
+
+  // Auto-save: debounced save on store changes
   useEffect(() => {
     if (!autoSave) return;
     let timeout: ReturnType<typeof setTimeout>;
     const unsub = useProjectStore.subscribe((state) => {
       if (!state.isDirty) return;
       clearTimeout(timeout);
-      timeout = setTimeout(async () => {
-        try {
-          const data = useProjectStore.getState().exportProject();
-          await saveProject(editUuid, data.name, data as unknown as Record<string, unknown>);
-          useProjectStore.getState().markClean();
-          setLastSaved(new Date());
-        } catch {
-          // silently fail — user can still manual save
-        }
-      }, 2000); // debounce 2s
+      timeout = setTimeout(() => { void doSave(); }, 2000); // debounce 2s
     });
     return () => {
       unsub();
       clearTimeout(timeout);
     };
-  }, [autoSave, editUuid]);
+  }, [autoSave, doSave]);
 
   if (loading) {
     return (
@@ -150,6 +163,7 @@ export default function ProjectEditorPage() {
         onSave={handleSave}
         saving={saving}
         lastSaved={lastSaved}
+        saveError={saveError}
         autoSave={autoSave}
         onToggleAutoSave={() => setAutoSave((v) => !v)}
       />
