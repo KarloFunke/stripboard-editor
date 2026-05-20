@@ -119,6 +119,7 @@ export interface Board {
 // ── Project (top-level, serializable to JSON) ──────────
 
 export interface Project {
+  version?: number; // schema version; absent or <CURRENT triggers migration on load
   name: string;
   componentDefs: ComponentDef[];
   components: Component[];

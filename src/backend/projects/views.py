@@ -16,6 +16,7 @@ from rest_framework.decorators import api_view, permission_classes, throttle_cla
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 
+from .migrations_data.ic_unification import migrate_ic_unification
 from .models import Project
 from .serializers import (
     ProjectListSerializer,
@@ -91,6 +92,29 @@ def project_view(request, view_uuid):
         return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
 
     return Response(ProjectViewSerializer(project).data)
+
+
+@api_view(["POST"])
+def project_migrate(request):
+    """Stateless: takes a project data blob and returns the migrated version.
+    Used by the frontend when importing a JSON file that may be on an older
+    schema version. No DB read or write."""
+    import json
+    from .serializers import MAX_PROJECT_DATA_BYTES
+
+    data = request.data
+    if not isinstance(data, dict):
+        return Response({"error": "Expected an object"}, status=status.HTTP_400_BAD_REQUEST)
+
+    size = len(json.dumps(data).encode("utf-8"))
+    if size > MAX_PROJECT_DATA_BYTES:
+        return Response(
+            {"error": f"Project data too large ({size} bytes). Maximum is {MAX_PROJECT_DATA_BYTES} bytes."},
+            status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+        )
+
+    migrated, _ = migrate_ic_unification(data)
+    return Response(migrated)
 
 
 @api_view(["POST"])

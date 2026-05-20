@@ -134,6 +134,15 @@ export async function forkProject(viewUuid: string): Promise<ProjectDetail> {
   return res.json();
 }
 
+export async function migrateProjectData(data: unknown): Promise<unknown> {
+  const res = await apiFetch("/projects/migrate/", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error("Failed to migrate project");
+  return res.json();
+}
+
 export async function claimProject(editUuid: string): Promise<ProjectDetail> {
   const res = await apiFetch(`/projects/${editUuid}/claim/`, { method: "POST" });
   if (!res.ok) throw new Error("Failed to claim project");

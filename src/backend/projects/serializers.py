@@ -1,8 +1,12 @@
+import logging
 import re
 
 from django.contrib.auth.models import User
 from rest_framework import serializers
+from .migrations_data.ic_unification import migrate_ic_unification
 from .models import Project
+
+_log = logging.getLogger(__name__)
 
 # SHA-256 hex digest: exactly 64 lowercase hex characters
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -78,6 +82,20 @@ class ProjectDetailSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
+    def validate_data(self, value):
+        import json
+        size = len(json.dumps(value).encode("utf-8"))
+        if size > MAX_PROJECT_DATA_BYTES:
+            raise serializers.ValidationError(
+                f"Project data too large ({size} bytes). Maximum is {MAX_PROJECT_DATA_BYTES} bytes."
+            )
+        try:
+            migrated, _ = migrate_ic_unification(value)
+            return migrated
+        except Exception:
+            _log.exception("ic_unification save-hook failed for incoming PUT")
+            return value
+
 
 class ProjectViewSerializer(serializers.ModelSerializer):
     """Read-only serializer for view-only access. Minimal fields, no edit_uuid."""
@@ -123,7 +141,12 @@ class ProjectCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 f"Project data too large ({size} bytes). Maximum is {MAX_PROJECT_DATA_BYTES} bytes."
             )
-        return value
+        try:
+            migrated, _ = migrate_ic_unification(value)
+            return migrated
+        except Exception:
+            _log.exception("ic_unification create-hook failed")
+            return value
 
 
 class UserRegistrationSerializer(serializers.Serializer):

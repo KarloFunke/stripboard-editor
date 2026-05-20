@@ -3,7 +3,7 @@
 import { useRef, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useProjectStore } from "@/store/useProjectStore";
-import { getMe, login, register, logout, claimProject, type User } from "@/lib/api";
+import { getMe, login, register, logout, claimProject, migrateProjectData, type User } from "@/lib/api";
 import { track } from "@/lib/track";
 import ThemeToggle from "./ThemeToggle";
 import PrintPreview from "./print/PrintPreview";
@@ -187,7 +187,7 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => {
+    reader.onload = async (ev) => {
       let data: unknown;
       try {
         data = JSON.parse(ev.target?.result as string);
@@ -205,8 +205,18 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
       ) {
         return;
       }
+      const version = (data as { version?: number }).version ?? 1;
+      const migrated = version < 2;
+      if (migrated) {
+        try {
+          data = await migrateProjectData(data);
+        } catch {
+          alert("Failed to migrate imported project to the current version.");
+          return;
+        }
+      }
       importProject(data as Parameters<typeof importProject>[0]);
-      track("project-import");
+      track("project-import", { migrated: migrated ? "yes" : "no" });
     };
     reader.readAsText(file);
     e.target.value = "";

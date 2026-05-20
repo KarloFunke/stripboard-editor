@@ -873,6 +873,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const defaultIds = new Set(DEFAULT_COMPONENTS.map((d) => d.id));
     const customDefs = s.componentDefs.filter((d) => !defaultIds.has(d.id));
     return {
+      version: 2,
       name: s.name,
       componentDefs: customDefs,
       components: s.components,

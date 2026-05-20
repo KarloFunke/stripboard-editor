@@ -126,14 +126,14 @@ const led: SymbolDef = {
     { d: `M 8 0 L ${DIODE_LEAD} 0`, fill: "none" },
   ],
   extraElements: [
-    // Arrow 1: shaft + arrowhead (~40° per side)
+    // Arrow 1: shaft + head
     { type: "line", props: { x1: 3, y1: -11, x2: 10, y2: -18 } },
-    { type: "line", props: { x1: 10, y1: -18, x2: 4, y2: -15 } },
-    { type: "line", props: { x1: 10, y1: -18, x2: 7, y2: -12 } },
+    { type: "line", props: { x1: 10, y1: -18, x2: 7, y2: -17 } },
+    { type: "line", props: { x1: 10, y1: -18, x2: 9, y2: -15 } },
     // Arrow 2
     { type: "line", props: { x1: 7, y1: -9, x2: 14, y2: -16 } },
-    { type: "line", props: { x1: 14, y1: -16, x2: 8, y2: -13 } },
-    { type: "line", props: { x1: 14, y1: -16, x2: 11, y2: -10 } },
+    { type: "line", props: { x1: 14, y1: -16, x2: 11, y2: -15 } },
+    { type: "line", props: { x1: 14, y1: -16, x2: 13, y2: -13 } },
   ],
   pins: [
     { pinId: "1", defaultName: "A", stubStart: { x: -8, y: 0 }, stubEnd: { x: -DIODE_LEAD, y: 0 }, side: "left" },
@@ -169,7 +169,7 @@ const npn: SymbolDef = {
     { d: "M -6 -14 L -6 14", fill: "none" },           // base bar
     { d: "M -6 -7 L 12 -18", fill: "none" },            // collector
     { d: "M -6 7 L 12 18", fill: "none" },               // emitter
-    { d: "M 7 10 L 12 18 L 3 17", fill: "none" },          // arrow
+    { d: "M 9 14 L 12 18 L 7 17", fill: "none" },          // arrow
     // Stubs to grid-aligned endpoints
     { d: `M -6 0 L ${-2 * G} 0`, fill: "none" },         // B stub
     { d: `M 12 -18 L ${G} ${-2 * G}`, fill: "none" },    // C stub
@@ -193,7 +193,7 @@ const pnp: SymbolDef = {
     { d: "M -6 -14 L -6 14", fill: "none" },
     { d: "M -6 -7 L 12 -18", fill: "none" },
     { d: "M -6 7 L 12 18", fill: "none" },
-    { d: "M 3 8 L -6 7 L -1 15", fill: "none" },    // arrow inward
+    { d: "M -3 11 L -6 7 L -1 8", fill: "none" },    // arrow inward
     { d: `M -6 0 L ${-2 * G} 0`, fill: "none" },
     { d: `M 12 -18 L ${G} ${-2 * G}`, fill: "none" },
     { d: `M 12 18 L ${G} ${2 * G}`, fill: "none" },
@@ -367,24 +367,23 @@ const timer555: SymbolDef = {
   labelYOffset: 14,
   category: "ic",
   bodyPaths: [
-    { d: `M -24 ${-G - 10} L 24 ${-G - 10} L 24 ${2 * G + 10} L -24 ${2 * G + 10} Z`, fill: "none" },
-    // Stubs for 8 pins (4 per side, evenly spaced at grid multiples)
-    ...[-G, 0, G, 2 * G].map((y) => ({ d: `M -24 ${y} L ${-2 * G} ${y}`, fill: "none" })),
-    ...[-G, 0, G, 2 * G].map((y) => ({ d: `M 24 ${y} L ${2 * G} ${y}`, fill: "none" })),
+    { d: `M -40 ${-G - 10} L 40 ${-G - 10} L 40 ${2 * G + 10} L -40 ${2 * G + 10} Z`, fill: "none" },
+    { d: `M -6 ${-G - 10} A 6 6 0 0 1 6 ${-G - 10}`, fill: "none" }, // notch
+    ...[-G, 0, G, 2 * G].map((y) => ({ d: `M -40 ${y} L ${-3 * G} ${y}`, fill: "none" })),
+    ...[-G, 0, G, 2 * G].map((y) => ({ d: `M 40 ${y} L ${3 * G} ${y}`, fill: "none" })),
   ],
   extraElements: [
     { type: "text", props: { x: 0, y: 4, fontSize: 10, textAnchor: "middle", children: "555" } },
   ],
   pins: [
-    { pinId: "1", defaultName: "GND", stubStart: { x: -24, y: -G }, stubEnd: { x: -2 * G, y: -G }, side: "left" },
-    { pinId: "2", defaultName: "TRIG", stubStart: { x: -24, y: 0 }, stubEnd: { x: -2 * G, y: 0 }, side: "left" },
-    { pinId: "3", defaultName: "OUT", stubStart: { x: -24, y: G }, stubEnd: { x: -2 * G, y: G }, side: "left" },
-    { pinId: "4", defaultName: "RESET", stubStart: { x: -24, y: 2 * G }, stubEnd: { x: -2 * G, y: 2 * G }, side: "left" },
-    // Top anchor point to push bounds above the box (stubStart at box top)
-    { pinId: "8", defaultName: "VCC", stubStart: { x: 24, y: -G }, stubEnd: { x: 2 * G, y: -G }, side: "right" },
-    { pinId: "7", defaultName: "DISCH", stubStart: { x: 24, y: 0 }, stubEnd: { x: 2 * G, y: 0 }, side: "right" },
-    { pinId: "6", defaultName: "THRESH", stubStart: { x: 24, y: G }, stubEnd: { x: 2 * G, y: G }, side: "right" },
-    { pinId: "5", defaultName: "CTRL", stubStart: { x: 24, y: 2 * G }, stubEnd: { x: 2 * G, y: 2 * G }, side: "right" },
+    { pinId: "1", defaultName: "GND", stubStart: { x: -40, y: -G }, stubEnd: { x: -3 * G, y: -G }, side: "left" },
+    { pinId: "2", defaultName: "TRIG", stubStart: { x: -40, y: 0 }, stubEnd: { x: -3 * G, y: 0 }, side: "left" },
+    { pinId: "3", defaultName: "OUT", stubStart: { x: -40, y: G }, stubEnd: { x: -3 * G, y: G }, side: "left" },
+    { pinId: "4", defaultName: "RESET", stubStart: { x: -40, y: 2 * G }, stubEnd: { x: -3 * G, y: 2 * G }, side: "left" },
+    { pinId: "8", defaultName: "VCC", stubStart: { x: 40, y: -G }, stubEnd: { x: 3 * G, y: -G }, side: "right" },
+    { pinId: "7", defaultName: "DISCH", stubStart: { x: 40, y: 0 }, stubEnd: { x: 3 * G, y: 0 }, side: "right" },
+    { pinId: "6", defaultName: "THRESH", stubStart: { x: 40, y: G }, stubEnd: { x: 3 * G, y: G }, side: "right" },
+    { pinId: "5", defaultName: "CTRL", stubStart: { x: 40, y: 2 * G }, stubEnd: { x: 3 * G, y: 2 * G }, side: "right" },
   ],
 };
 
@@ -394,18 +393,18 @@ const optocoupler: SymbolDef = {
   labelYOffset: 8,
   category: "ic",
   bodyPaths: [
-    { d: `M -18 ${-G - 6} L 18 ${-G - 6} L 18 ${G + 6} L -18 ${G + 6} Z`, fill: "none" },
-    // Stubs
-    { d: `M -18 ${-G} L ${-2 * G} ${-G}`, fill: "none" },
-    { d: `M -18 ${G} L ${-2 * G} ${G}`, fill: "none" },
-    { d: `M 18 ${-G} L ${2 * G} ${-G}`, fill: "none" },
-    { d: `M 18 ${G} L ${2 * G} ${G}`, fill: "none" },
+    { d: `M -40 ${-G - 6} L 40 ${-G - 6} L 40 ${G + 6} L -40 ${G + 6} Z`, fill: "none" },
+    { d: `M -6 ${-G - 6} A 6 6 0 0 1 6 ${-G - 6}`, fill: "none" }, // notch
+    { d: `M -40 ${-G} L ${-3 * G} ${-G}`, fill: "none" },
+    { d: `M -40 ${G} L ${-3 * G} ${G}`, fill: "none" },
+    { d: `M 40 ${-G} L ${3 * G} ${-G}`, fill: "none" },
+    { d: `M 40 ${G} L ${3 * G} ${G}`, fill: "none" },
   ],
   pins: [
-    { pinId: "1", defaultName: "A", stubStart: { x: -18, y: -G }, stubEnd: { x: -2 * G, y: -G }, side: "left" },
-    { pinId: "2", defaultName: "K", stubStart: { x: -18, y: G }, stubEnd: { x: -2 * G, y: G }, side: "left" },
-    { pinId: "4", defaultName: "C", stubStart: { x: 18, y: -G }, stubEnd: { x: 2 * G, y: -G }, side: "right" },
-    { pinId: "3", defaultName: "E", stubStart: { x: 18, y: G }, stubEnd: { x: 2 * G, y: G }, side: "right" },
+    { pinId: "1", defaultName: "A", stubStart: { x: -40, y: -G }, stubEnd: { x: -3 * G, y: -G }, side: "left" },
+    { pinId: "2", defaultName: "K", stubStart: { x: -40, y: G }, stubEnd: { x: -3 * G, y: G }, side: "left" },
+    { pinId: "4", defaultName: "C", stubStart: { x: 40, y: -G }, stubEnd: { x: 3 * G, y: -G }, side: "right" },
+    { pinId: "3", defaultName: "E", stubStart: { x: 40, y: G }, stubEnd: { x: 3 * G, y: G }, side: "right" },
   ],
 };
 
@@ -479,7 +478,7 @@ const STATIC_SYMBOLS: SymbolDef[] = [
 export function createGenericIcSymbol(pinCount: number): SymbolDef {
   const pinsPerSide = Math.ceil(pinCount / 2);
   const rightCount = pinCount - pinsPerSide;
-  const bodyWidth = 60;
+  const bodyWidth = 80;
   const halfW = bodyWidth / 2;
 
   // Pins spaced G apart, starting at y=0
