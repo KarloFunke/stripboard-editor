@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Script from "next/script";
 import { Geist, Geist_Mono } from "next/font/google";
+import { SITE_URL } from "@/lib/site";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -13,7 +14,7 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-const siteUrl = "https://stripboard-editor.com";
+const siteUrl = SITE_URL;
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
@@ -22,7 +23,7 @@ export const metadata: Metadata = {
     template: "%s | Stripboard Editor",
   },
   description:
-    "Free online stripboard layout editor with a built-in schematic editor. Draw schematics with standard symbols, then place components on a virtual stripboard. Copper strips colour-code to your nets in real time so you can instantly see what is connected.",
+    "Free online stripboard layout editor with a built-in schematic editor. Draw schematics with standard symbols, then place components on a virtual stripboard. Copper strips colour-code to your nets in real time so you can instantly see what is connected — then print a true-scale build template with a mirrored cut guide and a bill of materials (BOM).",
   keywords: [
     "stripboard",
     "veroboard",
@@ -33,6 +34,9 @@ export const metadata: Metadata = {
     "through-hole",
     "prototype",
     "schematic editor",
+    "printable stripboard template",
+    "bill of materials",
+    "BOM",
   ],
   openGraph: {
     type: "website",
@@ -41,7 +45,7 @@ export const metadata: Metadata = {
     siteName: "Stripboard Editor",
     title: "Stripboard Editor - Design Stripboard Layouts Online",
     description:
-      "Free online stripboard editor with a built-in schematic editor. Draw circuits with standard symbols, wire up nets, and layout on a virtual stripboard with live strip colouring.",
+      "Free online stripboard editor with a built-in schematic editor. Draw circuits with standard symbols, wire up nets, and layout on a virtual stripboard with live strip colouring — then print a 1:1 build template with a parts list (BOM).",
     images: [
       {
         url: "/demo-circuit.png",
@@ -55,7 +59,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Stripboard Editor - Design Stripboard Layouts Online",
     description:
-      "Free online stripboard editor with a built-in schematic editor. Draw circuits, wire up nets, and layout on a virtual stripboard.",
+      "Free online stripboard editor with a built-in schematic editor. Draw circuits, wire up nets, layout on a virtual stripboard, and print a 1:1 build template with a BOM.",
     images: ["/demo-circuit.png"],
   },
   alternates: {

@@ -72,3 +72,21 @@ body {
   color: var(--foreground);
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
 }
+
+@media print {
+  /* margin 0 removes the browser's header/footer (page title, URL, date,
+     page numbers); the 10mm content inset comes from each page's padding.
+     Keeps the edit URL out of shared PDFs. */
+  @page { size: A4; margin: 0; }
+  body { background: #fff; }
+  body > *:not(.print-portal) { display: none !important; }
+  .print-portal { position: static !important; }
+  .print-overlay { position: static !important; background: #fff !important; display: block !important; }
+  .print-scroll { position: static !important; overflow: visible !important; padding: 0 !important; background: #fff !important; }
+  .print-root { width: auto !important; margin: 0 !important; }
+  .print-hide { display: none !important; }
+  .print-keep { break-inside: avoid; }
+  .print-bom { break-inside: auto; }
+  .print-bom thead { display: table-header-group; }
+  .print-bom tr { break-inside: avoid; }
+}

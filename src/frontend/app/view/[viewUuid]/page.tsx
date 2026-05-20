@@ -11,6 +11,7 @@ import StripboardEditor from "@/components/StripboardEditor";
 import SplitPane from "@/components/SplitPane";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import ThemeToggle from "@/components/ThemeToggle";
+import PrintPreview from "@/components/print/PrintPreview";
 
 export default function ProjectViewPage() {
   const params = useParams();
@@ -27,6 +28,7 @@ export default function ProjectViewPage() {
   const [projectName, setProjectName] = useState("");
   const [ownerName, setOwnerName] = useState<string | null>(null);
   const [mobileTab, setMobileTab] = useState<"schematic" | "stripboard">("stripboard");
+  const [showPrint, setShowPrint] = useState(false);
 
   useEffect(() => {
     getProjectView(viewUuid)
@@ -167,6 +169,12 @@ export default function ProjectViewPage() {
         </div>
         <div className="flex items-center gap-2">
           <button
+            onClick={() => { track("print-open", { source: "view" }); setShowPrint(true); }}
+            className="px-3.5 py-1.5 rounded bg-white/10 hover:bg-white/20 transition-colors text-sm"
+          >
+            Print
+          </button>
+          <button
             onClick={handleFork}
             className="px-3.5 py-1.5 rounded bg-white/10 hover:bg-white/20 transition-colors text-sm"
           >
@@ -179,6 +187,7 @@ export default function ProjectViewPage() {
         left={<SchematicEditor readOnly />}
         right={<StripboardEditor readOnly />}
       />
+      {showPrint && <PrintPreview source="view" viewUuid={viewUuid} onClose={() => setShowPrint(false)} />}
     </div>
   );
 }

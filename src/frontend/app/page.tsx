@@ -107,7 +107,7 @@ export default function HomePage() {
             name: "Stripboard Editor",
             url: "https://stripboard-editor.com",
             description:
-              "Free online stripboard layout editor with a built-in schematic editor. Draw circuits with standard symbols, wire up nets, and layout on a virtual stripboard with live strip colouring.",
+              "Free online stripboard layout editor with a built-in schematic editor. Draw circuits with standard symbols, wire up nets, and layout on a virtual stripboard with live strip colouring — then print a true-scale build template with a mirrored cut guide and a bill of materials (BOM).",
             applicationCategory: "DesignApplication",
             operatingSystem: "Any",
             offers: {
@@ -205,7 +205,7 @@ export default function HomePage() {
         {/* How it works */}
         <div className="mb-10">
           <h2 className="text-lg font-semibold text-neutral-800 dark:text-neutral-200 mb-4">How It Works</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-lg p-4 text-center">
               <div className="text-2xl mb-2 text-[#113768] dark:text-[#5b9bd5] font-bold">1</div>
               <p className="text-sm font-medium text-neutral-800 dark:text-neutral-200">Draw Schematic</p>
@@ -221,7 +221,23 @@ export default function HomePage() {
               <p className="text-sm font-medium text-neutral-800 dark:text-neutral-200">Verify and Finish</p>
               <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">Place cuts and wires to resolve conflicts. Conflicts highlight red instantly so you know exactly what to fix.</p>
             </div>
+            <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-lg p-4 text-center">
+              <div className="text-2xl mb-2 text-[#113768] dark:text-[#5b9bd5] font-bold">4</div>
+              <p className="text-sm font-medium text-neutral-800 dark:text-neutral-200">Print and Build</p>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">Print a 1:1 template, lay it on the board and push parts through. Includes a mirrored cut guide and a parts list.</p>
+            </div>
           </div>
+        </div>
+
+        {/* Print demo */}
+        <div className="mb-10">
+          <h2 className="text-lg font-semibold text-neutral-800 dark:text-neutral-200 mb-3">Print and Build</h2>
+          <img
+            src="/print-demo.png"
+            alt="Printable 1:1 stripboard build template with a parts list"
+            className="rounded-lg border border-neutral-200 dark:border-neutral-700 shadow-sm dark:shadow-neutral-900/30 w-full"
+          />
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-2 text-center">Print, lay it on your stripboard, and place parts straight onto the paper. Optionally includes a mirrored copper-side cut guide and a bill of materials.</p>
         </div>
 
         {/* Features */}
@@ -251,6 +267,10 @@ export default function HomePage() {
             <div className="flex items-start gap-2">
               <span className="text-[#113768] dark:text-[#5b9bd5] mt-0.5">-</span>
               <span>JSON export/import, shareable edit and view-only links</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="text-[#113768] dark:text-[#5b9bd5] mt-0.5">-</span>
+              <span>Printable 1:1 board template with parts list (BOM)</span>
             </div>
             <div className="flex items-start gap-2">
               <span className="text-[#113768] dark:text-[#5b9bd5] mt-0.5">-</span>

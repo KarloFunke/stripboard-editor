@@ -6,6 +6,7 @@ import { useProjectStore } from "@/store/useProjectStore";
 import { getMe, login, register, logout, claimProject, type User } from "@/lib/api";
 import { track } from "@/lib/track";
 import ThemeToggle from "./ThemeToggle";
+import PrintPreview from "./print/PrintPreview";
 
 interface Props {
   editUuid?: string;
@@ -85,6 +86,7 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
   const [nameValue, setNameValue] = useState(name);
   const [saveFlash, setSaveFlash] = useState(false);
   const [showExitConfirm, setShowExitConfirm] = useState(false);
+  const [showPrint, setShowPrint] = useState(false);
   const [showSaveNotice, setShowSaveNotice] = useState(false);
   const hasShownSaveNotice = useRef(false);
 
@@ -349,6 +351,10 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
             />
           )}
           <FeedbackButton
+            onClick={() => { track("print-open", { source: "edit" }); setShowPrint(true); }}
+            label="Print"
+          />
+          <FeedbackButton
             onClick={handleExport}
             label="Export"
             feedbackLabel="Exported!"
@@ -405,6 +411,8 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
         </div>
       </div>
 
+      {showPrint && <PrintPreview source="edit" editUuid={editUuid} viewUuid={viewUuid} onClose={() => setShowPrint(false)} />}
+
       {/* Share panel */}
       {showShare && editUuid && viewUuid && (
         <div className="bg-[#113768]/5 dark:bg-[#5b9bd5]/10 border-b border-[#113768]/20 dark:border-[#5b9bd5]/20 px-5 py-3.5 flex items-center gap-4 text-sm">
@@ -451,8 +459,8 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
 
       {/* Save notice for anonymous users */}
       {showSaveNotice && (
-        <div className="bg-amber-50 border-b border-amber-200 px-5 py-3 flex items-center gap-3 text-sm">
-          <div className="flex-1 text-amber-800">
+        <div className="bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-800 px-5 py-3 flex items-center gap-3 text-sm">
+          <div className="flex-1 text-amber-800 dark:text-amber-200">
             Project saved! Bookmark this page or copy the URL to access it later. You need the exact uri to access this project again!
             <button
               onClick={() => { setShowSaveNotice(false); setShowAuth("register"); }}
@@ -464,7 +472,7 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
           </div>
           <button
             onClick={() => setShowSaveNotice(false)}
-            className="text-amber-400 hover:text-amber-600 text-lg flex-shrink-0"
+            className="text-amber-400 hover:text-amber-600 dark:text-amber-500 dark:hover:text-amber-300 text-lg flex-shrink-0"
           >
             ×
           </button>
