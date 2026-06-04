@@ -112,11 +112,11 @@ export default function ComponentLibrary() {
   };
 
   return (
-    <div className="flex flex-col border-b border-neutral-200 dark:border-neutral-700">
-      <div className="px-3.5 py-2.5 text-xs font-semibold text-neutral-500 dark:text-neutral-400 uppercase tracking-wide">
+    <div className="font-sans flex flex-col flex-1 min-h-0 border-b border-neutral-200 dark:border-neutral-700">
+      <div className="px-3.5 py-2.5 font-mono text-xs font-semibold text-[var(--copper)] uppercase tracking-[0.15em]">
         Components
       </div>
-      <div className="flex flex-col max-h-96 overflow-y-auto">
+      <div className="flex flex-col flex-1 min-h-0 overflow-y-auto">
         {COMPONENT_GROUPS.map((group) => {
           const isOpen = openGroups.has(group.label);
           return (
@@ -201,7 +201,7 @@ export default function ComponentLibrary() {
       <div className="px-2.5 py-2 border-t border-neutral-200 dark:border-neutral-700">
         <button
           onClick={() => setShowCustomEditor(true)}
-          className="w-full text-xs py-1.5 rounded bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-colors"
+          className="w-full font-mono text-xs py-1.5 rounded bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-colors"
         >
           + Create Custom Component
         </button>

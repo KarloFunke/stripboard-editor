@@ -8,12 +8,14 @@
   --foreground: #1a1a1a;
   --accent: #113768;
   --accent-light: #5b9bd5;
+  --copper: #a06a14;
 
   /* SVG semantic colors */
   --board-bg: white;
   --hole-fill: white;
   --hole-stroke: #d4d4d4;
   --grid-dot: #c4c4c4;
+  --page-dot: #e6e6e6;
   --strip-color: #D4A853;
   --strip-conflict: #dc2626;
   --component-stroke: #a3a3a3;
@@ -37,11 +39,13 @@
   --foreground: #e5e5e5;
   --accent: #113768;
   --accent-light: #5b9bd5;
+  --copper: #D4A853;
 
   --board-bg: #1a1a1a;
   --hole-fill: #252525;
   --hole-stroke: #555;
   --grid-dot: #3a3a3a;
+  --page-dot: #232323;
   --strip-color: #c9a43a;
   --strip-conflict: #ef4444;
   --component-stroke: #777;
@@ -70,7 +74,9 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  /* Mono by default across the app UI; component/circuit data and the canvases
+     opt back into the sans font via the `font-sans` class. */
+  font-family: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 @media print {

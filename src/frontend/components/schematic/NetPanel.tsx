@@ -26,8 +26,8 @@ export default function NetPanel({ readOnly = false }: { readOnly?: boolean }) {
   };
 
   return (
-    <div className="flex flex-col flex-1 min-h-0">
-      <div className="px-3.5 py-2.5 text-xs font-semibold text-neutral-500 dark:text-neutral-400 uppercase tracking-wide">
+    <div className="font-sans flex flex-col flex-1 min-h-0">
+      <div className="px-3.5 py-2.5 font-mono text-xs font-semibold text-[var(--copper)] uppercase tracking-[0.15em]">
         Nets
       </div>
 
@@ -99,6 +99,27 @@ export default function NetPanel({ readOnly = false }: { readOnly?: boolean }) {
                 >
                   {net.name}
                 </span>
+              )}
+
+              {!readOnly && !isEditing && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    startEditing(net.id, net.name);
+                  }}
+                  className="flex-shrink-0 text-neutral-400 dark:text-neutral-500 hover:text-[var(--copper)] transition-colors"
+                  title="Rename net"
+                  aria-label="Rename net"
+                >
+                  <svg
+                    width="11" height="11" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M12 20h9" />
+                    <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                  </svg>
+                </button>
               )}
 
             </div>

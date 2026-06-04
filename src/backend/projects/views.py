@@ -11,6 +11,7 @@ from django.contrib.sessions.models import Session
 from django.http import FileResponse
 from django.middleware.csrf import get_token
 from django.utils import timezone
+from django.views.decorators.cache import cache_control
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -158,6 +159,7 @@ def project_claim(request, edit_uuid):
     return Response(ProjectDetailSerializer(project).data)
 
 
+@cache_control(private=True, no_store=True)
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def user_projects(request):
@@ -259,6 +261,7 @@ def auth_change_password(request):
     return Response({"ok": True})
 
 
+@cache_control(private=True, no_store=True)
 @api_view(["GET"])
 def auth_me(request):
     if not request.user.is_authenticated:

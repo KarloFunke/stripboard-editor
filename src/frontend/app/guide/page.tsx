@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import ThemeToggle from "@/components/ThemeToggle";
+import Link from "next/link";
+import SiteHeader from "@/components/SiteHeader";
 
 export const metadata: Metadata = {
   title: "Quick Guide",
@@ -10,24 +11,16 @@ export const metadata: Metadata = {
 
 export default function GuidePage() {
   return (
-    <div className="min-h-screen bg-[#fafafa] dark:bg-[#121212] flex flex-col">
-      <div className="h-12 bg-[#113768] text-white flex items-center px-6 justify-between">
-        <div className="flex items-center">
-          <a href="/" className="font-semibold tracking-wide hover:opacity-80 transition-opacity">
-            Stripboard Editor
-          </a>
-          <span className="opacity-40 mx-3">|</span>
-          <span className="opacity-80">Quick Guide</span>
-        </div>
-        <ThemeToggle />
-      </div>
+    <div className="min-h-screen font-mono bg-[#fafafa] dark:bg-[#121212] bg-[radial-gradient(var(--page-dot)_1px,transparent_1.5px)] [background-size:24px_24px] flex flex-col">
+      <SiteHeader breadcrumb="quick_guide" />
 
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12 flex-1">
-        <h1 className="text-xl sm:text-2xl font-bold text-[#113768] dark:text-[#5b9bd5] mb-6">Quick Guide</h1>
+      <div className="max-w-3xl mx-auto w-full px-4 sm:px-6 py-8 sm:py-12 flex-1">
+        <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-sm dark:shadow-neutral-900/30 px-5 sm:px-8 py-7 sm:py-9">
+        <h1 className="font-mono text-xl sm:text-2xl font-bold text-[#113768] dark:text-[#5b9bd5] mb-6 tracking-tight">Quick Guide</h1>
 
-        {/* Workflow */}
+        {/* Steps */}
         <section className="mb-10">
-          <h2 className="text-lg font-semibold text-neutral-800 dark:text-neutral-200 mb-3">Workflow</h2>
+          <h2 className="font-mono text-xs uppercase tracking-[0.2em] text-[var(--copper)] mb-3">Workflow</h2>
           <ol className="list-decimal list-inside space-y-2 text-sm text-neutral-700 dark:text-neutral-300">
             <li><strong>Design the schematic</strong> on the left. Add components from the library and draw wires between pins to define nets.</li>
             <li><strong>Place components on the stripboard</strong> on the right. Drag them from the unplaced tray onto the board.</li>
@@ -53,7 +46,7 @@ export default function GuidePage() {
 
         {/* Schematic Editor */}
         <section className="mb-10">
-          <h2 className="text-lg font-semibold text-neutral-800 dark:text-neutral-200 mb-3">Schematic Editor (left)</h2>
+          <h2 className="font-mono text-xs uppercase tracking-[0.2em] text-[var(--copper)] mb-3">Schematic Editor (left)</h2>
           <ul className="space-y-2 text-sm text-neutral-700 dark:text-neutral-300">
             <li>Drag components from the library sidebar onto the canvas.</li>
             <li>Press <kbd className="px-1.5 py-0.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded text-xs font-mono">W</kbd> to enter wire drawing mode, then click pins to connect them.</li>
@@ -66,7 +59,7 @@ export default function GuidePage() {
 
         {/* Stripboard Editor */}
         <section className="mb-10">
-          <h2 className="text-lg font-semibold text-neutral-800 dark:text-neutral-200 mb-3">Stripboard Editor (right)</h2>
+          <h2 className="font-mono text-xs uppercase tracking-[0.2em] text-[var(--copper)] mb-3">Stripboard Editor (right)</h2>
           <ul className="space-y-2 text-sm text-neutral-700 dark:text-neutral-300">
             <li>Drag components from the <em>Unplaced</em> tray onto the board.</li>
             <li>Strips automatically colour to match the net of the pin sitting on them.</li>
@@ -81,7 +74,7 @@ export default function GuidePage() {
 
         {/* Keyboard Shortcuts */}
         <section className="mb-10">
-          <h2 className="text-lg font-semibold text-neutral-800 dark:text-neutral-200 mb-3">Keyboard Shortcuts</h2>
+          <h2 className="font-mono text-xs uppercase tracking-[0.2em] text-[var(--copper)] mb-3">Keyboard Shortcuts</h2>
           <div className="space-y-1.5 text-sm">
             {[
               ["R", "Rotate selected component"],
@@ -107,7 +100,7 @@ export default function GuidePage() {
 
         {/* Custom Components */}
         <section className="mb-10">
-          <h2 className="text-lg font-semibold text-neutral-800 dark:text-neutral-200 mb-3">Custom Components</h2>
+          <h2 className="font-mono text-xs uppercase tracking-[0.2em] text-[var(--copper)] mb-3">Custom Components</h2>
           <p className="text-sm text-neutral-700 dark:text-neutral-300">
             Click <strong>+ Create Custom</strong> at the bottom of the library.
             Define the grid size, place pins, and assign names. Your custom components are saved with the project
@@ -117,7 +110,7 @@ export default function GuidePage() {
 
         {/* Saving & Sharing */}
         <section className="mb-10">
-          <h2 className="text-lg font-semibold text-neutral-800 dark:text-neutral-200 mb-3">Saving &amp; Sharing</h2>
+          <h2 className="font-mono text-xs uppercase tracking-[0.2em] text-[var(--copper)] mb-3">Saving &amp; Sharing</h2>
           <ul className="space-y-2 text-sm text-neutral-700 dark:text-neutral-300">
             <li>No account is required. When you save a project for the first time, a unique link is generated. Bookmark or save this link to return to your project later.</li>
             <li>You can also export your project as a JSON file and re-import it at any time.</li>
@@ -126,15 +119,16 @@ export default function GuidePage() {
             <li>Anyone viewing a shared project can <strong>fork</strong> it to create their own editable copy.</li>
           </ul>
         </section>
+        </div>
       </div>
 
       <div className="border-t border-neutral-200 dark:border-neutral-700 mt-auto">
         <div className="max-w-3xl mx-auto px-4 sm:px-6 py-5 flex items-center justify-between text-xs text-neutral-400 dark:text-neutral-500">
           <span>
-            {"© " + new Date().getFullYear() + " "}
+            a hobby project by{" "}
             <a href="https://karl-funke.com?utm_source=stripboard-editor" className="text-neutral-500 dark:text-neutral-400 hover:text-[#113768] dark:hover:text-[#5b9bd5] transition-colors">Karl Funke</a>
           </span>
-          <a href="/privacy" className="text-neutral-500 dark:text-neutral-400 hover:text-[#113768] dark:hover:text-[#5b9bd5] transition-colors">Privacy Policy</a>
+          <Link href="/privacy" className="text-neutral-500 dark:text-neutral-400 hover:text-[#113768] dark:hover:text-[#5b9bd5] transition-colors">Privacy Policy</Link>
         </div>
       </div>
     </div>

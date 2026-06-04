@@ -53,7 +53,7 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
     >
       {!hideSidebar && <div className="border-b border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-900 px-5 h-12 font-semibold text-sm text-[#113768] dark:text-[#5b9bd5] flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <span>Stripboard Layout</span>
+          <span className="font-mono">Stripboard Layout</span>
           {statusText && (
             <span className={`text-xs font-medium ${statusColor}`}>
               {statusText}
@@ -61,7 +61,7 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
           )}
         </div>
         {!readOnly && (
-          <div className="flex items-center gap-4 text-sm font-normal text-neutral-600 dark:text-neutral-400">
+          <div className="flex items-center gap-4 font-mono text-sm font-normal text-neutral-600 dark:text-neutral-400">
             <div className="flex items-center gap-1.5">
               <span>Rows:</span>
               <input
@@ -121,7 +121,7 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
         />
       )}
       {!readOnly && isActive && (
-        <div className="pointer-events-none absolute inset-0 z-30 ring-2 ring-inset ring-[#113768]/60 dark:ring-[#5b9bd5]/60" />
+        <div className="pointer-events-none absolute inset-0 z-30 ring-2 ring-inset ring-[var(--copper)]/70" />
       )}
     </div>
   );

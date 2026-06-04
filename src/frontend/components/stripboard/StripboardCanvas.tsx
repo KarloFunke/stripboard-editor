@@ -607,7 +607,7 @@ export default function StripboardCanvas({
           width="100%"
           height="100%"
           viewBox={panZoom.getViewBox(containerSize.width, containerSize.height)}
-          className="bg-white dark:bg-[#1e1e1e]"
+          className="font-sans bg-white dark:bg-[#1e1e1e]"
           style={{ cursor: cursorStyle }}
           onMouseDown={(e) => {
             panZoom.handlePanStart(e);

@@ -56,7 +56,7 @@ export default function ShortcutOverlay() {
       onClick={() => setShow(false)}
     >
       <div
-        className="bg-white dark:bg-neutral-900 rounded-lg shadow-xl dark:shadow-neutral-900/50 p-6 max-w-lg w-[calc(100%-2rem)] max-h-[80vh] overflow-y-auto"
+        className="font-mono bg-white dark:bg-neutral-900 rounded-lg shadow-xl dark:shadow-neutral-900/50 p-6 max-w-lg w-[calc(100%-2rem)] max-h-[80vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-4">
@@ -71,7 +71,7 @@ export default function ShortcutOverlay() {
 
         {SHORTCUTS.map((group) => (
           <div key={group.section} className="mb-4 last:mb-0">
-            <h3 className="text-xs font-semibold text-neutral-500 dark:text-neutral-400 uppercase tracking-wide mb-2">
+            <h3 className="font-mono text-xs font-semibold text-[var(--copper)] uppercase tracking-[0.15em] mb-2">
               {group.section}
             </h3>
             <div className="space-y-1">

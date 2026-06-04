@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 
-export default function ThemeToggle() {
+export default function ThemeToggle({ className }: { className?: string }) {
   const [dark, setDark] = useState(false);
 
   useEffect(() => {
@@ -19,7 +19,7 @@ export default function ThemeToggle() {
   return (
     <button
       onClick={toggle}
-      className="px-2 py-1.5 rounded bg-white/10 hover:bg-white/20 transition-colors text-sm"
+      className={className ?? "px-2 py-1.5 rounded bg-white/10 hover:bg-white/20 transition-colors text-sm"}
       title={dark ? "Switch to light mode" : "Switch to dark mode"}
     >
       {dark ? (

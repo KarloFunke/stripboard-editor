@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import ThemeToggle from "@/components/ThemeToggle";
+import Link from "next/link";
+import SiteHeader from "@/components/SiteHeader";
 
 export const metadata: Metadata = {
   title: "Privacy Policy",
@@ -9,20 +10,16 @@ export const metadata: Metadata = {
 
 export default function PrivacyPage() {
   return (
-    <div className="min-h-screen bg-[#fafafa] dark:bg-[#121212]">
-      <div className="h-12 bg-[#113768] text-white flex items-center px-6 justify-between">
-        <a href="/" className="font-semibold tracking-wide hover:opacity-80 transition-opacity">
-          Stripboard Editor
-        </a>
-        <ThemeToggle />
-      </div>
+    <div className="min-h-screen font-mono bg-[#fafafa] dark:bg-[#121212] bg-[radial-gradient(var(--page-dot)_1px,transparent_1.5px)] [background-size:24px_24px]">
+      <SiteHeader breadcrumb="privacy" />
 
-      <div className="max-w-2xl mx-auto px-6 py-12">
-        <h1 className="text-2xl font-bold text-[#113768] dark:text-[#5b9bd5] mb-6">Privacy Policy</h1>
+      <div className="max-w-2xl mx-auto w-full px-4 sm:px-6 py-8 sm:py-12">
+        <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-sm dark:shadow-neutral-900/30 px-5 sm:px-8 py-7 sm:py-9">
+        <h1 className="font-mono text-2xl font-bold text-[#113768] dark:text-[#5b9bd5] mb-6 tracking-tight">Privacy Policy</h1>
 
         <div className="prose prose-sm text-neutral-700 dark:text-neutral-300 space-y-5">
           <section>
-            <h2 className="text-lg font-semibold text-neutral-800 dark:text-neutral-200 mt-0">About this project</h2>
+            <h2 className="font-mono text-xs uppercase tracking-[0.2em] text-[var(--copper)] mb-2 mt-0">About this project</h2>
             <p>
               Stripboard Editor is a personal, non-commercial hobby project by Karl Funke.
               It is not affiliated with or operated by any company. This project does not
@@ -31,7 +28,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-neutral-800 dark:text-neutral-200">What data is collected</h2>
+            <h2 className="font-mono text-xs uppercase tracking-[0.2em] text-[var(--copper)] mb-2">What data is collected</h2>
             <ul className="list-disc pl-5 space-y-1">
               <li>
                 <strong>Account data:</strong> If you create an account, your username and a
@@ -60,7 +57,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-neutral-800 dark:text-neutral-200">Data storage</h2>
+            <h2 className="font-mono text-xs uppercase tracking-[0.2em] text-[var(--copper)] mb-2">Data storage</h2>
             <p>
               All data is stored on a server located in Germany. No data is shared with
               third parties. There are no ads, tracking pixels, or external analytics services
@@ -69,7 +66,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-neutral-800 dark:text-neutral-200">Your rights</h2>
+            <h2 className="font-mono text-xs uppercase tracking-[0.2em] text-[var(--copper)] mb-2">Your rights</h2>
             <p>
               Under the GDPR, you have the right to access, correct, or delete your personal data.
               You can delete your account at any time. Deleting your account will also permanently
@@ -79,7 +76,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-neutral-800 dark:text-neutral-200">Contact</h2>
+            <h2 className="font-mono text-xs uppercase tracking-[0.2em] text-[var(--copper)] mb-2">Contact</h2>
             <p>
               Karl Funke<br />
               <a href="mailto:karl.funke@indocu.de" className="text-[#113768] dark:text-[#5b9bd5] hover:underline">karl.funke@indocu.de</a>
@@ -88,9 +85,10 @@ export default function PrivacyPage() {
         </div>
 
         <div className="mt-10 pt-4 border-t border-neutral-200 dark:border-neutral-700 text-xs text-neutral-400 dark:text-neutral-500">
-          <a href="/" className="text-neutral-500 dark:text-neutral-400 hover:text-[#113768] dark:hover:text-[#5b9bd5] transition-colors">
+          <Link href="/" className="text-neutral-500 dark:text-neutral-400 hover:text-[#113768] dark:hover:text-[#5b9bd5] transition-colors">
             Back to Stripboard Editor
-          </a>
+          </Link>
+        </div>
         </div>
       </div>
     </div>

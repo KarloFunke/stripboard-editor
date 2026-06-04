@@ -63,7 +63,7 @@ export default function PrintBoard({ variant, showLabels, showWires, showCuts, s
       width={`${(vbW * SCALE).toFixed(2)}mm`}
       height={`${(vbH * SCALE).toFixed(2)}mm`}
       viewBox={`${vbX} ${vbY} ${vbW} ${vbH}`}
-      style={{ background: "#fff" }}
+      className="font-sans" style={{ background: "#fff" }}
     >
       {strips}
       {holes}

@@ -178,7 +178,7 @@ export default function CustomComponentEditor({ onSave, onClose }: Props) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
+          <h2 className="font-mono text-lg font-semibold text-neutral-900 dark:text-neutral-100">
             Create Custom Component
           </h2>
           <button
@@ -196,7 +196,7 @@ export default function CustomComponentEditor({ onSave, onClose }: Props) {
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full border border-neutral-300 dark:border-neutral-600 rounded px-2 py-1 text-sm text-neutral-900 dark:text-neutral-100 dark:bg-neutral-800 outline-none focus:border-blue-400"
+              className="w-full font-sans border border-neutral-300 dark:border-neutral-600 rounded px-2 py-1 text-sm text-neutral-900 dark:text-neutral-100 dark:bg-neutral-800 outline-none focus:border-[var(--copper)]"
             />
           </div>
           <div className="w-16">
@@ -205,13 +205,13 @@ export default function CustomComponentEditor({ onSave, onClose }: Props) {
               value={prefix}
               onChange={(e) => setPrefix(e.target.value)}
               maxLength={3}
-              className="w-full border border-neutral-300 dark:border-neutral-600 rounded px-2 py-1 text-sm text-neutral-900 dark:text-neutral-100 dark:bg-neutral-800 outline-none focus:border-blue-400 text-center"
+              className="w-full font-sans border border-neutral-300 dark:border-neutral-600 rounded px-2 py-1 text-sm text-neutral-900 dark:text-neutral-100 dark:bg-neutral-800 outline-none focus:border-[var(--copper)] text-center"
             />
           </div>
         </div>
 
         {/* Grid size controls */}
-        <div className="flex items-center gap-4 mb-3 text-sm text-neutral-700 dark:text-neutral-300">
+        <div className="flex items-center gap-4 mb-3 font-mono text-sm text-neutral-700 dark:text-neutral-300">
           <div className="flex items-center gap-1">
             <span>Rows: {rows}</span>
             <button onClick={addRow} className="px-1.5 py-0.5 bg-neutral-100 dark:bg-neutral-800 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700">+</button>
@@ -224,7 +224,7 @@ export default function CustomComponentEditor({ onSave, onClose }: Props) {
           </div>
         </div>
 
-        <div className="text-xs text-neutral-500 dark:text-neutral-400 mb-2">
+        <div className="font-mono text-xs text-neutral-500 dark:text-neutral-400 mb-2">
           Click a cell to add a pin. Drag pins to reposition. Click a pin to remove it.
         </div>
 
@@ -232,7 +232,7 @@ export default function CustomComponentEditor({ onSave, onClose }: Props) {
         <svg
           width={svgWidth}
           height={svgHeight}
-          className="border border-neutral-200 dark:border-neutral-700 rounded mb-3 bg-neutral-50 dark:bg-neutral-800 select-none"
+          className="font-sans border border-neutral-200 dark:border-neutral-700 rounded mb-3 bg-neutral-50 dark:bg-neutral-800 select-none"
           onMouseUp={() => { setDraggingPin(null); setHoverCell(null); }}
           onMouseLeave={() => { setDraggingPin(null); setHoverCell(null); }}
         >
@@ -261,11 +261,11 @@ export default function CustomComponentEditor({ onSave, onClose }: Props) {
                     rx={4}
                     fill={
                       hasMovedAway ? "#e5e5e5" :
-                      isDropTarget ? "#dbeafe" :
+                      isDropTarget ? "#efdcae" :
                       isPin ? "#404040" :
                       "#d4d4d4"
                     }
-                    stroke={isEditingThis ? "#3b82f6" : isDropTarget ? "#3b82f6" : "#a3a3a3"}
+                    stroke={isEditingThis ? "#D4A853" : isDropTarget ? "#D4A853" : "#a3a3a3"}
                     strokeWidth={isEditingThis || isDropTarget ? 2 : 1}
                   />
                   {isPin && !hasMovedAway && (
@@ -309,7 +309,7 @@ export default function CustomComponentEditor({ onSave, onClose }: Props) {
             const y = GRID_PADDING + hoverCell.row * (CELL_SIZE + CELL_GAP);
             return (
               <g pointerEvents="none" opacity={0.7}>
-                <rect x={x} y={y} width={CELL_SIZE} height={CELL_SIZE} rx={4} fill="#404040" stroke="#3b82f6" strokeWidth={2} />
+                <rect x={x} y={y} width={CELL_SIZE} height={CELL_SIZE} rx={4} fill="#404040" stroke="#D4A853" strokeWidth={2} />
                 <circle cx={x + CELL_SIZE / 2} cy={y + CELL_SIZE / 2 - 4} r={6} fill="white" />
                 <text x={x + CELL_SIZE / 2} y={y + CELL_SIZE / 2 + 12} textAnchor="middle" fontSize={8} fill="white">
                   {draggingPin.pinName}
@@ -328,7 +328,7 @@ export default function CustomComponentEditor({ onSave, onClose }: Props) {
                 autoFocus
                 value={pinId}
                 onChange={(e) => setPinId(e.target.value)}
-                className="w-16 border border-neutral-300 dark:border-neutral-600 rounded px-2 py-1 text-sm text-neutral-900 dark:text-neutral-100 dark:bg-neutral-800 outline-none focus:border-blue-400"
+                className="w-16 font-sans border border-neutral-300 dark:border-neutral-600 rounded px-2 py-1 text-sm text-neutral-900 dark:text-neutral-100 dark:bg-neutral-800 outline-none focus:border-[var(--copper)]"
                 onKeyDown={(e) => e.key === "Enter" && commitPin()}
               />
             </div>
@@ -337,7 +337,7 @@ export default function CustomComponentEditor({ onSave, onClose }: Props) {
               <input
                 value={pinName}
                 onChange={(e) => setPinName(e.target.value)}
-                className="w-24 border border-neutral-300 dark:border-neutral-600 rounded px-2 py-1 text-sm text-neutral-900 dark:text-neutral-100 dark:bg-neutral-800 outline-none focus:border-blue-400"
+                className="w-24 font-sans border border-neutral-300 dark:border-neutral-600 rounded px-2 py-1 text-sm text-neutral-900 dark:text-neutral-100 dark:bg-neutral-800 outline-none focus:border-[var(--copper)]"
                 onKeyDown={(e) => e.key === "Enter" && commitPin()}
               />
             </div>
@@ -358,7 +358,7 @@ export default function CustomComponentEditor({ onSave, onClose }: Props) {
         )}
 
         {/* Actions */}
-        <div className="flex gap-2">
+        <div className="flex gap-2 font-mono">
           <button
             onClick={handleSave}
             disabled={pinCount < 1 || !name.trim()}

@@ -160,20 +160,23 @@ export default function StripboardFootprintEditor({ componentId, onClose }: Prop
         className="bg-white dark:bg-neutral-900 rounded-lg shadow-xl dark:shadow-neutral-900/50 p-5 max-w-lg max-h-[90vh] overflow-auto"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
-            Edit Footprint - {component.label}
+        <div className="flex items-start justify-between gap-6 mb-5">
+          <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100 leading-tight">
+            <span className="font-mono">Edit Footprint</span>
+            <span className="mx-2 text-neutral-300 dark:text-neutral-600">/</span>
+            <span className="font-sans font-normal text-neutral-500 dark:text-neutral-400">{component.label}</span>
           </h2>
           <button
             onClick={onClose}
-            className="text-neutral-400 dark:text-neutral-500 hover:text-neutral-600 dark:hover:text-neutral-400 text-xl leading-none"
+            className="flex-shrink-0 -mr-1.5 -mt-1 px-1.5 text-xl leading-none text-neutral-400 dark:text-neutral-500 hover:text-neutral-600 dark:hover:text-neutral-400 transition-colors"
+            aria-label="Close"
           >
             ×
           </button>
         </div>
 
         {/* Grid size controls */}
-        <div className="flex items-center gap-4 mb-3 text-sm text-neutral-700 dark:text-neutral-300">
+        <div className="flex items-center gap-4 mb-3 font-mono text-sm text-neutral-700 dark:text-neutral-300">
           <div className="flex items-center gap-1">
             <span>Rows: {rows}</span>
             <button onClick={addRow} className="px-1.5 py-0.5 bg-neutral-100 dark:bg-neutral-800 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700">+</button>
@@ -190,7 +193,7 @@ export default function StripboardFootprintEditor({ componentId, onClose }: Prop
         <svg
           width={svgWidth}
           height={svgHeight}
-          className="border border-neutral-200 dark:border-neutral-700 rounded mb-3 bg-neutral-50 dark:bg-neutral-800 select-none"
+          className="font-sans border border-neutral-200 dark:border-neutral-700 rounded mb-3 bg-neutral-50 dark:bg-neutral-800 select-none"
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
         >
@@ -217,11 +220,11 @@ export default function StripboardFootprintEditor({ componentId, onClose }: Prop
                     rx={4}
                     fill={
                       hasMovedAway ? "#e5e5e5" :
-                      isDropTarget ? "#dbeafe" :
+                      isDropTarget ? "#efdcae" :
                       isPin ? "#404040" :
                       "#d4d4d4"
                     }
-                    stroke={isDropTarget ? "#3b82f6" : "#a3a3a3"}
+                    stroke={isDropTarget ? "#D4A853" : "#a3a3a3"}
                     strokeWidth={isDropTarget ? 2 : 1}
                   />
                   {isPin && !hasMovedAway && (
@@ -271,7 +274,7 @@ export default function StripboardFootprintEditor({ componentId, onClose }: Prop
                     width={CELL_SIZE} height={CELL_SIZE}
                     rx={4}
                     fill="#404040"
-                    stroke="#3b82f6"
+                    stroke="#D4A853"
                     strokeWidth={2}
                   />
                   <circle cx={x + CELL_SIZE / 2} cy={y + CELL_SIZE / 2 - 4} r={6} fill="white" />
@@ -288,7 +291,7 @@ export default function StripboardFootprintEditor({ componentId, onClose }: Prop
         </svg>
 
         {/* Actions */}
-        <div className="flex gap-2">
+        <div className="flex gap-2 font-mono">
           <button
             onClick={handleSave}
             disabled={!allPinsPlaced}

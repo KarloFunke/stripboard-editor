@@ -37,10 +37,10 @@ export default function ComponentTray({ readOnly = false }: { readOnly?: boolean
 
   if (readOnly) {
     return (
-      <div className="flex flex-col h-full overflow-y-auto">
+      <div className="font-sans flex flex-col h-full overflow-y-auto">
         {incompleteNets.length > 0 ? (
           <>
-            <div className="px-3.5 py-2.5 text-xs font-semibold text-red-500 dark:text-red-400 uppercase tracking-wide">
+            <div className="px-3.5 py-2.5 font-mono text-xs font-semibold text-red-500 dark:text-red-400 uppercase tracking-[0.15em]">
               Incomplete Nets
             </div>
             <div className="px-2.5 pb-2.5">
@@ -83,9 +83,9 @@ export default function ComponentTray({ readOnly = false }: { readOnly?: boolean
   }
 
   return (
-    <div className="flex flex-col h-full overflow-y-auto">
+    <div className="font-sans flex flex-col h-full overflow-y-auto">
       {/* Unplaced components */}
-      <div className="px-3.5 py-2.5 text-xs font-semibold text-neutral-500 dark:text-neutral-400 uppercase tracking-wide">
+      <div className="px-3.5 py-2.5 font-mono text-xs font-semibold text-[var(--copper)] uppercase tracking-[0.15em]">
         Unplaced
       </div>
       <div className="px-2.5 pb-2.5">
@@ -113,7 +113,7 @@ export default function ComponentTray({ readOnly = false }: { readOnly?: boolean
       {/* Placed components */}
       {placed.length > 0 && (
         <>
-          <div className="border-t border-neutral-200 dark:border-neutral-700 px-3.5 py-2.5 text-xs font-semibold text-neutral-500 dark:text-neutral-400 uppercase tracking-wide">
+          <div className="border-t border-neutral-200 dark:border-neutral-700 px-3.5 py-2.5 font-mono text-xs font-semibold text-[var(--copper)] uppercase tracking-[0.15em]">
             On Board
           </div>
           <div className="px-2.5 pb-2.5">
@@ -138,7 +138,7 @@ export default function ComponentTray({ readOnly = false }: { readOnly?: boolean
       {/* Incomplete nets */}
       {incompleteNets.length > 0 && (
         <>
-          <div className="border-t border-neutral-200 dark:border-neutral-700 px-3.5 py-2.5 text-xs font-semibold text-red-500 dark:text-red-400 uppercase tracking-wide">
+          <div className="border-t border-neutral-200 dark:border-neutral-700 px-3.5 py-2.5 font-mono text-xs font-semibold text-red-500 dark:text-red-400 uppercase tracking-[0.15em]">
             Incomplete Nets
           </div>
           <div className="px-2.5 pb-2.5">

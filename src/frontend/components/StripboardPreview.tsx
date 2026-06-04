@@ -109,7 +109,7 @@ export default function StripboardPreview({ data, maxWidth = 280, maxHeight = 16
       width={displayW}
       height={displayH}
       viewBox={`0 0 ${svgW} ${svgH}`}
-      className="rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900"
+      className="font-sans rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900"
     >
       {/* Strips */}
       {Array.from({ length: rows }, (_, ri) => {

@@ -102,7 +102,7 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
     getMe().then(setUser);
   }, []);
 
-  const handleAuth = async (e: React.FormEvent<HTMLFormElement>) => {
+  const handleAuth = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     setAuthError(null);
     setAuthLoading(true);
@@ -258,13 +258,13 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
 
   return (
     <>
-      <div className="h-12 bg-[#113768] text-white flex items-center px-5 justify-between text-sm">
+      <div className="h-12 bg-[#113768] text-white flex items-center px-5 justify-between text-sm border-b-2 border-[var(--copper)]">
         <div className="flex items-center gap-3">
           <button
             onClick={handleExit}
-            className="font-semibold tracking-wide hover:opacity-80 transition-opacity"
+            className="font-mono font-semibold tracking-wide hover:opacity-80 transition-opacity"
           >
-            Home - Stripboard Editor
+            ← stripboard_editor
           </button>
           <span className="opacity-40">|</span>
           {editingName ? (
@@ -300,12 +300,12 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
           {saveError ? (
             <span className="text-red-300 font-medium">Save failed</span>
           ) : lastSaved ? (
-            <span className="opacity-40">
+            <span className="font-mono opacity-40">
               saved {lastSaved.toLocaleTimeString()}
             </span>
           ) : null}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 font-mono">
           <button
             onClick={undo}
             disabled={!canUndo}
@@ -425,15 +425,15 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
 
       {/* Share panel */}
       {showShare && editUuid && viewUuid && (
-        <div className="bg-[#113768]/5 dark:bg-[#5b9bd5]/10 border-b border-[#113768]/20 dark:border-[#5b9bd5]/20 px-5 py-3.5 flex items-center gap-4 text-sm">
+        <div className="bg-[#113768]/5 dark:bg-[#5b9bd5]/10 border-b border-[var(--copper)]/40 px-5 py-3.5 flex items-center gap-4 text-sm">
           <div className="flex items-center gap-2 flex-1">
-            <span className="text-neutral-600 dark:text-neutral-400 font-medium">Edit link:</span>
-            <code className="bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded px-2.5 py-1 text-neutral-800 dark:text-neutral-200 flex-1 truncate">
+            <span className="font-mono text-neutral-600 dark:text-neutral-400 font-medium">Edit link:</span>
+            <code className="font-sans bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded px-2.5 py-1 text-neutral-800 dark:text-neutral-200 flex-1 truncate">
               {baseUrl}/project/{editUuid}
             </code>
             <button
               onClick={() => copyToClipboard(`${baseUrl}/project/${editUuid}`, "edit")}
-              className={`px-3.5 py-1.5 rounded transition-all ${
+              className={`font-mono px-3.5 py-1.5 rounded transition-all ${
                 copied === "edit"
                   ? "bg-green-500 text-white"
                   : "bg-[#113768] text-white hover:bg-[#0d2a50]"
@@ -443,13 +443,13 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
             </button>
           </div>
           <div className="flex items-center gap-2 flex-1">
-            <span className="text-neutral-600 dark:text-neutral-400 font-medium">View only link:</span>
-            <code className="bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded px-2.5 py-1 text-neutral-800 dark:text-neutral-200 flex-1 truncate">
+            <span className="font-mono text-neutral-600 dark:text-neutral-400 font-medium">View only link:</span>
+            <code className="font-sans bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded px-2.5 py-1 text-neutral-800 dark:text-neutral-200 flex-1 truncate">
               {baseUrl}/view/{viewUuid}
             </code>
             <button
               onClick={() => copyToClipboard(`${baseUrl}/view/${viewUuid}`, "view")}
-              className={`px-3.5 py-1.5 rounded transition-all ${
+              className={`font-mono px-3.5 py-1.5 rounded transition-all ${
                 copied === "view"
                   ? "bg-green-500 text-white"
                   : "bg-[#113768] text-white hover:bg-[#0d2a50]"

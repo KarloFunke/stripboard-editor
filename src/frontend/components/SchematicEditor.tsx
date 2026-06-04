@@ -20,7 +20,7 @@ export default function SchematicEditor({ readOnly = false, hideSidebar = false 
     >
       {/* Header */}
       {!hideSidebar && <div className="border-b border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-900 px-5 h-12 font-semibold text-sm text-[#113768] dark:text-[#5b9bd5] flex items-center justify-between">
-        <span>Schematic / Net Editor</span>
+        <span className="font-mono">Schematic / Net Editor</span>
         {!readOnly && (
           <div className="flex items-center gap-3">
             {wireDrawingFrom && (
@@ -56,7 +56,9 @@ export default function SchematicEditor({ readOnly = false, hideSidebar = false 
             <ResizableSidebar defaultWidth={220} minWidth={160} maxWidth={400}>
               <div className="flex flex-col h-full overflow-hidden border-r border-neutral-200 dark:border-neutral-700">
                 <ComponentLibrary />
-                <NetPanel />
+                <div className="flex flex-col shrink-0 max-h-[25%] min-h-0">
+                  <NetPanel />
+                </div>
               </div>
             </ResizableSidebar>
           )
@@ -66,7 +68,7 @@ export default function SchematicEditor({ readOnly = false, hideSidebar = false 
         </div>
       </div>
       {!readOnly && isActive && (
-        <div className="pointer-events-none absolute inset-0 z-30 ring-2 ring-inset ring-[#113768]/60 dark:ring-[#5b9bd5]/60" />
+        <div className="pointer-events-none absolute inset-0 z-30 ring-2 ring-inset ring-[var(--copper)]/70" />
       )}
     </div>
   );

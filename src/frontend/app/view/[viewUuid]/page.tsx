@@ -77,10 +77,10 @@ export default function ProjectViewPage() {
     return (
       <div className="flex flex-col h-dvh bg-[#fafafa] dark:bg-[#121212]">
         {/* Mobile header */}
-        <div className="bg-[#113768] text-white px-4 py-2 text-sm">
+        <div className="bg-[#113768] text-white px-4 py-2 text-sm border-b-2 border-[var(--copper)]">
           <div className="flex items-center justify-between mb-2">
-            <a href="/" className="font-semibold tracking-wide hover:opacity-80 transition-opacity text-sm">
-              Home - Stripboard Editor
+            <a href="/" className="font-mono font-semibold tracking-wide hover:opacity-80 transition-opacity text-sm">
+              ← stripboard_editor
             </a>
             <ThemeToggle />
           </div>
@@ -157,17 +157,17 @@ export default function ProjectViewPage() {
 
   return (
     <div className="flex flex-col h-screen bg-[#fafafa] dark:bg-[#121212]">
-      <div className="h-12 bg-[#113768] text-white flex items-center px-5 justify-between text-sm">
+      <div className="h-12 bg-[#113768] text-white flex items-center px-5 justify-between text-sm border-b-2 border-[var(--copper)]">
         <div className="flex items-center gap-2">
-          <a href="/" className="font-semibold tracking-wide hover:opacity-80 transition-opacity">
-            Home - Stripboard Editor
+          <a href="/" className="font-mono font-semibold tracking-wide hover:opacity-80 transition-opacity">
+            ← stripboard_editor
           </a>
           <span className="opacity-40">|</span>
           <span className="font-semibold">{projectName}</span>
           {ownerName && <span className="opacity-70">by {ownerName}</span>}
           <span className="opacity-50">(view only)</span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 font-mono">
           <button
             onClick={() => { track("print-open", { source: "view" }); setShowPrint(true); }}
             className="px-3.5 py-1.5 rounded bg-white/10 hover:bg-white/20 transition-colors text-sm"

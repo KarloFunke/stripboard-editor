@@ -56,7 +56,7 @@ export default function SplitPane({
       </div>
       <div
         onMouseDown={handleMouseDown}
-        className="w-1 flex-shrink-0 cursor-col-resize bg-[#113768]/20 hover:bg-[#113768]/40 active:bg-[#113768]/50 dark:bg-[#5b9bd5]/30 dark:hover:bg-[#5b9bd5]/50 dark:active:bg-[#5b9bd5]/60 transition-colors z-10"
+        className="w-1 flex-shrink-0 cursor-col-resize bg-[var(--copper)]/25 hover:bg-[var(--copper)]/50 active:bg-[var(--copper)]/60 transition-colors z-10"
       />
       <div style={{ width: rightPercent }} className="min-w-0 overflow-hidden">
         {right}
