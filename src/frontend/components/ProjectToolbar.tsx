@@ -118,6 +118,7 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
       if (editUuid) {
         try { await claimProject(editUuid); } catch { /* already owned or not claimable */ }
       }
+      router.refresh();
     } catch (err: unknown) {
       setAuthError(err instanceof Error ? err.message : "Authentication failed");
     }
@@ -131,6 +132,7 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
     setUser(null);
     setLogoutFlash(true);
     setTimeout(() => setLogoutFlash(false), 1500);
+    router.refresh();
   };
 
   // Sync nameValue when name changes externally

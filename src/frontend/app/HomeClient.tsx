@@ -71,6 +71,7 @@ export default function HomeClient({
       setUsername("");
       setPassword("");
       getUserProjects().then(setProjects);
+      router.refresh();
     } catch (err: unknown) {
       setAuthError(err instanceof Error ? err.message : "Authentication failed");
     }
@@ -81,6 +82,7 @@ export default function HomeClient({
     await logout();
     setUser(null);
     setProjects([]);
+    router.refresh();
   };
 
   const steps = [
@@ -394,6 +396,7 @@ export default function HomeClient({
                   setUser(null);
                   setProjects([]);
                   setShowAccountDelete(false);
+                  router.refresh();
                 }}
                 className="px-4 py-2 text-sm rounded bg-red-500 dark:bg-red-600 text-white font-medium hover:bg-red-600 transition-colors"
               >
