@@ -80,6 +80,7 @@ export default function ComponentLibrary() {
   const componentDefs = useProjectStore((s) => s.componentDefs);
 
   const [showCustomEditor, setShowCustomEditor] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<ComponentDef | null>(null);
   const [openGroups, setOpenGroups] = useState<Set<string>>(
     new Set([COMPONENT_GROUPS[0].label])
   );
@@ -182,7 +183,7 @@ export default function ComponentLibrary() {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        removeComponentDef(def.id);
+                        setDeleteConfirm(def);
                       }}
                       className="absolute -top-1 -right-1 hidden group-hover:flex h-4 w-4 items-center justify-center rounded-full bg-red-400 text-white text-[9px] leading-none"
                       title="Remove custom component"
@@ -212,6 +213,43 @@ export default function ComponentLibrary() {
           onSave={handleCreateCustom}
           onClose={() => setShowCustomEditor(false)}
         />
+      )}
+
+      {/* Delete custom component confirmation */}
+      {deleteConfirm && (
+        <div
+          className="fixed inset-0 bg-black/30 flex items-center justify-center z-50"
+          onClick={() => setDeleteConfirm(null)}
+        >
+          <div
+            className="bg-white dark:bg-neutral-900 rounded-lg shadow-xl dark:shadow-neutral-900/50 p-6 w-[calc(100%-2rem)] sm:w-80 max-w-sm mx-4 sm:mx-0"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100 mb-2">Delete Custom Component</h2>
+            <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-5">
+              Are you sure you want to delete{" "}
+              <span className="font-medium">{deleteConfirm.name}</span>
+              ? Any placed components using it will be removed too.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setDeleteConfirm(null)}
+                className="px-4 py-2 text-sm rounded border border-neutral-300 dark:border-neutral-600 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  removeComponentDef(deleteConfirm.id);
+                  setDeleteConfirm(null);
+                }}
+                className="px-4 py-2 text-sm rounded bg-red-500 dark:bg-red-600 text-white font-medium hover:bg-red-600 transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
