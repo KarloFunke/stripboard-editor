@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import SiteHeader from "@/components/SiteHeader";
+import SiteFooter from "@/components/SiteFooter";
 
 export const metadata: Metadata = {
   title: "Quick Guide",
@@ -24,7 +24,7 @@ export default function GuidePage() {
           <ol className="list-decimal list-inside space-y-2 text-sm text-neutral-700 dark:text-neutral-300">
             <li><strong>Design the schematic</strong> on the left. Add components from the library and draw wires between pins to define nets.</li>
             <li><strong>Place components on the stripboard</strong> on the right. Drag them from the unplaced tray onto the board.</li>
-            <li><strong>Resolve conflicts.</strong> Place cuts between holes to isolate strips and add wires to connect separated nets.</li>
+            <li><strong>Resolve conflicts.</strong> Place cuts to isolate strips and add wires to connect separated nets.</li>
             <li><strong>Done.</strong> When all nets are complete and there are no conflicts, you are ready to solder.</li>
           </ol>
         </section>
@@ -64,11 +64,26 @@ export default function GuidePage() {
             <li>Drag components from the <em>Unplaced</em> tray onto the board.</li>
             <li>Strips automatically colour to match the net of the pin sitting on them.</li>
             <li>Red highlighted strips indicate a conflict where two different nets share the same strip.</li>
-            <li>Click between two holes to place a <strong>cut</strong>, isolating the strip into sections.</li>
+            <li>Place a <strong>cut</strong> to isolate the strip into sections: click between two holes, or hold <kbd className="px-1.5 py-0.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded text-xs font-mono">Alt</kbd> and click a hole to cut the strip at the hole itself.</li>
             <li>Click a hole then another hole to place a <strong>wire</strong> connecting them. Click an existing wire to delete it.</li>
+            <li>A hole holds either a cut or a wire, never both. Click a hole cut to remove it (no <kbd className="px-1.5 py-0.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded text-xs font-mono">Alt</kbd> needed).</li>
             <li>2-pin passive components (resistors, LEDs, etc.) have flexible leads. Drag individual pins to reshape them.</li>
-            <li>Non-flexible components (ICs, connectors, etc.) can have their footprint edited. Click the <svg className="inline-block mx-0.5" style={{ verticalAlign: "-1px" }} width="14" height="14" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><rect x="1" y="1" width="10" height="10" rx="1" /><circle cx="3.5" cy="3.5" r="1" fill="currentColor" /><circle cx="8.5" cy="8.5" r="1" fill="currentColor" /></svg> icon next to a component in the sidebar to open the footprint editor. You can resize the grid and move pins around to match your physical component.</li>
+            <li>Non-flexible components (ICs, connectors, etc.) can have their footprint edited. Select a placed component, then click <strong>Edit Footprint</strong> in the floating menu above it. You can resize the grid and move pins around to match your physical component.</li>
             <li>Hover over an incomplete net in the sidebar to highlight the relevant strips.</li>
+          </ul>
+        </section>
+
+        {/* Printing & Assembly */}
+        <section className="mb-10">
+          <h2 className="font-mono text-xs uppercase tracking-[0.2em] text-[var(--copper)] mb-3">Printing &amp; Assembly</h2>
+          <ul className="space-y-2 text-sm text-neutral-700 dark:text-neutral-300">
+            <li>Click <strong>Print</strong> in the project toolbar to open the print / PDF dialog and generate an assembly guide.</li>
+            <li>The <strong>component sheet</strong> shows the board from the component side. Lay it on top and push leads through the marked holes.</li>
+            <li>The <strong>cut sheet</strong> is mirrored for the copper side and marks every track cut with an <span aria-hidden="true">✕</span>.</li>
+            <li>The <strong>BOM</strong> (bill of materials) lists quantities, values, and reference labels for sourcing parts.</li>
+            <li>Toggle reference labels, wires, cuts, and pin labels to tailor each sheet to your build.</li>
+            <li>Optionally add a <strong>view</strong> or <strong>edit</strong> QR code that links back to the online project.</li>
+            <li>Print at 100% / actual size and verify the calibration ruler so hole spacing matches real stripboard.</li>
           </ul>
         </section>
 
@@ -85,6 +100,7 @@ export default function GuidePage() {
               ["Ctrl + Z", "Undo"],
               ["Ctrl + Y / Ctrl + Shift + Z", "Redo"],
               ["Arrow keys", "Move selected components (bulk move)"],
+              ["Alt + click hole", "Cut the strip at a hole (stripboard)"],
               ["Right-click drag", "Pan the canvas"],
               ["Scroll wheel", "Zoom in / out"],
             ].map(([key, desc]) => (
@@ -102,7 +118,7 @@ export default function GuidePage() {
         <section className="mb-10">
           <h2 className="font-mono text-xs uppercase tracking-[0.2em] text-[var(--copper)] mb-3">Custom Components</h2>
           <p className="text-sm text-neutral-700 dark:text-neutral-300">
-            Click <strong>+ Create Custom</strong> at the bottom of the library.
+            Click <strong>+ Create Custom Component</strong> at the bottom of the library.
             Define the grid size, place pins, and assign names. Your custom components are saved with the project
             and appear in a dedicated <em>Custom</em> section.
           </p>
@@ -122,15 +138,7 @@ export default function GuidePage() {
         </div>
       </div>
 
-      <div className="border-t border-neutral-200 dark:border-neutral-700 mt-auto">
-        <div className="max-w-3xl mx-auto px-4 sm:px-6 py-5 flex items-center justify-between text-xs text-neutral-400 dark:text-neutral-500">
-          <span>
-            a hobby project by{" "}
-            <a href="https://karl-funke.com?utm_source=stripboard-editor" className="text-neutral-500 dark:text-neutral-400 hover:text-[#113768] dark:hover:text-[#5b9bd5] transition-colors">Karl Funke</a>
-          </span>
-          <Link href="/privacy" className="text-neutral-500 dark:text-neutral-400 hover:text-[#113768] dark:hover:text-[#5b9bd5] transition-colors">Privacy Policy</Link>
-        </div>
-      </div>
+      <SiteFooter />
     </div>
   );
 }

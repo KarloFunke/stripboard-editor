@@ -58,7 +58,7 @@ interface ProjectActions {
   rotateSchematicComponent: (id: string) => void;
   mirrorSchematicComponent: (id: string) => void;
   placeOnBoard: (id: string, pos: { row: number; col: number }) => void;
-  moveComponentsOnBoard: (ids: string[], deltaRow: number, deltaCol: number, wireIds?: string[], cutPositions?: { row: number; col: number }[]) => void;
+  moveComponentsOnBoard: (ids: string[], deltaRow: number, deltaCol: number, wireIds?: string[], cutPositions?: Cut[]) => void;
   removeFromBoard: (id: string) => void;
   setFlexibleEndPos: (id: string, pos: { row: number; col: number }) => void;
   rotateComponent: (id: string) => void;
@@ -563,9 +563,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       let newCuts = s.board.cuts;
       if (cutPositions && cutPositions.length > 0) {
         newCuts = newCuts.map((c) => {
-          const match = cutPositions.find((cp) => cp.row === c.row && cp.col === c.col);
+          const match = cutPositions.find(
+            (cp) => cp.row === c.row && cp.col === c.col && (cp.kind === "hole") === (c.kind === "hole")
+          );
           if (!match) return c;
-          return { row: c.row + deltaRow, col: c.col + deltaCol };
+          return { ...c, row: c.row + deltaRow, col: c.col + deltaCol };
         });
       }
 
@@ -761,7 +763,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       board: {
         ...s.board,
         cuts: s.board.cuts.filter(
-          (c) => !(c.row === cut.row && c.col === cut.col)
+          (c) => !(c.row === cut.row && c.col === cut.col && (c.kind === "hole") === (cut.kind === "hole"))
         ),
       },
     }));

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import SiteHeader from "@/components/SiteHeader";
+import SiteFooter from "@/components/SiteFooter";
 
 export const metadata: Metadata = {
   title: "Privacy Policy",
@@ -10,10 +11,10 @@ export const metadata: Metadata = {
 
 export default function PrivacyPage() {
   return (
-    <div className="min-h-screen font-mono bg-[#fafafa] dark:bg-[#121212] bg-[radial-gradient(var(--page-dot)_1px,transparent_1.5px)] [background-size:24px_24px]">
+    <div className="min-h-screen font-mono bg-[#fafafa] dark:bg-[#121212] bg-[radial-gradient(var(--page-dot)_1px,transparent_1.5px)] [background-size:24px_24px] flex flex-col">
       <SiteHeader breadcrumb="privacy" />
 
-      <div className="max-w-2xl mx-auto w-full px-4 sm:px-6 py-8 sm:py-12">
+      <div className="max-w-2xl mx-auto w-full px-4 sm:px-6 py-8 sm:py-12 flex-1">
         <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-sm dark:shadow-neutral-900/30 px-5 sm:px-8 py-7 sm:py-9">
         <h1 className="font-mono text-2xl font-bold text-[#113768] dark:text-[#5b9bd5] mb-6 tracking-tight">Privacy Policy</h1>
 
@@ -91,6 +92,8 @@ export default function PrivacyPage() {
         </div>
         </div>
       </div>
+
+      <SiteFooter />
     </div>
   );
 }

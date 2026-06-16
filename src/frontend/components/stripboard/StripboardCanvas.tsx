@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, useCallback, useEffect } from "react";
+import { Cut } from "@/types";
 import { useProjectStore } from "@/store/useProjectStore";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { useStripSegments } from "@/hooks/useStripSegments";
@@ -20,6 +21,8 @@ import {
   nearestCutPosition,
   getComponentBounds,
   getRotatedPinPositions,
+  getFlexiblePinPositions,
+  getFlexibleBounds,
 } from "./boardLayout";
 import {
   getGroupForSegment,
@@ -86,7 +89,7 @@ export default function StripboardCanvas({
   } = useCanvasSelection();
 
   const [selectedWireIds, setSelectedWireIds] = useState<string[]>([]);
-  const [selectedCuts, setSelectedCuts] = useState<{ row: number; col: number }[]>([]);
+  const [selectedCuts, setSelectedCuts] = useState<Cut[]>([]);
   const [trayGhost, setTrayGhost] = useState<{
     row: number;
     col: number;
@@ -173,7 +176,7 @@ export default function StripboardCanvas({
         moveComponentsOnBoard(moveIds, delta.row, delta.col, selectedWireIds, selectedCuts);
         if (selectedCuts.length > 0) {
           setSelectedCuts((prev) =>
-            prev.map((c) => ({ row: c.row + delta.row, col: c.col + delta.col }))
+            prev.map((c) => ({ ...c, row: c.row + delta.row, col: c.col + delta.col }))
           );
         }
         return;
@@ -238,6 +241,14 @@ export default function StripboardCanvas({
         if (!comp.boardPos) continue;
         const def = resolveComponentDef(comp, componentDefs);
         if (!def) continue;
+        // Flexible components only occupy their two pin holes (the leg floats
+        // above the board); their nominal bounds would falsely cover holes the
+        // dragged legs never touch.
+        if (def.flexible) {
+          const pins = getFlexiblePinPositions(comp, def);
+          if (pins.some((p) => p.row === row && p.col === col)) return comp.id;
+          continue;
+        }
         const bounds = getComponentBounds(def, comp.boardPos, comp.rotation);
         if (row >= bounds.minRow && row <= bounds.maxRow && col >= bounds.minCol && col <= bounds.maxCol) {
           return comp.id;
@@ -472,7 +483,11 @@ export default function StripboardCanvas({
         if (!comp.boardPos) continue;
         const def = resolveComponentDef(comp, componentDefs);
         if (!def) continue;
-        const bounds = getComponentBounds(def, comp.boardPos, comp.rotation);
+        // Flexible parts span their two actual pin positions; their nominal
+        // bounds ignore the dragged leg and would mis-select (see findComponentAtHole).
+        const bounds = def.flexible
+          ? getFlexibleBounds(comp, def)
+          : getComponentBounds(def, comp.boardPos, comp.rotation);
         const compTopLeft = holeCenter(bounds.minRow, bounds.minCol);
         const compBottomRight = holeCenter(bounds.maxRow, bounds.maxCol);
         if (compTopLeft.x <= x2 && compBottomRight.x >= x1 &&
@@ -493,12 +508,14 @@ export default function StripboardCanvas({
       }
 
       // Select cuts within rect
-      const selCuts: { row: number; col: number }[] = [];
+      const selCuts: Cut[] = [];
       for (const cut of board.cuts) {
-        const cutX = (holeCenter(cut.row, cut.col).x + holeCenter(cut.row, cut.col + 1).x) / 2;
+        const cutX = cut.kind === "hole"
+          ? holeCenter(cut.row, cut.col).x
+          : (holeCenter(cut.row, cut.col).x + holeCenter(cut.row, cut.col + 1).x) / 2;
         const cutY = holeCenter(cut.row, cut.col).y;
         if (cutX >= x1 && cutX <= x2 && cutY >= y1 && cutY <= y2) {
-          selCuts.push({ row: cut.row, col: cut.col });
+          selCuts.push({ ...cut });
         }
       }
 
@@ -527,43 +544,75 @@ export default function StripboardCanvas({
 
       const pt = getSVGPoint(e);
 
-      // Wire drawing: if we already have a "from" hole, complete the wire
+      // Resolve whether the click landed on a hole, and what already occupies it.
+      // A hole is exclusively a cut OR a wire endpoint, never both.
+      const hole = nearestHole(pt.x, pt.y, board.rows, board.cols);
+      let onHole = false;
+      let holeCut: Cut | undefined;
+      let wireHere = false;
+      if (hole) {
+        const holePos = holeCenter(hole.row, hole.col);
+        const dist = Math.sqrt((pt.x - holePos.x) ** 2 + (pt.y - holePos.y) ** 2);
+        onHole = dist <= HOLE_RADIUS + 2;
+        if (onHole) {
+          holeCut = board.cuts.find(
+            (c) => c.kind === "hole" && c.row === hole.row && c.col === hole.col
+          );
+          wireHere = board.wires.some(
+            (w) =>
+              (w.from.row === hole.row && w.from.col === hole.col) ||
+              (w.to.row === hole.row && w.to.col === hole.col)
+          );
+        }
+      }
+
+      // Wire drawing: complete a pending wire, but never onto a cut hole.
       if (wirePlacementFrom) {
-        const hole = nearestHole(pt.x, pt.y, board.rows, board.cols);
-        if (hole && (hole.row !== wirePlacementFrom.row || hole.col !== wirePlacementFrom.col)) {
+        if (hole && !holeCut && (hole.row !== wirePlacementFrom.row || hole.col !== wirePlacementFrom.col)) {
           addWire(wirePlacementFrom, hole);
         }
         setWireMousePos(null);
         return;
       }
 
-      // Check if click is on a hole — start wire drawing
-      // But NOT if the hole is occupied by a component
-      const hole = nearestHole(pt.x, pt.y, board.rows, board.cols);
-      if (hole) {
-        const holePos = holeCenter(hole.row, hole.col);
-        const dist = Math.sqrt((pt.x - holePos.x) ** 2 + (pt.y - holePos.y) ** 2);
-        if (dist <= HOLE_RADIUS + 2) {
-          // If occupied by a component, select it instead
-          const compId = findComponentAtHole(hole.row, hole.col);
-          if (compId) {
-            setSelectedId(compId);
-            return;
-          }
-          startWirePlacement();
-          setWirePlacementFrom(hole);
+      // Alt+click on a hole toggles a hole-cut (isolates that hole). Blocked
+      // where a wire already lands, since a hole is cut-or-wire, not both.
+      if (e.altKey && onHole && hole) {
+        if (holeCut) {
+          removeCut(holeCut);
+        } else if (!wireHere) {
+          placeCut({ row: hole.row, col: hole.col, kind: "hole" });
+        }
+        return;
+      }
+
+      // Plain click on a hole.
+      if (onHole && hole) {
+        // A cut hole can't hold a wire, so a plain click just removes the cut
+        // (no Alt needed).
+        if (holeCut) {
+          removeCut(holeCut);
           return;
         }
+        // If occupied by a component, select it instead
+        const compId = findComponentAtHole(hole.row, hole.col);
+        if (compId) {
+          setSelectedId(compId);
+          return;
+        }
+        startWirePlacement();
+        setWirePlacementFrom(hole);
+        return;
       }
 
       // Cut toggle — only between holes (tighter hitbox)
       const cutPos = nearestCutPosition(pt.x, pt.y, board.rows, board.cols);
       if (cutPos) {
         const existing = board.cuts.find(
-          (c) => c.row === cutPos.row && c.col === cutPos.col
+          (c) => c.kind !== "hole" && c.row === cutPos.row && c.col === cutPos.col
         );
         if (existing) {
-          removeCut(cutPos);
+          removeCut(existing);
         } else {
           placeCut(cutPos);
         }
@@ -640,13 +689,36 @@ export default function StripboardCanvas({
             const segNetIds = group ? group.netIds : seg.netIds;
             const isHighlighted = highlightedNetId !== null && segNetIds.includes(highlightedNetId);
 
+            // A hole-cut drills out the hole: its isolated single-hole segment
+            // draws no copper, and the neighbouring strips run up to the hole so
+            // the break lands on it (not in the middle of the strip).
+            const hasHoleCut = (col: number) =>
+              board.cuts.some((c) => c.kind === "hole" && c.row === seg.row && c.col === col);
+            const hasBetweenCut = (col: number) =>
+              board.cuts.some((c) => c.kind !== "hole" && c.row === seg.row && c.col === col);
+            if (seg.startCol === seg.endCol && hasHoleCut(seg.startCol)) return null;
+            const HOLE_CUT_GAP = HOLE_RADIUS + 1.5;
+            // Only run the strip up to a neighbouring hole-cut when no between-cut
+            // sits in that gap — otherwise the extension would paint over the
+            // between-cut's break.
+            const extendLeft = hasHoleCut(seg.startCol - 1) && !hasBetweenCut(seg.startCol - 1);
+            const extendRight = hasHoleCut(seg.endCol + 1) && !hasBetweenCut(seg.endCol);
+            const leftX = extendLeft
+              ? holeCenter(seg.row, seg.startCol - 1).x + HOLE_CUT_GAP
+              : startCenter.x - HOLE_SPACING * 0.4;
+            const rightX = extendRight
+              ? holeCenter(seg.row, seg.endCol + 1).x - HOLE_CUT_GAP
+              : endCenter.x + HOLE_SPACING * 0.4;
+            const hlLeftX = extendLeft ? leftX : startCenter.x - HOLE_SPACING * 0.5;
+            const hlRightX = extendRight ? rightX : endCenter.x + HOLE_SPACING * 0.5;
+
             return (
               <g key={`seg-${i}`}>
                 {(isHighlighted || group?.hasConflict) && (
                   <rect
-                    x={startCenter.x - HOLE_SPACING * 0.5}
+                    x={hlLeftX}
                     y={startCenter.y - STRIP_HEIGHT}
-                    width={endCenter.x - startCenter.x + HOLE_SPACING}
+                    width={hlRightX - hlLeftX}
                     height={STRIP_HEIGHT * 2}
                     fill={group?.hasConflict ? STRIP_CONFLICT_COLOR : color}
                     opacity={0.3}
@@ -654,9 +726,9 @@ export default function StripboardCanvas({
                   />
                 )}
                 <rect
-                  x={startCenter.x - HOLE_SPACING * 0.4}
+                  x={leftX}
                   y={startCenter.y - STRIP_HEIGHT / 2}
-                  width={endCenter.x - startCenter.x + HOLE_SPACING * 0.8}
+                  width={rightX - leftX}
                   height={STRIP_HEIGHT}
                   fill={color}
                   opacity={isHighlighted ? 0.9 : group?.hasConflict ? 0.8 : hasNets ? 0.5 : 0.4}
@@ -812,12 +884,17 @@ export default function StripboardCanvas({
 
           {/* Cut marks */}
           {board.cuts.map((cut, i) => {
-            const isSelected = selectedCuts.some((sc) => sc.row === cut.row && sc.col === cut.col);
+            const isSelected = selectedCuts.some(
+              (sc) => sc.row === cut.row && sc.col === cut.col && (sc.kind === "hole") === (cut.kind === "hole")
+            );
+            const cutCx = cut.kind === "hole"
+              ? holeCenter(cut.row, cut.col).x
+              : (holeCenter(cut.row, cut.col).x + holeCenter(cut.row, cut.col + 1).x) / 2;
             return (
               <g key={`cut-${i}`}>
                 {isSelected && (
                   <circle
-                    cx={(holeCenter(cut.row, cut.col).x + holeCenter(cut.row, cut.col + 1).x) / 2}
+                    cx={cutCx}
                     cy={holeCenter(cut.row, cut.col).y}
                     r={10}
                     fill="var(--selection-stroke)"

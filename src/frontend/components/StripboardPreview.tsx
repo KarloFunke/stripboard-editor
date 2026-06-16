@@ -145,7 +145,9 @@ export default function StripboardPreview({ data, maxWidth = 280, maxHeight = 16
 
       {/* Cuts */}
       {visibleCuts.map((cut, i) => {
-        const cx = (hx(cut.col) + hx(cut.col + 1)) / 2;
+        const cx = cut.kind === "hole"
+          ? hx(cut.col)
+          : (hx(cut.col) + hx(cut.col + 1)) / 2;
         const cy = hy(cut.row);
         const s = 2;
         return (

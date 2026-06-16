@@ -8,9 +8,11 @@ interface Props {
 }
 
 export default function CutMark({ cut }: Props) {
-  // Cut is between col and col+1 on the given row
+  // "between" cuts sit at the midpoint between col and col+1; "hole" cuts sit
+  // directly on the hole at col.
   const left = holeCenter(cut.row, cut.col);
-  const midX = left.x + HOLE_SPACING / 2;
+  const isHole = cut.kind === "hole";
+  const midX = isHole ? left.x : left.x + HOLE_SPACING / 2;
   const midY = left.y;
   const size = 4;
 

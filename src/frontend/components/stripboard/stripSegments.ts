@@ -31,19 +31,21 @@ export function computeStripSegments(
   const segments: StripSegment[] = [];
 
   for (let row = 0; row < board.rows; row++) {
-    // Get sorted cut columns for this row
-    const cutCols = board.cuts
-      .filter((c) => c.row === row)
-      .map((c) => c.col)
-      .sort((a, b) => a - b);
+    const rowCuts = board.cuts.filter((c) => c.row === row);
 
-    // Build segment boundaries
-    // A cut at col X means "between col X and col X+1"
-    // So segment goes from startCol to cutCol (inclusive), then next starts at cutCol+1
-    const boundaries: number[] = [0];
-    for (const cutCol of cutCols) {
-      boundaries.push(cutCol + 1);
+    // Build segment boundaries. A boundary value B starts a new segment at col B.
+    // - between-cut at col X: severs X | X+1, so a boundary at X+1.
+    // - hole-cut at col X: isolates the hole, so boundaries at X and X+1.
+    const boundarySet = new Set<number>([0]);
+    for (const cut of rowCuts) {
+      if (cut.kind === "hole") {
+        boundarySet.add(cut.col);
+        boundarySet.add(cut.col + 1);
+      } else {
+        boundarySet.add(cut.col + 1);
+      }
     }
+    const boundaries = Array.from(boundarySet).sort((a, b) => a - b);
 
     // Each boundary starts a segment that ends at the next boundary - 1 (or board.cols - 1)
     for (let i = 0; i < boundaries.length; i++) {

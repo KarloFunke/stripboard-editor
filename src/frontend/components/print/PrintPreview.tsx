@@ -159,7 +159,7 @@ export default function PrintPreview({ onClose, source, editUuid, viewUuid }: { 
               <div className="mb-3">
                 <div className="text-base font-semibold">{name} | track cuts (copper side, mirrored)</div>
                 <div className="text-[11px] text-neutral-600 mb-2">
-                  Mirrored for the underside. Cut each ✕ between holes. Verify the ruler.
+                  Mirrored for the underside. Cut each ✕. Verify the ruler.
                 </div>
                 <CalibrationRuler />
               </div>

@@ -96,11 +96,13 @@ export interface BoardPosition {
   col: number;
 }
 
-// A cut between two adjacent holes on the same row.
-// col means "between col and col+1" on the given row.
+// A break in the copper strip on the given row.
+// kind "between" (default/absent): severs between hole col and col+1.
+// kind "hole": drilled-out hole at col, isolating it from both neighbours.
 export interface Cut {
   row: number;
   col: number;
+  kind?: "between" | "hole";
 }
 
 export interface Wire {

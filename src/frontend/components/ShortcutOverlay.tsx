@@ -23,6 +23,7 @@ const SHORTCUTS = [
     ["Delete", "Remove selected component"],
     ["Escape", "Clear selection"],
     ["Arrow keys", "Move selected components"],
+    ["Alt + click hole", "Cut the strip at a hole"],
     ["Right-click drag", "Pan canvas"],
     ["Scroll wheel", "Zoom"],
   ]},

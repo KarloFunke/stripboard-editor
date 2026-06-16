@@ -131,7 +131,9 @@ export default function PrintBoard({ variant, showLabels, showWires, showCuts, s
       })}
 
       {(mirror || showCuts) && board.cuts.map((cut, i) => {
-        const cx = (colX(cut.col) + colX(cut.col + 1)) / 2;
+        const cx = cut.kind === "hole"
+          ? colX(cut.col)
+          : (colX(cut.col) + colX(cut.col + 1)) / 2;
         const cy = rowY(cut.row);
         const s = 9;
         return (
