@@ -29,14 +29,17 @@ export default function FeedbackConversation() {
   useEffect(() => {
     let active = true;
     const load = async () => {
-      const u = await getMe();
-      if (!active) return;
-      setSentAnon(false);
-      setLoggedIn(!!u);
-      const t = u ? await getMyFeedbackThread() : null;
-      if (!active) return;
-      setThread(t);
-      setLoading(false);
+      try {
+        const u = await getMe();
+        if (!active) return;
+        setSentAnon(false);
+        setLoggedIn(!!u);
+        const t = u ? await getMyFeedbackThread() : null;
+        if (!active) return;
+        setThread(t);
+      } finally {
+        if (active) setLoading(false);
+      }
     };
     load();
     // Re-check when the user logs in/out elsewhere (e.g. the header), so the

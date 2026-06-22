@@ -300,7 +300,9 @@ export async function submitFeedback(
 export async function getMyFeedbackThread(): Promise<FeedbackThread | null> {
   const res = await apiFetch("/feedback/mine/");
   if (!res.ok) return null;
-  return res.json();
+  // DRF renders Response(None) as an empty body, not "null" — guard against it.
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
 }
 
 // ── Staff inbox ───────────────────────────────────────
