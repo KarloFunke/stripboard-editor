@@ -1,4 +1,4 @@
-from rest_framework.throttling import AnonRateThrottle
+from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 
 
 class ProjectCreateThrottle(AnonRateThrottle):
@@ -11,3 +11,13 @@ class AuthThrottle(AnonRateThrottle):
 
 class PowChallengeThrottle(AnonRateThrottle):
     scope = "pow_challenge"
+
+
+class FeedbackThrottle(AnonRateThrottle):
+    scope = "feedback"
+
+
+# Same scope/rate as FeedbackThrottle but keyed per-user, so authenticated
+# submissions are throttled too (AnonRateThrottle ignores logged-in users).
+class FeedbackUserThrottle(UserRateThrottle):
+    scope = "feedback"

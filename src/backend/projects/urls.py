@@ -23,6 +23,18 @@ urlpatterns = [
     # Proof of Work
     path("pow/challenge/", views.pow_challenge, name="pow-challenge"),
 
+    # Feedback
+    path("feedback/", views.feedback_create, name="feedback-create"),
+    path("feedback/mine/", views.feedback_mine, name="feedback-mine"),
+
+    # Feedback — staff inbox
+    path("feedback/admin/threads/", views.feedback_admin_threads, name="feedback-admin-threads"),
+    path("feedback/admin/threads/<int:pk>/", views.feedback_admin_thread, name="feedback-admin-thread"),
+    path("feedback/admin/threads/<int:pk>/reply/", views.feedback_admin_reply, name="feedback-admin-reply"),
+
+    # Site header state (user + unread indicators, one always-200 call)
+    path("header/", views.header_state, name="header-state"),
+
     # Backup
     path("backup/db/", views.db_backup, name="db-backup"),
 ]

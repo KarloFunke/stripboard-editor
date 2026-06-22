@@ -119,6 +119,7 @@ REST_FRAMEWORK = {
         "project_create": "50/hour",
         "auth": "15/minute",
         "pow_challenge": "120/minute",
+        "feedback": "30/minute",
     },
 }
 

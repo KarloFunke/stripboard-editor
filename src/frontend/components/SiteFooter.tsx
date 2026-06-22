@@ -10,6 +10,7 @@ export default function SiteFooter() {
           {" "}(because somehow an editor with live strip coloring like this didnt exist before)
         </span>
         <div className="flex items-center gap-3 flex-shrink-0">
+          <Link href="/feedback" className="text-neutral-500 dark:text-neutral-400 hover:text-[#113768] dark:hover:text-[#5b9bd5] transition-colors">Feedback</Link>
           <a href="https://github.com/KarloFunke/stripboard-editor" target="_blank" rel="noopener noreferrer" className="text-neutral-500 dark:text-neutral-400 hover:text-[#113768] dark:hover:text-[#5b9bd5] transition-colors">GitHub</a>
           <Link href="/privacy" className="text-neutral-500 dark:text-neutral-400 hover:text-[#113768] dark:hover:text-[#5b9bd5] transition-colors">Privacy Policy</Link>
         </div>

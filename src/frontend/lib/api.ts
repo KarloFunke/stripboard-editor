@@ -161,6 +161,15 @@ export interface User {
   id: number;
   username: string;
   date_joined: string;
+  is_staff?: boolean;
+}
+
+// Broadcast a login/logout so components holding their own auth state (e.g. the
+// header, the feedback conversation) can re-check without a full reload.
+function notifyAuthChanged() {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event("auth-changed"));
+  }
 }
 
 async function hashPassword(password: string): Promise<string> {
@@ -184,7 +193,9 @@ export async function register(username: string, password: string): Promise<User
     throw new Error(err.username?.[0] ?? err.password?.[0] ?? "Registration failed");
   }
   csrfToken = null;
-  return res.json();
+  const user = await res.json();
+  notifyAuthChanged();
+  return user;
 }
 
 export async function login(username: string, password: string): Promise<User> {
@@ -199,12 +210,15 @@ export async function login(username: string, password: string): Promise<User> {
     throw new Error(err.error ?? "Login failed");
   }
   csrfToken = null;
-  return res.json();
+  const user = await res.json();
+  notifyAuthChanged();
+  return user;
 }
 
 export async function logout(): Promise<void> {
   await apiFetch("/auth/logout/", { method: "POST" });
   csrfToken = null;
+  notifyAuthChanged();
 }
 
 export async function deleteAccount(): Promise<void> {
@@ -231,4 +245,103 @@ export async function getMe(): Promise<User | null> {
   if (!res.ok) return null;
   const data = await res.json();
   return data.user;
+}
+
+// ── Site header ───────────────────────────────────────
+
+export interface HeaderState {
+  user: User | null;
+  feedbackUnread: boolean;
+  inboxUnread: number;
+}
+
+// One always-200 call backing the whole header (user + unread indicators).
+export async function getHeaderState(): Promise<HeaderState> {
+  const res = await apiFetch("/header/");
+  if (!res.ok) return { user: null, feedbackUnread: false, inboxUnread: 0 };
+  return res.json();
+}
+
+// ── Feedback ──────────────────────────────────────────
+
+export interface FeedbackReply {
+  body: string;
+  from_staff: boolean;
+  created_at: string;
+}
+
+export interface FeedbackThread {
+  id: number;
+  message: string;
+  created_at: string;
+  replies: FeedbackReply[];
+}
+
+export async function submitFeedback(
+  input: { message: string; contact?: string },
+  opts?: { loggedIn?: boolean }
+): Promise<void> {
+  // Logged-in users skip PoW: the server doesn't require it for them, and
+  // solving one would only slow the chat and leave stale challenge rows.
+  const body: Record<string, unknown> = {
+    message: input.message,
+    contact: input.contact ?? "",
+  };
+  if (!opts?.loggedIn) {
+    Object.assign(body, await getPoWSolution());
+  }
+  const res = await apiFetch("/feedback/", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error("Failed to submit feedback");
+}
+
+export async function getMyFeedbackThread(): Promise<FeedbackThread | null> {
+  const res = await apiFetch("/feedback/mine/");
+  if (!res.ok) return null;
+  return res.json();
+}
+
+// ── Staff inbox ───────────────────────────────────────
+
+export interface AdminFeedbackThread {
+  id: number;
+  username: string | null;
+  contact: string;
+  message: string;
+  created_at: string;
+  last_activity: string;
+  reply_count: number;
+  unseen: boolean;
+}
+
+export interface AdminFeedbackThreadDetail {
+  id: number;
+  username: string | null;
+  contact: string;
+  message: string;
+  created_at: string;
+  replies: FeedbackReply[];
+}
+
+export async function getAdminThreads(): Promise<AdminFeedbackThread[]> {
+  const res = await apiFetch("/feedback/admin/threads/");
+  if (!res.ok) return [];
+  return res.json();
+}
+
+export async function getAdminThread(id: number): Promise<AdminFeedbackThreadDetail | null> {
+  const res = await apiFetch(`/feedback/admin/threads/${id}/`);
+  if (!res.ok) return null;
+  return res.json();
+}
+
+export async function replyAdminThread(id: number, body: string): Promise<AdminFeedbackThreadDetail> {
+  const res = await apiFetch(`/feedback/admin/threads/${id}/reply/`, {
+    method: "POST",
+    body: JSON.stringify({ body }),
+  });
+  if (!res.ok) throw new Error("Failed to send reply");
+  return res.json();
 }

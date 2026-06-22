@@ -40,6 +40,12 @@ export default function PrivacyPage() {
                 are stored on the server so you can access them later.
               </li>
               <li>
+                <strong>Feedback:</strong> If you send a message through the feedback box, it is stored so it
+                can be acted on and replied to. When you are logged in, your messages are linked to your
+                account so you can read replies and continue the conversation on the site. Any contact details
+                you add while logged out are optional and used only to follow up with you.
+              </li>
+              <li>
                 <strong>Session cookie:</strong> A single session cookie is used to keep you logged in.
                 This is strictly necessary for the application to function and requires no consent.
               </li>

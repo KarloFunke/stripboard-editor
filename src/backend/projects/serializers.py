@@ -4,7 +4,7 @@ import re
 from django.contrib.auth.models import User
 from rest_framework import serializers
 from .migrations_data.ic_unification import migrate_ic_unification
-from .models import Project
+from .models import Project, Feedback, FeedbackReply
 
 _log = logging.getLogger(__name__)
 
@@ -181,5 +181,64 @@ class UserLoginSerializer(serializers.Serializer):
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ["id", "username", "date_joined"]
+        fields = ["id", "username", "date_joined", "is_staff"]
+        read_only_fields = fields
+
+
+class FeedbackCreateSerializer(serializers.Serializer):
+    message = serializers.CharField(max_length=4000, trim_whitespace=True)
+    contact = serializers.CharField(
+        max_length=200, required=False, allow_blank=True, default=""
+    )
+
+
+class FeedbackReplySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FeedbackReply
+        fields = ["body", "from_staff", "created_at"]
+        read_only_fields = fields
+
+
+class FeedbackThreadSerializer(serializers.ModelSerializer):
+    replies = FeedbackReplySerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Feedback
+        fields = ["id", "message", "created_at", "replies"]
+        read_only_fields = fields
+
+
+class FeedbackReplyCreateSerializer(serializers.Serializer):
+    body = serializers.CharField(max_length=4000, trim_whitespace=True)
+
+
+# ── Staff-side feedback (the /inbox page) ──────────────
+
+class AdminThreadListSerializer(serializers.ModelSerializer):
+    """One row in the staff inbox list. Relies on last_activity/last_user_msg
+    annotations added by the view."""
+    username = serializers.CharField(source="user.username", default=None, read_only=True)
+    reply_count = serializers.IntegerField(read_only=True)  # annotated in the view
+    last_activity = serializers.DateTimeField(read_only=True)
+    unseen = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Feedback
+        fields = [
+            "id", "username", "contact", "message",
+            "created_at", "last_activity", "reply_count", "unseen",
+        ]
+        read_only_fields = fields
+
+    def get_unseen(self, obj):
+        return obj.staff_last_seen is None or obj.last_user_msg > obj.staff_last_seen
+
+
+class AdminThreadDetailSerializer(serializers.ModelSerializer):
+    username = serializers.CharField(source="user.username", default=None, read_only=True)
+    replies = FeedbackReplySerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Feedback
+        fields = ["id", "username", "contact", "message", "created_at", "replies"]
         read_only_fields = fields

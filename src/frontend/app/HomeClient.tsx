@@ -9,8 +9,6 @@ import {
   deleteProject,
   deleteAccount,
   changePassword,
-  login,
-  register,
   logout,
   type User,
   type ProjectMeta,
@@ -19,6 +17,7 @@ import { useProjectStore } from "@/store/useProjectStore";
 import StripboardPreview from "@/components/StripboardPreview";
 import { track } from "@/lib/track";
 import SiteHeader from "@/components/SiteHeader";
+import AuthModal from "@/components/AuthModal";
 
 export default function HomeClient({
   initialUser,
@@ -34,10 +33,6 @@ export default function HomeClient({
   const [projects, setProjects] = useState<ProjectMeta[]>(initialProjects);
 
   const [showAuth, setShowAuth] = useState<"login" | "register" | null>(null);
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [authLoading, setAuthLoading] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [showAccountDelete, setShowAccountDelete] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
@@ -56,27 +51,6 @@ export default function HomeClient({
     await deleteProject(deleteConfirm);
     setProjects((prev) => prev.filter((p) => p.edit_uuid !== deleteConfirm));
     setDeleteConfirm(null);
-  };
-
-  const handleAuth = async (e: React.SyntheticEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    setAuthError(null);
-    setAuthLoading(true);
-    try {
-      const u = showAuth === "register"
-        ? await register(username, password)
-        : await login(username, password);
-      track(showAuth === "register" ? "account-register" : "account-login");
-      setUser(u);
-      setShowAuth(null);
-      setUsername("");
-      setPassword("");
-      getUserProjects().then(setProjects);
-      router.refresh();
-    } catch (err: unknown) {
-      setAuthError(err instanceof Error ? err.message : "Authentication failed");
-    }
-    setAuthLoading(false);
   };
 
   const handleLogout = async () => {
@@ -174,7 +148,7 @@ export default function HomeClient({
         </div>
 
         {/* Actions */}
-        <div className="flex flex-col sm:flex-row gap-3 mb-12">
+        <div className="flex flex-col sm:flex-row gap-3 mb-4">
           <button
             onClick={handleNewProject}
             className="flex-1 font-mono bg-[#113768] text-white py-3 rounded-md text-sm font-medium border-2 border-[#113768] hover:border-[var(--copper)] hover:bg-[#0d2a50] transition-colors"
@@ -187,6 +161,21 @@ export default function HomeClient({
           >
             see short guide
           </Link>
+        </div>
+
+        {/* What's new pointer */}
+        <div className="mb-12 text-sm text-neutral-600 dark:text-neutral-400 space-y-1">
+          <p>Stripboard Editor is a rather new and actively developing project, with new features getting added every now and then.</p>
+          <p>
+            <Link href="/updates" className="font-mono text-[var(--copper)] hover:underline">
+              See what&apos;s new and what&apos;s coming next →
+            </Link>
+          </p>
+          <p>
+            <Link href="/feedback" className="font-mono text-[var(--copper)] hover:underline">
+              Have an idea, a bug, or a question? Leave me a message →
+            </Link>
+          </p>
         </div>
 
         {!user && (<>
@@ -447,54 +436,17 @@ export default function HomeClient({
 
       {/* Auth modal */}
       {showAuth && (
-        <div
-          className="fixed inset-0 bg-black/30 flex items-center justify-center z-50"
-          onClick={() => setShowAuth(null)}
-        >
-          <div
-            className="bg-white dark:bg-neutral-900 rounded-lg shadow-xl dark:shadow-neutral-900/50 p-6 w-[calc(100%-2rem)] sm:w-80 max-w-sm mx-4 sm:mx-0"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100 mb-4">
-              {showAuth === "login" ? "Login" : "Register"}
-            </h2>
-            <form onSubmit={handleAuth} className="flex flex-col gap-3">
-              <input
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="Username"
-                className="border border-neutral-300 dark:border-neutral-600 rounded px-3 py-2 text-sm text-neutral-900 dark:text-neutral-100 dark:bg-neutral-800 outline-none focus:border-[#113768] dark:focus:border-[#5b9bd5]"
-                autoFocus
-              />
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Password"
-                className="border border-neutral-300 dark:border-neutral-600 rounded px-3 py-2 text-sm text-neutral-900 dark:text-neutral-100 dark:bg-neutral-800 outline-none focus:border-[#113768] dark:focus:border-[#5b9bd5]"
-              />
-              {authError && (
-                <p className="text-xs text-red-500 dark:text-red-400">{authError}</p>
-              )}
-              <button
-                type="submit"
-                disabled={authLoading}
-                className="bg-[#113768] text-white py-2 rounded text-sm font-medium hover:bg-[#0d2a50] transition-colors disabled:opacity-60"
-              >
-                {authLoading
-                  ? (showAuth === "login" ? "Logging in..." : "Registering...")
-                  : (showAuth === "login" ? "Login" : "Register")}
-              </button>
-              <p className="text-xs text-neutral-500 dark:text-neutral-400 text-center">
-                {showAuth === "login" ? (
-                  <>No account? <button type="button" onClick={() => { setShowAuth("register"); setAuthError(null); }} className="text-[#113768] dark:text-[#5b9bd5] hover:underline">Register</button></>
-                ) : (
-                  <>Have an account? <button type="button" onClick={() => { setShowAuth("login"); setAuthError(null); }} className="text-[#113768] dark:text-[#5b9bd5] hover:underline">Login</button></>
-                )}
-              </p>
-            </form>
-          </div>
-        </div>
+        <AuthModal
+          mode={showAuth}
+          onMode={setShowAuth}
+          onClose={() => setShowAuth(null)}
+          onSuccess={(u) => {
+            setUser(u);
+            setShowAuth(null);
+            getUserProjects().then(setProjects);
+            router.refresh();
+          }}
+        />
       )}
 
       {/* Footer */}

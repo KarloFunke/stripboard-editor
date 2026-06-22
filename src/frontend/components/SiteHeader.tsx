@@ -1,5 +1,6 @@
 import Link from "next/link";
 import ThemeToggle from "@/components/ThemeToggle";
+import HeaderControls from "@/components/HeaderControls";
 
 export default function SiteHeader({
   breadcrumb,
@@ -25,7 +26,7 @@ export default function SiteHeader({
         )}
       </div>
       <div className="flex items-center gap-2 sm:gap-3 text-sm">
-        {actions}
+        <HeaderControls actions={actions} />
         <ThemeToggle className="px-2 py-1.5 rounded border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300 hover:border-[var(--copper)] hover:text-[var(--copper)] transition-colors" />
       </div>
     </header>
