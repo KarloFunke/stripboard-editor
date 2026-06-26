@@ -2,6 +2,7 @@
 
 import { useRef, useState, useCallback, useEffect, useMemo } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
+import { Component } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { usePanZoom } from "@/hooks/usePanZoom";
 import { useCanvasSelection } from "@/hooks/useCanvasSelection";
@@ -63,6 +64,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
   const updateSchematicPos = useProjectStore((s) => s.updateSchematicPos);
   const removeComponent = useProjectStore((s) => s.removeComponent);
   const addComponent = useProjectStore((s) => s.addComponent);
+  const addComponentInstance = useProjectStore((s) => s.addComponentInstance);
   const addSchematicWire = useProjectStore((s) => s.addSchematicWire);
   const removeSchematicWire = useProjectStore((s) => s.removeSchematicWire);
   const splitSchematicWire = useProjectStore((s) => s.splitSchematicWire);
@@ -94,6 +96,20 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
   const [wirePreview, setWirePreview] = useState<{ x: number; y: number } | null>(null);
   const [selectedWireId, setSelectedWireId] = useState<string | null>(null);
   const [selectedWireIds, setSelectedWireIds] = useState<string[]>([]);
+
+  // Copy/paste clipboard for a single component. Holds a snapshot of the copied
+  // instance (not its id), so paste still works after the source is deleted. The
+  // stored position cascades on each paste so repeated pastes don't stack.
+  const clipboardRef = useRef<{
+    defId: string;
+    value?: string;
+    schematicRotation: 0 | 90 | 180 | 270;
+    schematicMirrored?: boolean;
+    labelOffset?: Component["labelOffset"];
+    pinLabelOffsets?: Component["pinLabelOffsets"];
+    footprintOverride?: Component["footprintOverride"];
+    pos: { x: number; y: number };
+  } | null>(null);
 
   // Compute wire colors and net IDs: propagate through connected wire groups
   const { wireColorMap, wireNetIdMap } = useMemo(() => {
@@ -203,6 +219,52 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
       // spin the action or flood undo history.
       const isArrowKey = e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "ArrowLeft" || e.key === "ArrowRight";
       if (e.repeat && !isArrowKey) return;
+
+      // Ctrl/Cmd+C: copy the selected component
+      if ((e.ctrlKey || e.metaKey) && (e.key === "c" || e.key === "C")) {
+        if (selectedId) {
+          const comp = components.find((c) => c.id === selectedId);
+          if (comp) {
+            clipboardRef.current = {
+              defId: comp.defId,
+              value: comp.value,
+              schematicRotation: comp.schematicRotation,
+              schematicMirrored: comp.schematicMirrored,
+              labelOffset: comp.labelOffset,
+              pinLabelOffsets: comp.pinLabelOffsets,
+              footprintOverride: comp.footprintOverride,
+              pos: comp.schematicPos,
+            };
+          }
+        }
+        return;
+      }
+
+      // Ctrl/Cmd+V: paste a new instance of the copied component, offset so it
+      // doesn't land on top of the source (and cascades on repeated pastes).
+      if ((e.ctrlKey || e.metaKey) && (e.key === "v" || e.key === "V")) {
+        const clip = clipboardRef.current;
+        if (clip) {
+          e.preventDefault();
+          const pos = { x: clip.pos.x + MOVE_STEP * 2, y: clip.pos.y + MOVE_STEP * 2 };
+          const newId = addComponentInstance({
+            defId: clip.defId,
+            value: clip.value,
+            schematicRotation: clip.schematicRotation,
+            schematicMirrored: clip.schematicMirrored,
+            labelOffset: clip.labelOffset,
+            pinLabelOffsets: clip.pinLabelOffsets,
+            footprintOverride: clip.footprintOverride,
+            schematicPos: pos,
+          });
+          clipboardRef.current = { ...clip, pos };
+          setSelectedId(newId);
+          setSelectedIds([]);
+          setSelectedWireId(null);
+          setSelectedWireIds([]);
+        }
+        return;
+      }
 
       // W: toggle wire draw mode
       if (e.key === "w" || e.key === "W") {
@@ -392,7 +454,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selectedId, selectedIds, selectedWireId, selectedWireIds, wireDrawingFrom, wireDrawMode, components, schematicWires, updateSchematicPos, removeComponent, removeSchematicWire, rotateSchematicComponent, pushSnapshot, transact, setSchematicWireDrawing, toggleWireDrawMode]);
+  }, [selectedId, selectedIds, selectedWireId, selectedWireIds, wireDrawingFrom, wireDrawMode, components, schematicWires, updateSchematicPos, removeComponent, removeSchematicWire, rotateSchematicComponent, pushSnapshot, transact, setSchematicWireDrawing, toggleWireDrawMode, addComponentInstance]);
 
   const getSVGPoint = useCallback((e: React.MouseEvent) => {
     const svg = svgRef.current;

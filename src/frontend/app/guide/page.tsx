@@ -95,6 +95,7 @@ export default function GuidePage() {
               ["R", "Rotate selected component"],
               ["M", "Mirror selected component (schematic)"],
               ["W", "Toggle wire drawing mode (schematic)"],
+              ["Ctrl + C / Ctrl + V", "Copy and paste selected component (schematic)"],
               ["Delete", "Remove selected component or wire"],
               ["Escape", "Cancel current action or exit wire mode"],
               ["Ctrl + Z", "Undo"],

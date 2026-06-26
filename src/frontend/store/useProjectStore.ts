@@ -45,6 +45,17 @@ interface ProjectActions {
 
   // Components
   addComponent: (defId: string, schematicPos: { x: number; y: number }) => void;
+  // Add a fully specified instance (used by copy/paste); returns the new id.
+  addComponentInstance: (init: {
+    defId: string;
+    value?: string;
+    schematicRotation?: 0 | 90 | 180 | 270;
+    schematicMirrored?: boolean;
+    labelOffset?: { x: number; y: number };
+    pinLabelOffsets?: Record<string, { x: number; y: number }>;
+    footprintOverride?: FootprintOverride;
+    schematicPos: { x: number; y: number };
+  }) => string;
   removeComponent: (id: string) => void;
   updateLabelOffset: (id: string, offset: { x: number; y: number }) => void;
   updatePinLabelOffset: (id: string, pinId: string, offset: { x: number; y: number }) => void;
@@ -352,6 +363,35 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         ],
       };
     });
+  },
+
+  addComponentInstance: (init) => {
+    const id = generateId();
+    get().pushSnapshot();
+    set((s) => {
+      const def = s.componentDefs.find((d) => d.id === init.defId);
+      const prefix = def?.defaultLabelPrefix ?? "X";
+      return {
+        components: [
+          ...s.components,
+          {
+            id,
+            defId: init.defId,
+            label: nextLabel(s.components, prefix),
+            value: init.value,
+            schematicPos: init.schematicPos,
+            schematicRotation: init.schematicRotation ?? 0,
+            schematicMirrored: init.schematicMirrored,
+            labelOffset: init.labelOffset,
+            pinLabelOffsets: init.pinLabelOffsets,
+            footprintOverride: init.footprintOverride,
+            boardPos: null,
+            rotation: 0,
+          },
+        ],
+      };
+    });
+    return id;
   },
 
   updateLabel: (id, label) => {
