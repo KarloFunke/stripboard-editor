@@ -18,9 +18,9 @@ server {
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
     add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
 
-    # DB backup (restricted to storage server IP via direct connection)
+    # DB backup (restricted to storage server IP via X-Real-IP set by upstream proxy)
     location /api/backup/ {
-        if ($remote_addr != "${BACKUP_ALLOWED_IP}") {
+        if ($http_x_real_ip != "${BACKUP_ALLOWED_IP}") {
             return 403;
         }
 

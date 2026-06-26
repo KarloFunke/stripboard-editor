@@ -12,6 +12,12 @@ export const metadata: Metadata = {
 
 const updates: { date: string; items: string[] }[] = [
   {
+    date: "2026-06-26",
+    items: [
+      "The site has moved to dedicated, professional hosting (coming from being hosted on my old PC over my residential ISP)(I got really lucky that this site was up 100% over the last 4 months with this old setup).",
+    ],
+  },
+  {
     date: "2026-06-22",
     items: [
       "Added this What's New page, so you can follow recent changes and what is planned.",

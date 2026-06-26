@@ -23,7 +23,7 @@ services:
   nginx:
     image: nginx:alpine
     ports:
-      - "16005:80"
+      - "127.0.0.1:16005:80"
     volumes:
       - ./src/nginx/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
     environment:
