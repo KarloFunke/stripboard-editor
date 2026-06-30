@@ -220,7 +220,7 @@ const nmos: SymbolDef = {
     { d: "M -4 -8 L 12 -8 L 12 -16", fill: "none" }, // drain
     { d: "M -4 8 L 12 8 L 12 16", fill: "none" },     // source
     { d: "M -4 0 L 12 0 L 12 8", fill: "none" },       // body
-    { d: "M 4 0 L 9 -3 L 9 3 Z", fill: "currentColor" }, // arrow
+    { d: "M -4 0 L 1 -3 L 1 3 Z", fill: "currentColor" }, // arrow
     // Stubs
     { d: `M -8 0 L ${-2 * G} 0`, fill: "none" },
     { d: `M 12 -16 L ${G} ${-2 * G}`, fill: "none" },
@@ -245,7 +245,7 @@ const pmos: SymbolDef = {
     { d: "M -4 -8 L 12 -8 L 12 -16", fill: "none" },
     { d: "M -4 8 L 12 8 L 12 16", fill: "none" },
     { d: "M -4 0 L 12 0 L 12 8", fill: "none" },
-    { d: "M 4 0 L -1 -3 L -1 3 Z", fill: "currentColor" }, // arrow
+    { d: "M 12 0 L 7 -3 L 7 3 Z", fill: "currentColor" }, // arrow
     { d: `M -8 0 L ${-2 * G} 0`, fill: "none" },
     { d: `M 12 -16 L ${G} ${-2 * G}`, fill: "none" },
     { d: `M 12 16 L ${G} ${2 * G}`, fill: "none" },
