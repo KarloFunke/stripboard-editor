@@ -102,6 +102,7 @@ export default function StripboardCanvas({
     didDrag: boolean;
     rowOffset: number; // click row - boardPos row
     colOffset: number; // click col - boardPos col
+    multi: boolean;
   } | null>(null);
   const [dragPreviewPos, setDragPreviewPos] = useState<{
     row: number;
@@ -129,6 +130,53 @@ export default function StripboardCanvas({
       pushSnapshot();
     }
   }, [pushSnapshot]);
+
+  // Multi-drag: dragging a component that's part of a multi-selection moves the
+  // whole selection (components + wires + cuts). Holds the move plan, the group's
+  // bounds + anchor hole at drag start (to keep the group inside the board), and
+  // the delta applied so far.
+  const multiDragRef = useRef<{
+    moveIds: string[];
+    moveWireIds: string[];
+    moveCuts: Cut[];
+    anchorStartRow: number;
+    anchorStartCol: number;
+    startMinRow: number;
+    startMinCol: number;
+    startMaxRow: number;
+    startMaxCol: number;
+    appliedDRow: number;
+    appliedDCol: number;
+  } | null>(null);
+
+  // Bounding box (in holes) of a board selection, used to clamp a group move so
+  // no part of it leaves the board. Between-cuts span col..col+1.
+  const computeBoardSelectionBounds = useCallback(
+    (moveIds: string[], wireIds: string[], cuts: Cut[]) => {
+      let minRow = Infinity, minCol = Infinity, maxRow = -Infinity, maxCol = -Infinity;
+      for (const comp of components) {
+        if (!moveIds.includes(comp.id) || !comp.boardPos) continue;
+        const def = resolveComponentDef(comp, componentDefs);
+        if (!def) continue;
+        const b = def.flexible
+          ? getFlexibleBounds(comp, def)
+          : getComponentBounds(def, comp.boardPos, comp.rotation);
+        minRow = Math.min(minRow, b.minRow); maxRow = Math.max(maxRow, b.maxRow);
+        minCol = Math.min(minCol, b.minCol); maxCol = Math.max(maxCol, b.maxCol);
+      }
+      for (const w of board.wires) {
+        if (!wireIds.includes(w.id)) continue;
+        minRow = Math.min(minRow, w.from.row, w.to.row); maxRow = Math.max(maxRow, w.from.row, w.to.row);
+        minCol = Math.min(minCol, w.from.col, w.to.col); maxCol = Math.max(maxCol, w.from.col, w.to.col);
+      }
+      for (const cut of cuts) {
+        minRow = Math.min(minRow, cut.row); maxRow = Math.max(maxRow, cut.row);
+        minCol = Math.min(minCol, cut.col); maxCol = Math.max(maxCol, cut.col + (cut.kind === "hole" ? 0 : 1));
+      }
+      return { minRow, minCol, maxRow, maxCol };
+    },
+    [components, componentDefs, board.wires]
+  );
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -164,19 +212,26 @@ export default function StripboardCanvas({
       const hasSelection = moveIds.length > 0 || selectedWireIds.length > 0 || selectedCuts.length > 0;
       if (hasSelection && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
         e.preventDefault();
-        // One snapshot per held-key gesture: snapshot on the initial press,
-        // keep moving on auto-repeat. One Ctrl+Z reverts the whole nudge.
-        if (!e.repeat) pushSnapshot();
         const delta = {
           ArrowUp: { row: -1, col: 0 },
           ArrowDown: { row: 1, col: 0 },
           ArrowLeft: { row: 0, col: -1 },
           ArrowRight: { row: 0, col: 1 },
         }[e.key]!;
-        moveComponentsOnBoard(moveIds, delta.row, delta.col, selectedWireIds, selectedCuts);
+        // Clamp so the selection can't step off the board.
+        const b = computeBoardSelectionBounds(moveIds, selectedWireIds, selectedCuts);
+        let dRow = delta.row;
+        let dCol = delta.col;
+        if (b.minRow + dRow < 0 || b.maxRow + dRow > board.rows - 1) dRow = 0;
+        if (b.minCol + dCol < 0 || b.maxCol + dCol > board.cols - 1) dCol = 0;
+        if (dRow === 0 && dCol === 0) return; // blocked at the edge
+        // One snapshot per held-key gesture: snapshot on the initial press,
+        // keep moving on auto-repeat. One Ctrl+Z reverts the whole nudge.
+        if (!e.repeat) pushSnapshot();
+        moveComponentsOnBoard(moveIds, dRow, dCol, selectedWireIds, selectedCuts);
         if (selectedCuts.length > 0) {
           setSelectedCuts((prev) =>
-            prev.map((c) => ({ ...c, row: c.row + delta.row, col: c.col + delta.col }))
+            prev.map((c) => ({ ...c, row: c.row + dRow, col: c.col + dCol }))
           );
         }
         return;
@@ -193,7 +248,7 @@ export default function StripboardCanvas({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [wirePlacementFrom, cancelWirePlacement, selectedId, selectedIds, selectedWireIds, selectedCuts, rotateComponent, removeFromBoard, moveComponentsOnBoard, pushSnapshot]);
+  }, [wirePlacementFrom, cancelWirePlacement, selectedId, selectedIds, selectedWireIds, selectedCuts, rotateComponent, removeFromBoard, moveComponentsOnBoard, pushSnapshot, computeBoardSelectionBounds, board.rows, board.cols]);
 
 
   const getSVGPoint = useCallback((e: React.MouseEvent | React.DragEvent) => {
@@ -327,7 +382,12 @@ export default function StripboardCanvas({
       // Defer the snapshot until the drag actually moves the component (see
       // commitSnapshotOnce). A plain select-click must not touch history.
       pendingSnapshotRef.current = true;
-      setSelectedId(componentId);
+
+      // Dragging a component that's part of a multi-selection moves the whole
+      // selection together; otherwise it's a single-component drag (and selects it).
+      const selIds = selectedIds.length > 0 ? selectedIds : selectedId ? [selectedId] : [];
+      const isMulti = selIds.length > 1 && selIds.includes(componentId);
+      if (!isMulti) setSelectedId(componentId);
 
       // Compute offset: where within the component the user clicked
       const comp = components.find((c) => c.id === componentId);
@@ -336,6 +396,23 @@ export default function StripboardCanvas({
       const rowOffset = comp?.boardPos && clickHole ? clickHole.row - comp.boardPos.row : 0;
       const colOffset = comp?.boardPos && clickHole ? clickHole.col - comp.boardPos.col : 0;
 
+      if (isMulti && comp?.boardPos) {
+        const b = computeBoardSelectionBounds(selIds, selectedWireIds, selectedCuts);
+        multiDragRef.current = {
+          moveIds: selIds,
+          moveWireIds: selectedWireIds,
+          moveCuts: selectedCuts,
+          anchorStartRow: comp.boardPos.row,
+          anchorStartCol: comp.boardPos.col,
+          startMinRow: b.minRow,
+          startMinCol: b.minCol,
+          startMaxRow: b.maxRow,
+          startMaxCol: b.maxCol,
+          appliedDRow: 0,
+          appliedDCol: 0,
+        };
+      }
+
       setDragging({
         componentId,
         startX: e.clientX,
@@ -343,9 +420,10 @@ export default function StripboardCanvas({
         didDrag: false,
         rowOffset,
         colOffset,
+        multi: isMulti,
       });
     },
-    [wirePlacementMode, wirePlacementFrom, components, board.rows, board.cols, getSVGPoint]
+    [wirePlacementMode, wirePlacementFrom, components, board.rows, board.cols, getSVGPoint, selectedId, selectedIds, selectedWireIds, selectedCuts, setSelectedId, computeBoardSelectionBounds]
   );
 
   // Start selection rectangle on mouseDown on empty SVG area
@@ -441,6 +519,35 @@ export default function StripboardCanvas({
         row: mouseHole.row - dragging.rowOffset,
         col: mouseHole.col - dragging.colOffset,
       } : null;
+
+      // Multi-drag: move the whole selection (components + wires + cuts) by the
+      // incremental delta, reusing the same store action as arrow-key nudging.
+      if (dragging.multi) {
+        const plan = multiDragRef.current;
+        if (dragging.didDrag && previewHole && plan) {
+          // Desired total delta from drag start, clamped so the group's bounding
+          // box stays fully on the board (no trailing item slides off the edge).
+          const desiredDRow = previewHole.row - plan.anchorStartRow;
+          const desiredDCol = previewHole.col - plan.anchorStartCol;
+          const clampedDRow = Math.max(-plan.startMinRow, Math.min(board.rows - 1 - plan.startMaxRow, desiredDRow));
+          const clampedDCol = Math.max(-plan.startMinCol, Math.min(board.cols - 1 - plan.startMaxCol, desiredDCol));
+          const dRow = clampedDRow - plan.appliedDRow;
+          const dCol = clampedDCol - plan.appliedDCol;
+          if (dRow !== 0 || dCol !== 0) {
+            commitSnapshotOnce();
+            moveComponentsOnBoard(plan.moveIds, dRow, dCol, plan.moveWireIds, plan.moveCuts);
+            if (plan.moveCuts.length > 0) {
+              const shifted = plan.moveCuts.map((c) => ({ ...c, row: c.row + dRow, col: c.col + dCol }));
+              plan.moveCuts = shifted;
+              setSelectedCuts(shifted);
+            }
+            plan.appliedDRow = clampedDRow;
+            plan.appliedDCol = clampedDCol;
+          }
+        }
+        return;
+      }
+
       setDragPreviewPos(previewHole);
 
       // Live-update position for instant strip recoloring
@@ -461,7 +568,7 @@ export default function StripboardCanvas({
         }
       }
     },
-    [dragging, selectionRect, getSVGPoint, board.rows, board.cols, wirePlacementFrom, updateSelectionRect, checkDragThreshold, flexPinDrag, components, componentDefs, placeOnBoard, setFlexibleEndPos, commitSnapshotOnce]
+    [dragging, selectionRect, getSVGPoint, board.rows, board.cols, wirePlacementFrom, updateSelectionRect, checkDragThreshold, flexPinDrag, components, componentDefs, placeOnBoard, setFlexibleEndPos, commitSnapshotOnce, moveComponentsOnBoard]
   );
 
   const handleMouseUp = useCallback(() => {
@@ -531,6 +638,7 @@ export default function StripboardCanvas({
     }
     setDragging(null);
     setDragPreviewPos(null);
+    multiDragRef.current = null;
   }, [dragging, dragPreviewPos, components, componentDefs, board.wires, board.cuts, isValidPlacement, placeOnBoard, finalizeSelectionRect, markDragComplete]);
 
   // ── Canvas click ────────────────────────────────────────
@@ -670,6 +778,7 @@ export default function StripboardCanvas({
             pendingSnapshotRef.current = false;
             setDragging(null);
             setDragPreviewPos(null);
+            multiDragRef.current = null;
             setWireMousePos(null);
             cancelSelectionRect();
           }}

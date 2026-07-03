@@ -100,7 +100,7 @@ export default function GuidePage() {
               ["Escape", "Cancel current action or exit wire mode"],
               ["Ctrl + Z", "Undo"],
               ["Ctrl + Y / Ctrl + Shift + Z", "Redo"],
-              ["Arrow keys", "Move selected components (bulk move)"],
+              ["Arrow keys / Drag", "Move selected components, one or many"],
               ["Alt + click hole", "Cut the strip at a hole (stripboard)"],
               ["Right-click drag", "Pan the canvas"],
               ["Scroll wheel", "Zoom in / out"],

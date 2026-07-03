@@ -12,6 +12,12 @@ export const metadata: Metadata = {
 
 const updates: { date: string; items: string[] }[] = [
   {
+    date: "2026-07-03",
+    items: [
+      "Move a whole multi-selection of components at once by dragging it, on both the schematic and the stripboard (previously only possible with the arrow keys).",
+    ],
+  },
+  {
     date: "2026-06-26",
     items: [
       "Copy and paste schematic components with Ctrl+C and Ctrl+V.",
