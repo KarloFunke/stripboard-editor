@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { useProjectStore } from "@/store/useProjectStore";
 import { getProject, saveProject } from "@/lib/api";
+import { track } from "@/lib/track";
 import { Project } from "@/types";
 import SchematicEditor from "@/components/SchematicEditor";
 import StripboardEditor from "@/components/StripboardEditor";
@@ -18,7 +19,10 @@ export default function ProjectEditorPage() {
   const loadProject = useProjectStore((s) => s.loadProject);
   const isMobile = useIsMobile();
   const setProjectName = useProjectStore((s) => s.setProjectName);
-  const [autoSave, setAutoSave] = useState(false);
+  // Auto-save preference is persisted on the project, so it survives reloads and
+  // is restored by loadProject below (a project saved with it on stays on).
+  const autoSave = useProjectStore((s) => s.autoSave ?? false);
+  const setAutoSave = useProjectStore((s) => s.setAutoSave);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -87,20 +91,31 @@ export default function ProjectEditorPage() {
 
   const handleSave = doSave;
 
-  // Auto-save: debounced save on store changes
+  // Toggling auto-save persists the flag to the server right away, so the
+  // preference sticks for this project (in either direction).
+  const handleToggleAutoSave = useCallback(() => {
+    const next = !autoSave;
+    track(next ? "autosave-on" : "autosave-off");
+    setAutoSave(next);
+    void doSave();
+  }, [autoSave, setAutoSave, doSave]);
+
+  // Auto-save: debounced save on store changes. Gated on !loading so the
+  // persisted flag from a previously-open project can't fire against this
+  // project's data before loadProject has swapped it in.
   useEffect(() => {
-    if (!autoSave) return;
+    if (loading || !autoSave) return;
     let timeout: ReturnType<typeof setTimeout>;
     const unsub = useProjectStore.subscribe((state) => {
       if (!state.isDirty) return;
       clearTimeout(timeout);
-      timeout = setTimeout(() => { void doSave(); }, 2000); // debounce 2s
+      timeout = setTimeout(() => { void doSave(); }, 1000); // debounce 1s after the last edit
     });
     return () => {
       unsub();
       clearTimeout(timeout);
     };
-  }, [autoSave, doSave]);
+  }, [loading, autoSave, doSave]);
 
   if (loading) {
     return (
@@ -165,7 +180,7 @@ export default function ProjectEditorPage() {
         lastSaved={lastSaved}
         saveError={saveError}
         autoSave={autoSave}
-        onToggleAutoSave={() => setAutoSave((v) => !v)}
+        onToggleAutoSave={handleToggleAutoSave}
       />
       <SplitPane
         left={<SchematicEditor />}

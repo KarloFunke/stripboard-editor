@@ -130,4 +130,5 @@ export interface Project {
   schematicWires: SchematicWire[];
   board: Board;
   showValuesOnBoard?: boolean;
+  autoSave?: boolean; // per-project preference: continuously save on every change
 }

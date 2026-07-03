@@ -63,6 +63,7 @@ interface ProjectActions {
   updateLabel: (id: string, label: string) => void;
   updateComponentValue: (id: string, value: string) => void;
   setShowValuesOnBoard: (show: boolean) => void;
+  setAutoSave: (autoSave: boolean) => void;
   updatePinName: (componentId: string, pinId: string, newName: string) => void;
   updateComponentFootprint: (componentId: string, override: FootprintOverride) => void;
   updateSchematicPos: (id: string, pos: { x: number; y: number }) => void;
@@ -164,6 +165,7 @@ const initialProject: Project = {
     wires: [],
   },
   showValuesOnBoard: false,
+  autoSave: false,
 };
 
 const MAX_HISTORY = 80;
@@ -274,6 +276,7 @@ function prepareProjectState(data: Project) {
       wires: data.board?.wires ?? [],
     },
     showValuesOnBoard: data.showValuesOnBoard ?? false,
+    autoSave: data.autoSave ?? false,
     wirePlacementMode: false,
     wirePlacementFrom: null,
     schematicWireDrawMode: false,
@@ -416,6 +419,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     get().pushSnapshot();
     set({ showValuesOnBoard: show });
   },
+
+  // Persisted project preference; marks dirty so the toggle itself gets saved.
+  setAutoSave: (autoSave) => set({ autoSave, isDirty: true }),
 
   // No snapshot — called per-pixel during drag
   updateLabelOffset: (id, offset) =>
@@ -924,6 +930,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       schematicWires: s.schematicWires,
       board: s.board,
       showValuesOnBoard: s.showValuesOnBoard,
+      autoSave: s.autoSave,
     };
   },
 
@@ -952,6 +959,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     schematicWires: [],
     board: { rows: 20, cols: 20, cuts: [], wires: [] },
     showValuesOnBoard: false,
+    autoSave: false,
     wirePlacementMode: false,
     wirePlacementFrom: null,
     schematicWireDrawMode: false,
@@ -1000,6 +1008,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       _redoStack: redoStack,
       canUndo: history.length > 0,
       canRedo: true,
+      isDirty: true,
+      _editSeq: s._editSeq + 1,
     });
   },
 
@@ -1015,6 +1025,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       _redoStack: redoStack,
       canUndo: true,
       canRedo: redoStack.length > 0,
+      isDirty: true,
+      _editSeq: s._editSeq + 1,
     });
   },
 }));

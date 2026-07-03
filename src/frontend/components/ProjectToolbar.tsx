@@ -85,6 +85,9 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState(name);
   const [saveFlash, setSaveFlash] = useState(false);
+  // With auto-save on, the Save button would flip to "Saving..." every second.
+  // Suppress that transient so it doesn't flicker (manual saves still flash).
+  const showSaving = saving && !autoSave;
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [showPrint, setShowPrint] = useState(false);
   const [showSaveNotice, setShowSaveNotice] = useState(false);
@@ -328,22 +331,22 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
           {onSave && (
             <button
               onClick={handleSave}
-              disabled={saving || saveFlash}
+              disabled={showSaving || saveFlash}
               className={`px-3.5 py-1.5 rounded transition-all text-sm ${
                 saveFlash
                   ? "bg-green-500/80 text-white"
                   : saveError
                   ? "bg-red-500/80 text-white hover:bg-red-600/80"
-                  : saving
+                  : showSaving
                   ? "bg-white/10 opacity-60"
                   : "bg-white/10 hover:bg-white/20"
               }`}
               title={saveError ? "Last save failed — click to retry" : undefined}
             >
-              {saveFlash ? "Saved!" : saving ? "Saving..." : saveError ? "Retry save" : "Save"}
+              {saveFlash ? "Saved!" : showSaving ? "Saving..." : saveError ? "Retry save" : "Save"}
             </button>
           )}
-          {onToggleAutoSave && editUuid && (
+          {onToggleAutoSave && (
             <button
               onClick={onToggleAutoSave}
               className={`px-3.5 py-1.5 rounded text-sm transition-all ${
