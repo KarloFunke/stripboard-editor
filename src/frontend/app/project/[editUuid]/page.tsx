@@ -19,6 +19,11 @@ export default function ProjectEditorPage() {
   const loadProject = useProjectStore((s) => s.loadProject);
   const isMobile = useIsMobile();
   const setProjectName = useProjectStore((s) => s.setProjectName);
+  const projectName = useProjectStore((s) => s.name);
+
+  useEffect(() => {
+    document.title = `${projectName} - Stripboard Editor`;
+  }, [projectName]);
   // Auto-save preference is persisted on the project, so it survives reloads and
   // is restored by loadProject below (a project saved with it on stays on).
   const autoSave = useProjectStore((s) => s.autoSave ?? false);

@@ -44,6 +44,10 @@ export default function ProjectViewPage() {
       });
   }, [viewUuid, loadProject]);
 
+  useEffect(() => {
+    if (projectName) document.title = `${projectName} - Stripboard Editor`;
+  }, [projectName]);
+
   const handleFork = async () => {
     try {
       const forked = await forkProject(viewUuid);

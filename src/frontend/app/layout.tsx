@@ -19,8 +19,8 @@ const siteUrl = SITE_URL;
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: "Stripboard Editor - Design Stripboard Layouts Online",
-    template: "%s | Stripboard Editor",
+    default: "Stripboard Editor - Free Stripboard Layout & Schematic Tool",
+    template: "%s - Stripboard Editor",
   },
   description:
     "Free online stripboard layout editor with a built-in schematic editor. Draw schematics with standard symbols, then place components on a virtual stripboard. Copper strips colour-code to your nets in real time so you can instantly see what is connected — then print a true-scale build template with a mirrored cut guide and a bill of materials (BOM).",
@@ -43,7 +43,7 @@ export const metadata: Metadata = {
     locale: "en_US",
     url: siteUrl,
     siteName: "Stripboard Editor",
-    title: "Stripboard Editor - Design Stripboard Layouts Online",
+    title: "Stripboard Editor",
     description:
       "Free online stripboard editor with a built-in schematic editor. Draw circuits with standard symbols, wire up nets, and layout on a virtual stripboard with live strip colouring — then print a 1:1 build template with a parts list (BOM).",
     images: [
@@ -57,7 +57,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Stripboard Editor - Design Stripboard Layouts Online",
+    title: "Stripboard Editor",
     description:
       "Free online stripboard editor with a built-in schematic editor. Draw circuits, wire up nets, layout on a virtual stripboard, and print a 1:1 build template with a BOM.",
     images: ["/demo-circuit.png"],

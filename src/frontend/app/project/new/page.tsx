@@ -23,6 +23,11 @@ export default function NewProjectPage() {
   const editSeq = useProjectStore((s) => s._editSeq);
   const autoSave = useProjectStore((s) => s.autoSave ?? false);
   const setAutoSave = useProjectStore((s) => s.setAutoSave);
+  const projectName = useProjectStore((s) => s.name);
+
+  useEffect(() => {
+    document.title = `${projectName} - Stripboard Editor`;
+  }, [projectName]);
 
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {

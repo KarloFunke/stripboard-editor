@@ -3,7 +3,7 @@ import SiteHeader from "@/components/SiteHeader";
 import SiteFooter from "@/components/SiteFooter";
 
 export const metadata: Metadata = {
-  title: "Quick Guide",
+  title: "Guide",
   description:
     "A quick guide to the Stripboard Editor covering keyboard shortcuts, workflow, and key concepts.",
   alternates: { canonical: "https://stripboard-editor.com/guide" },
