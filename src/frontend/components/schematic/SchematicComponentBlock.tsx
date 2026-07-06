@@ -162,7 +162,7 @@ export default function SchematicComponentBlock({
   return (
     <g
       transform={`translate(${component.schematicPos.x}, ${component.schematicPos.y})`}
-      style={{ cursor: "grab" }}
+      style={{ cursor: "grab", opacity: component.boardExcluded ? 0.45 : 1 }}
       onMouseDown={onMouseDown}
     >
       {/* Invisible hit area for dragging */}

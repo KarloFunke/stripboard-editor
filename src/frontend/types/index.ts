@@ -61,6 +61,11 @@ export interface Component {
 
   // Per-instance footprint override; when set, takes priority over the ComponentDef
   footprintOverride?: FootprintOverride;
+
+  // Excluded from the stripboard: lives on the schematic only (e.g. off-board
+  // parts connected via jumper wires). Ignored by board placement and net
+  // completeness checks.
+  boardExcluded?: boolean;
 }
 
 // ── Nets ───────────────────────────────────────────────

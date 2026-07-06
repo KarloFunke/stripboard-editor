@@ -15,7 +15,7 @@ export default function ComponentTray({ readOnly = false }: { readOnly?: boolean
 
   const { segments, connectivity } = useStripSegments();
 
-  const unplaced = components.filter((c) => c.boardPos === null);
+  const unplaced = components.filter((c) => c.boardPos === null && !c.boardExcluded);
   const placed = components.filter((c) => c.boardPos !== null);
 
   const incompleteNets = useMemo(

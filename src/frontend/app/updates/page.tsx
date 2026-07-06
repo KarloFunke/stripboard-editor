@@ -12,6 +12,12 @@ export const metadata: Metadata = {
 
 const updates: { date: string; items: string[] }[] = [
   {
+    date: "2026-07-06",
+    items: [
+      "Exclude a schematic component from the stripboard (select it and press E, or use Exclude in the floating menu). Excluded parts stay in the schematic but are ignored by the board and its net checks, so you can draw a full circuit while only building part of it on the stripboard.",
+    ],
+  },
+  {
     date: "2026-07-03",
     items: [
       "Saving unsafed projects in local storage with the option to restore them when opening a new project again.",
@@ -64,7 +70,6 @@ const updates: { date: string; items: string[] }[] = [
 
 const planned: string[] = [
   "Net list import and export, aiming for compatibility with EDA tools like KiCad so you can move designs in and out of the editor.",
-  "A toggle on schematic components that excludes them from the stripboard. This will allow for a full schematic while only parts of it are assembled on the stripboard itself, while the rest could live on another stripboard or PCB.",
   "A big custom-component overhaul, including a searchable library of both your own and shared community components. Including a better custom component editor.",
   "Optional email address for password resets, so you can recover account access if you forget your password.",
 ];

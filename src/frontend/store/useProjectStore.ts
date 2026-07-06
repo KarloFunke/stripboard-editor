@@ -72,6 +72,7 @@ interface ProjectActions {
   placeOnBoard: (id: string, pos: { row: number; col: number }) => void;
   moveComponentsOnBoard: (ids: string[], deltaRow: number, deltaCol: number, wireIds?: string[], cutPositions?: Cut[]) => void;
   removeFromBoard: (id: string) => void;
+  setBoardExcluded: (id: string, excluded: boolean) => void;
   setFlexibleEndPos: (id: string, pos: { row: number; col: number }) => void;
   rotateComponent: (id: string) => void;
 
@@ -628,6 +629,23 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set((s) => ({
       components: s.components.map((c) =>
         c.id === id ? { ...c, boardPos: null, flexibleEndPos: undefined } : c
+      ),
+    }));
+  },
+
+  // Toggle whether a component is excluded from the stripboard. Excluding also
+  // unplaces it (clears boardPos) so it lives on the schematic only.
+  setBoardExcluded: (id, excluded) => {
+    get().pushSnapshot();
+    set((s) => ({
+      components: s.components.map((c) =>
+        c.id === id
+          ? {
+              ...c,
+              boardExcluded: excluded,
+              ...(excluded ? { boardPos: null, flexibleEndPos: undefined } : {}),
+            }
+          : c
       ),
     }));
   },

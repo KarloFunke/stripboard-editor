@@ -57,9 +57,16 @@ export function checkNetCompleteness(
 ): IncompleteNet[] {
   const result: IncompleteNet[] = [];
 
+  // Pins on components excluded from the board don't participate in board nets.
+  const excludedIds = new Set(
+    components.filter((c) => c.boardExcluded).map((c) => c.id)
+  );
+
   for (const net of nets) {
-    // Find all pins assigned to this net
-    const assignments = netAssignments.filter((a) => a.netId === net.id);
+    // Find all pins assigned to this net (ignoring off-board components)
+    const assignments = netAssignments.filter(
+      (a) => a.netId === net.id && !excludedIds.has(a.componentId)
+    );
     if (assignments.length <= 1) continue; // 0 or 1 pin can't be incomplete
 
     const unplacedPins: PinInfo[] = [];

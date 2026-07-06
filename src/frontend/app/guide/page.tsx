@@ -53,6 +53,7 @@ export default function GuidePage() {
             <li>Connected pins automatically form a net. Rename or recolour nets in the sidebar.</li>
             <li>Click a component label to rename it. Click a pin label to rename the pin.</li>
             <li>Drag labels and pin labels to reposition them if they overlap with wires.</li>
+            <li>Select one or more components and press <kbd className="px-1.5 py-0.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded text-xs font-mono">E</kbd> (or use <strong>Exclude</strong> in the floating menu) to keep them off the stripboard. Excluded parts stay in the schematic but are ignored by the board and its net checks, so you can draw a full circuit while only building part of it. Press <kbd className="px-1.5 py-0.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded text-xs font-mono">E</kbd> again to include them back.</li>
             <li>Use the footprint editor (on the stripboard side) to customise a component{"'"}s physical layout.</li>
           </ul>
         </section>
@@ -94,6 +95,7 @@ export default function GuidePage() {
             {[
               ["R", "Rotate selected component"],
               ["M", "Mirror selected component (schematic)"],
+              ["E", "Exclude / include selected component(s) on the stripboard (schematic)"],
               ["W", "Toggle wire drawing mode (schematic)"],
               ["Ctrl + C / Ctrl + V", "Copy and paste selected component (schematic)"],
               ["Delete", "Remove selected component or wire"],

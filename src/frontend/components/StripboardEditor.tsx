@@ -29,8 +29,10 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
     [nets, netAssignments, segments, connectivity, components, componentDefs]
   );
 
-  const allPlaced = components.length >= 2 && components.every((c) => c.boardPos !== null);
-  const allNetsUsed = allPlaced && components.every((c) =>
+  // Off-board components don't count toward board completion.
+  const boardComponents = components.filter((c) => !c.boardExcluded);
+  const allPlaced = boardComponents.length >= 2 && boardComponents.every((c) => c.boardPos !== null);
+  const allNetsUsed = allPlaced && boardComponents.every((c) =>
     netAssignments.some((a) => a.componentId === c.id)
   );
   const allDone = allPlaced && allNetsUsed && conflictCount === 0 && incompleteNets.length === 0;

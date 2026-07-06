@@ -36,9 +36,10 @@ export default function PrintPreview({ onClose, source, editUuid, viewUuid }: { 
   const [showComponentSheet, setShowComponentSheet] = useState(true);
   const [includeCutSheet, setIncludeCutSheet] = useState(true);
   const [showBom, setShowBom] = useState(true);
+  const [includeExcludedInBom, setIncludeExcludedInBom] = useState(false);
   const [showLabels, setShowLabels] = useState(true);
   const [showWires, setShowWires] = useState(true);
-  const [showCuts, setShowCuts] = useState(true);
+  const [showCuts, setShowCuts] = useState(false);
   const [showPinLabels, setShowPinLabels] = useState(true);
   const [showViewQr, setShowViewQr] = useState(false);
   const [showEditQr, setShowEditQr] = useState(false);
@@ -46,7 +47,10 @@ export default function PrintPreview({ onClose, source, editUuid, viewUuid }: { 
   const viewUrl = viewUuid ? `${SITE_URL}/view/${viewUuid}?utm_source=print-qr-view&utm_medium=qr` : null;
   const editUrl = editUuid ? `${SITE_URL}/project/${editUuid}?utm_source=print-qr-edit&utm_medium=qr` : null;
 
-  const bom = buildBOM(components, componentDefs);
+  const bom = buildBOM(
+    includeExcludedInBom ? components : components.filter((c) => !c.boardExcluded),
+    componentDefs
+  );
 
   const toggle = (label: string, v: boolean, set: (b: boolean) => void) => (
     <label className="flex items-center gap-1.5 cursor-pointer select-none">
@@ -62,6 +66,7 @@ export default function PrintPreview({ onClose, source, editUuid, viewUuid }: { 
       componentSheet: showComponentSheet ? "on" : "off",
       cutSheet: includeCutSheet ? "on" : "off",
       bom: showBom ? "on" : "off",
+      bomOffBoard: includeExcludedInBom ? "on" : "off",
       refLabels: showLabels ? "on" : "off",
       wires: showWires ? "on" : "off",
       cuts: showCuts ? "on" : "off",
@@ -92,6 +97,7 @@ export default function PrintPreview({ onClose, source, editUuid, viewUuid }: { 
           {toggle("Component sheet", showComponentSheet, setShowComponentSheet)}
           {toggle("Cut sheet", includeCutSheet, setIncludeCutSheet)}
           {toggle("BOM", showBom, setShowBom)}
+          {showBom && toggle("Off-board parts in BOM", includeExcludedInBom, setIncludeExcludedInBom)}
           <span className="opacity-40">|</span>
           {toggle("Ref labels", showLabels, setShowLabels)}
           {toggle("Wires", showWires, setShowWires)}

@@ -12,6 +12,7 @@ const SHORTCUTS = [
     ["W", "Toggle wire drawing mode"],
     ["R", "Rotate selected component"],
     ["M", "Mirror selected component"],
+    ["E", "Exclude / include selected component(s) on the stripboard"],
     ["Ctrl + C / Ctrl + V", "Copy and paste selected component"],
     ["Delete", "Remove selected component or wire"],
     ["Escape", "Cancel wire / clear selection / exit wire mode"],
