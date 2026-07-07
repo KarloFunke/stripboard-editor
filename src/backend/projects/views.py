@@ -1,5 +1,6 @@
 import gzip
 import hmac
+import logging
 import os
 import sqlite3
 import tempfile
@@ -7,10 +8,15 @@ import tempfile
 from django.conf import settings as django_settings
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
+from django.contrib.auth.tokens import default_token_generator
 from django.contrib.sessions.models import Session
+from django.core.mail import send_mail
 from django.http import FileResponse
 from django.middleware.csrf import get_token
 from django.utils import timezone
+from django.utils.encoding import force_bytes, force_str
+from django.utils.html import escape
+from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from django.db.models import Count, F, Max, Q
 from django.db.models.functions import Coalesce
 from django.views.decorators.cache import cache_control
@@ -29,6 +35,7 @@ from .serializers import (
     UserRegistrationSerializer,
     UserLoginSerializer,
     UserSerializer,
+    EmailUpdateSerializer,
     FeedbackCreateSerializer,
     FeedbackThreadSerializer,
     FeedbackReplyCreateSerializer,
@@ -38,11 +45,14 @@ from .serializers import (
 from .throttles import (
     ProjectCreateThrottle,
     AuthThrottle,
+    PasswordResetThrottle,
     PowChallengeThrottle,
     FeedbackThrottle,
     FeedbackUserThrottle,
 )
 from .pow import create_challenge, verify_and_consume, DIFFICULTY
+
+_log = logging.getLogger(__name__)
 
 
 # ── Projects ────────────────────────────────────────────
@@ -201,6 +211,7 @@ def auth_register(request):
     user = User.objects.create_user(
         username=serializer.validated_data["username"],
         password=serializer.validated_data["password"],
+        email=serializer.validated_data.get("email", ""),
     )
     login(request, user)
     return Response(UserSerializer(user).data, status=status.HTTP_201_CREATED)
@@ -272,6 +283,130 @@ def auth_change_password(request):
     _clear_user_sessions(request.user.id, exclude_session_key=request.session.session_key)
     login(request, request.user)
     return Response({"ok": True})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@throttle_classes([AuthThrottle])
+def auth_set_email(request):
+    """Set or clear the current user's email (used for password reset). Optional
+    and unverified."""
+    serializer = EmailUpdateSerializer(data=request.data, context={"user": request.user})
+    serializer.is_valid(raise_exception=True)
+    request.user.email = serializer.validated_data["email"]
+    request.user.save(update_fields=["email"])
+    return Response(UserSerializer(request.user).data)
+
+
+def _send_password_reset_email(user):
+    uid = urlsafe_base64_encode(force_bytes(user.pk))
+    token = default_token_generator.make_token(user)
+    link = f"{django_settings.FRONTEND_URL}/reset-password?uid={uid}&token={token}"
+    subject = "Reset your Stripboard Editor password"
+    message = (
+        f"Hi {user.username},\n\n"
+        "We received a request to reset your Stripboard Editor password.\n"
+        "Use the link below to choose a new password (valid for 1 hour):\n"
+        f"{link}\n\n"
+        "If you didn't request this, you can safely ignore this email.\n"
+    )
+    # HTML alternative so the link is clickable in every client (not all clients
+    # auto-linkify bare URLs). escape() also turns "&" into "&amp;" for a valid href.
+    safe_user = escape(user.username)
+    safe_link = escape(link)
+    html_message = (
+        f"<p>Hi {safe_user},</p>"
+        "<p>We received a request to reset your Stripboard Editor password.</p>"
+        f'<p><a href="{safe_link}">Choose a new password</a> (valid for 1 hour).</p>'
+        "<p>If you didn't request this, you can safely ignore this email.</p>"
+    )
+    send_mail(
+        subject,
+        message,
+        django_settings.DEFAULT_FROM_EMAIL,
+        [user.email],
+        html_message=html_message,
+        fail_silently=False,
+    )
+
+
+@api_view(["POST"])
+@throttle_classes([PasswordResetThrottle])
+def auth_password_reset_request(request):
+    """Email a reset link to every active account with this address. Tells the
+    caller when no account matches. Email existence is already discoverable via
+    the registration/set-email uniqueness checks, so hiding it here adds nothing."""
+    # Require PoW to make bulk emailing (and Resend-quota exhaustion) expensive.
+    pow_challenge = request.data.get("pow_challenge")
+    pow_nonce = request.data.get("pow_nonce")
+    if not verify_and_consume(pow_challenge or "", pow_nonce or ""):
+        return Response(
+            {"error": "Invalid or missing proof of work"},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    email = (request.data.get("email") or "").strip().lower()
+    users = list(User.objects.filter(email__iexact=email, is_active=True)) if email else []
+    if not users:
+        return Response(
+            {"error": "No account is registered with that email."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    try:
+        for user in users:
+            _send_password_reset_email(user)
+    except Exception:
+        _log.exception("Failed to send password reset email")
+        return Response(
+            {"error": "Could not send the reset email. Please try again in a moment."},
+            status=status.HTTP_502_BAD_GATEWAY,
+        )
+    return Response({"ok": True})
+
+
+@api_view(["POST"])
+@throttle_classes([PasswordResetThrottle])
+def auth_password_reset_confirm(request):
+    """Validate the reset token and set a new (client-hashed) password, then log
+    the user in on the fresh session."""
+    uid = request.data.get("uid", "")
+    token = request.data.get("token", "")
+    new_password = request.data.get("new_password", "")
+
+    if len(new_password) != 64 or not all(c in "0123456789abcdef" for c in new_password):
+        return Response({"error": "Invalid password"}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        user = User.objects.get(pk=force_str(urlsafe_base64_decode(uid)))
+    except (User.DoesNotExist, ValueError, TypeError, OverflowError):
+        return Response(
+            {"error": "Invalid or expired reset link"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # A reset link must not resurrect a deactivated account. login() below sets
+    # the session directly (unlike authenticate(), it doesn't gate on is_active),
+    # so guard here. Same generic error as a bad token, to avoid leaking state.
+    if not user.is_active:
+        return Response(
+            {"error": "Invalid or expired reset link"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # Check the token before changing the password, the token is derived from
+    # the current password hash, so it must be validated against the old one.
+    if not default_token_generator.check_token(user, token):
+        return Response(
+            {"error": "Invalid or expired reset link"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    user.set_password(new_password)
+    user.save()
+    _clear_user_sessions(user.id)
+    login(request, user, backend="projects.auth_backend.DualPasswordBackend")
+    return Response(UserSerializer(user).data)
 
 
 @cache_control(private=True, no_store=True)

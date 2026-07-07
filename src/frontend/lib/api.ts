@@ -160,6 +160,7 @@ export async function getUserProjects(): Promise<ProjectMeta[]> {
 export interface User {
   id: number;
   username: string;
+  email?: string;
   date_joined: string;
   is_staff?: boolean;
 }
@@ -180,17 +181,17 @@ async function hashPassword(password: string): Promise<string> {
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export async function register(username: string, password: string): Promise<User> {
+export async function register(username: string, password: string, email?: string): Promise<User> {
   csrfToken = null;
   const hashedPassword = await hashPassword(password);
   const pow = await getPoWSolution();
   const res = await apiFetch("/auth/register/", {
     method: "POST",
-    body: JSON.stringify({ username, password: hashedPassword, ...pow }),
+    body: JSON.stringify({ username, password: hashedPassword, email: email ?? "", ...pow }),
   });
   if (!res.ok) {
     const err = await res.json();
-    throw new Error(err.username?.[0] ?? err.password?.[0] ?? "Registration failed");
+    throw new Error(err.username?.[0] ?? err.password?.[0] ?? err.email?.[0] ?? "Registration failed");
   }
   csrfToken = null;
   const user = await res.json();
@@ -238,6 +239,51 @@ export async function changePassword(newPassword: string): Promise<void> {
     throw new Error(err.error ?? "Failed to change password");
   }
   csrfToken = null;
+}
+
+// Set or clear the account email (used for password reset). Blank clears it.
+export async function setEmail(email: string): Promise<User> {
+  const res = await apiFetch("/auth/email/", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.email?.[0] ?? err.error ?? "Failed to update email");
+  }
+  return res.json();
+}
+
+// Request a reset link. Throws if no account matches the email or the send fails.
+export async function requestPasswordReset(email: string): Promise<void> {
+  csrfToken = null;
+  const pow = await getPoWSolution();
+  const res = await apiFetch("/auth/password-reset/", {
+    method: "POST",
+    body: JSON.stringify({ email, ...pow }),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error ?? "Could not send the reset email.");
+  }
+}
+
+// Complete a reset with the uid/token from the emailed link. Logs the user in.
+export async function confirmPasswordReset(uid: string, token: string, newPassword: string): Promise<User> {
+  csrfToken = null;
+  const newHash = await hashPassword(newPassword);
+  const res = await apiFetch("/auth/password-reset/confirm/", {
+    method: "POST",
+    body: JSON.stringify({ uid, token, new_password: newHash }),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error ?? "This reset link is invalid or has expired.");
+  }
+  csrfToken = null;
+  const user = await res.json();
+  notifyAuthChanged();
+  return user;
 }
 
 export async function getMe(): Promise<User | null> {

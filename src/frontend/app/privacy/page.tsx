@@ -33,7 +33,10 @@ export default function PrivacyPage() {
             <ul className="list-disc pl-5 space-y-1">
               <li>
                 <strong>Account data:</strong> If you create an account, your username and a
-                hashed version of your password are stored. No email address is required or collected.
+                hashed version of your password are stored. You can optionally add an email
+                address to enable password recovery. It is never required, is used only to send
+                you a password reset link when you request one, and can be removed again at any time
+                in your account settings.
               </li>
               <li>
                 <strong>Project data:</strong> Your stripboard projects (components, nets, board layout)
@@ -44,6 +47,13 @@ export default function PrivacyPage() {
                 can be acted on and replied to. When you are logged in, your messages are linked to your
                 account so you can read replies and continue the conversation on the site. Any contact details
                 you add while logged out are optional and used only to follow up with you.
+              </li>
+              <li>
+                <strong>Email delivery:</strong> If you request a password reset, your email address is
+                passed to{" "}
+                <a href="https://resend.com/legal/privacy-policy" className="text-[#113768] dark:text-[#5b9bd5] hover:underline" target="_blank" rel="noopener noreferrer">Resend</a>,
+                an email delivery provider, for the sole purpose of sending that one message. It acts as a
+                processor on my behalf and is not used for any other purpose.
               </li>
               <li>
                 <strong>Session cookie:</strong> A single session cookie is used to keep you logged in.
@@ -66,8 +76,10 @@ export default function PrivacyPage() {
           <section>
             <h2 className="font-mono text-xs uppercase tracking-[0.2em] text-[var(--copper)] mb-2">Data storage</h2>
             <p>
-              All data is stored on a server located in Germany. No data is shared with
-              third parties. There are no ads, tracking pixels, or external analytics services
+              All data is stored on a server located in Germany. The only data shared with a third
+              party is your email address, and only when you request a password reset, when it is
+              passed to Resend to deliver that message (see above). Apart from that, no data is shared
+              with third parties, and there are no ads, tracking pixels, or external analytics services
               beyond the self-hosted Umami instance mentioned above.
             </p>
           </section>

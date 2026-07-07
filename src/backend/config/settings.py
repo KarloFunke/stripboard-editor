@@ -118,6 +118,7 @@ REST_FRAMEWORK = {
         "user": "300/minute",
         "project_create": "50/hour",
         "auth": "15/minute",
+        "password_reset": "5/minute",
         "pow_challenge": "120/minute",
         "feedback": "30/minute",
     },
@@ -135,3 +136,28 @@ CORS_ALLOW_CREDENTIALS = True
 
 # CSRF
 CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS
+
+# ── Email (password reset) ──────────────────────────────
+# Send through Resend over SMTP when an API key is set; otherwise print emails
+# to the console (dev). No mailboxes or self-hosted mail server needed —
+# deliverability is Resend's responsibility once the domain is verified.
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+DEFAULT_FROM_EMAIL = os.environ.get(
+    "DEFAULT_FROM_EMAIL", "Stripboard Editor <onboarding@resend.dev>"
+)
+if RESEND_API_KEY:
+    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+    EMAIL_HOST = "smtp.resend.com"
+    EMAIL_PORT = 587
+    EMAIL_USE_TLS = True
+    EMAIL_HOST_USER = "resend"
+    EMAIL_HOST_PASSWORD = RESEND_API_KEY
+else:
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+
+# Public URL of the Next.js frontend, used to build password-reset links.
+# Always the primary CORS origin — for this app they never diverge.
+FRONTEND_URL = CORS_ALLOWED_ORIGINS[0].rstrip("/")
+
+# Password-reset links are valid for one hour.
+PASSWORD_RESET_TIMEOUT = 60 * 60

@@ -3,10 +3,11 @@
 import { useRef, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useProjectStore } from "@/store/useProjectStore";
-import { getMe, login, register, logout, claimProject, migrateProjectData, type User } from "@/lib/api";
+import { getMe, logout, claimProject, migrateProjectData, type User } from "@/lib/api";
 import { track } from "@/lib/track";
 import ThemeToggle from "./ThemeToggle";
 import PrintPreview from "./print/PrintPreview";
+import AuthModal from "./AuthModal";
 
 interface Props {
   editUuid?: string;
@@ -96,36 +97,22 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
   // Auth state
   const [user, setUser] = useState<User | null>(null);
   const [showAuth, setShowAuth] = useState<"login" | "register" | null>(null);
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [authLoading, setAuthLoading] = useState(false);
 
   useEffect(() => {
     getMe().then(setUser);
   }, []);
 
-  const handleAuth = async (e: React.SyntheticEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    setAuthError(null);
-    setAuthLoading(true);
-    try {
-      const u = showAuth === "register"
-        ? await register(username, password)
-        : await login(username, password);
-      track(showAuth === "register" ? "account-register" : "account-login");
-      setUser(u);
-      setShowAuth(null);
-      setUsername("");
-      setPassword("");
+  // After login/register: adopt the user, and claim this project if it's still
+  // unowned (so a freshly-registered user owns the project they were editing).
+  const handleAuthSuccess = (u: User) => {
+    setUser(u);
+    setShowAuth(null);
+    (async () => {
       if (editUuid) {
         try { await claimProject(editUuid); } catch { /* already owned or not claimable */ }
       }
       router.refresh();
-    } catch (err: unknown) {
-      setAuthError(err instanceof Error ? err.message : "Authentication failed");
-    }
-    setAuthLoading(false);
+    })();
   };
 
   const [logoutFlash, setLogoutFlash] = useState(false);
@@ -537,54 +524,12 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
 
       {/* Auth modal */}
       {showAuth && (
-        <div
-          className="fixed inset-0 bg-black/30 flex items-center justify-center z-50"
-          onClick={() => setShowAuth(null)}
-        >
-          <div
-            className="bg-white dark:bg-neutral-900 rounded-lg shadow-xl dark:shadow-neutral-900/50 p-6 w-80"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100 mb-4">
-              {showAuth === "login" ? "Login" : "Register"}
-            </h2>
-            <form onSubmit={handleAuth} className="flex flex-col gap-3">
-              <input
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="Username"
-                className="border border-neutral-300 dark:border-neutral-600 rounded px-3 py-2 text-sm text-neutral-900 dark:text-neutral-100 dark:bg-neutral-800 outline-none focus:border-[#113768] dark:focus:border-[#5b9bd5]"
-                autoFocus
-              />
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Password"
-                className="border border-neutral-300 dark:border-neutral-600 rounded px-3 py-2 text-sm text-neutral-900 dark:text-neutral-100 dark:bg-neutral-800 outline-none focus:border-[#113768] dark:focus:border-[#5b9bd5]"
-              />
-              {authError && (
-                <p className="text-xs text-red-500 dark:text-red-400">{authError}</p>
-              )}
-              <button
-                type="submit"
-                disabled={authLoading}
-                className="bg-[#113768] text-white py-2 rounded text-sm font-medium hover:bg-[#0d2a50] transition-colors disabled:opacity-60"
-              >
-                {authLoading
-                  ? (showAuth === "login" ? "Logging in..." : "Registering...")
-                  : (showAuth === "login" ? "Login" : "Register")}
-              </button>
-              <p className="text-xs text-neutral-500 dark:text-neutral-400 text-center">
-                {showAuth === "login" ? (
-                  <>No account? <button type="button" onClick={() => { setShowAuth("register"); setAuthError(null); }} className="text-[#113768] dark:text-[#5b9bd5] hover:underline">Register</button></>
-                ) : (
-                  <>Have an account? <button type="button" onClick={() => { setShowAuth("login"); setAuthError(null); }} className="text-[#113768] dark:text-[#5b9bd5] hover:underline">Login</button></>
-                )}
-              </p>
-            </form>
-          </div>
-        </div>
+        <AuthModal
+          mode={showAuth}
+          onMode={setShowAuth}
+          onClose={() => setShowAuth(null)}
+          onSuccess={handleAuthSuccess}
+        />
       )}
     </>
   );

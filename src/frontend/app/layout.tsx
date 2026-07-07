@@ -84,6 +84,8 @@ export default function RootLayout({
           defer
           src="https://umami.karl-funke.com/script.js"
           data-website-id="0398ea5c-5fb2-4b70-b07d-df3e158ac172"
+          data-exclude-search="true"
+          data-performance="true"
           strategy="afterInteractive"
         />
       </head>

@@ -18,6 +18,9 @@ urlpatterns = [
     path("auth/me/", views.auth_me, name="auth-me"),
     path("auth/delete-account/", views.auth_delete_account, name="auth-delete-account"),
     path("auth/change-password/", views.auth_change_password, name="auth-change-password"),
+    path("auth/email/", views.auth_set_email, name="auth-set-email"),
+    path("auth/password-reset/", views.auth_password_reset_request, name="auth-password-reset"),
+    path("auth/password-reset/confirm/", views.auth_password_reset_confirm, name="auth-password-reset-confirm"),
     path("auth/csrf/", views.csrf_token, name="csrf-token"),
 
     # Proof of Work

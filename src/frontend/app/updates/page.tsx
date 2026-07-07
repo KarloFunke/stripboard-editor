@@ -12,6 +12,12 @@ export const metadata: Metadata = {
 
 const updates: { date: string; items: string[] }[] = [
   {
+    date: "2026-07-07",
+    items: [
+      "You can now reset your account's password by email by adding an optional recovery email to your account."
+    ],
+  },
+  {
     date: "2026-07-06",
     items: [
       "Exclude a schematic component from the stripboard (select it and press E, or use Exclude in the floating menu). Excluded parts stay in the schematic but are ignored by the board and its net checks, so you can draw a full circuit while only building part of it on the stripboard.",
@@ -71,7 +77,6 @@ const updates: { date: string; items: string[] }[] = [
 const planned: string[] = [
   "Net list import and export, aiming for compatibility with EDA tools like KiCad so you can move designs in and out of the editor.",
   "A big custom-component overhaul, including a searchable library of both your own and shared community components. Including a better custom component editor.",
-  "Optional email address for password resets, so you can recover account access if you forget your password.",
 ];
 
 export default function UpdatesPage() {

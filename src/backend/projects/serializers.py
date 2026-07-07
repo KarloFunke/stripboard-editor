@@ -152,6 +152,8 @@ class ProjectCreateSerializer(serializers.Serializer):
 class UserRegistrationSerializer(serializers.Serializer):
     username = serializers.CharField(max_length=150)
     password = serializers.CharField(write_only=True)
+    # Optional: enables password reset later. Not verified.
+    email = serializers.EmailField(required=False, allow_blank=True, default="")
 
     def validate_username(self, value):
         value = value.lower()
@@ -162,6 +164,31 @@ class UserRegistrationSerializer(serializers.Serializer):
     def validate_password(self, value):
         if not SHA256_PATTERN.match(value):
             raise serializers.ValidationError("Invalid credentials.")
+        return value
+
+    def validate_email(self, value):
+        value = value.strip().lower()
+        # Enforce uniqueness at the app layer (Django's User.email isn't unique).
+        # Blank is exempt: any number of accounts may have no recovery email.
+        if value and User.objects.filter(email__iexact=value).exists():
+            raise serializers.ValidationError("This email is already in use.")
+        return value
+
+
+class EmailUpdateSerializer(serializers.Serializer):
+    # Blank clears the address (opting out of password reset).
+    email = serializers.EmailField(required=False, allow_blank=True, default="")
+
+    def validate_email(self, value):
+        value = value.strip().lower()
+        if value:
+            qs = User.objects.filter(email__iexact=value)
+            # Allow re-saving the caller's own address unchanged.
+            user = self.context.get("user")
+            if user is not None:
+                qs = qs.exclude(pk=user.pk)
+            if qs.exists():
+                raise serializers.ValidationError("This email is already in use.")
         return value
 
 
@@ -181,7 +208,7 @@ class UserLoginSerializer(serializers.Serializer):
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ["id", "username", "date_joined", "is_staff"]
+        fields = ["id", "username", "email", "date_joined", "is_staff"]
         read_only_fields = fields
 
 

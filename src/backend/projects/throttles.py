@@ -9,6 +9,10 @@ class AuthThrottle(AnonRateThrottle):
     scope = "auth"
 
 
+class PasswordResetThrottle(AnonRateThrottle):
+    scope = "password_reset"
+
+
 class PowChallengeThrottle(AnonRateThrottle):
     scope = "pow_challenge"
 
