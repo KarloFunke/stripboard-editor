@@ -116,6 +116,7 @@ export default function StripboardCanvas({
 
   const rotateComponent = useProjectStore((s) => s.rotateComponent);
   const toggleBoardLock = useProjectStore((s) => s.toggleBoardLock);
+  const transact = useProjectStore((s) => s.transact);
   const pushSnapshot = useProjectStore((s) => s.pushSnapshot);
   const removeFromBoard = useProjectStore((s) => s.removeFromBoard);
   const moveComponentsOnBoard = useProjectStore((s) => s.moveComponentsOnBoard);
@@ -238,18 +239,31 @@ export default function StripboardCanvas({
         return;
       }
 
-      if (selectedId) {
-        if (e.key === "r" || e.key === "R") {
-          rotateComponent(selectedId);
-        } else if (e.key === "Delete") {
-          removeFromBoard(selectedId);
+      if (e.key === "Delete") {
+        // Delete acts on the whole selection: unplace components, remove
+        // selected wires and cuts — one undo step for the lot.
+        const delIds = selectedIds.length > 0 ? selectedIds : selectedId ? [selectedId] : [];
+        if (delIds.length > 0 || selectedWireIds.length > 0 || selectedCuts.length > 0) {
+          transact(() => {
+            for (const id of delIds) removeFromBoard(id);
+            for (const wireId of selectedWireIds) removeWire(wireId);
+            for (const cut of selectedCuts) removeCut(cut);
+          });
           setSelectedId(null);
+          setSelectedIds([]);
+          setSelectedWireIds([]);
+          setSelectedCuts([]);
         }
+        return;
+      }
+
+      if (selectedId && (e.key === "r" || e.key === "R")) {
+        rotateComponent(selectedId);
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [wirePlacementFrom, cancelWirePlacement, selectedId, selectedIds, selectedWireIds, selectedCuts, rotateComponent, removeFromBoard, moveComponentsOnBoard, pushSnapshot, computeBoardSelectionBounds, board.rows, board.cols]);
+  }, [wirePlacementFrom, cancelWirePlacement, selectedId, selectedIds, selectedWireIds, selectedCuts, rotateComponent, removeFromBoard, removeWire, removeCut, transact, moveComponentsOnBoard, pushSnapshot, computeBoardSelectionBounds, board.rows, board.cols, setSelectedId, setSelectedIds]);
 
 
   const getSVGPoint = useCallback((e: React.MouseEvent | React.DragEvent) => {
