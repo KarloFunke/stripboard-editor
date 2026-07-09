@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useStripSegments } from "@/hooks/useStripSegments";
 import { checkNetCompleteness } from "./stripboard/netCompleteness";
@@ -21,6 +21,40 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
   const showValuesOnBoard = useProjectStore((s) => s.showValuesOnBoard);
   const setShowValuesOnBoard = useProjectStore((s) => s.setShowValuesOnBoard);
   const [editFootprintId, setEditFootprintId] = useState<string | null>(null);
+  const autoFinishBoard = useProjectStore((s) => s.autoFinishBoard);
+  const autoLayoutBoard = useProjectStore((s) => s.autoLayoutBoard);
+  const [autoFinishMsg, setAutoFinishMsg] = useState<string | null>(null);
+  const autoFinishMsgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (autoFinishMsgTimer.current) clearTimeout(autoFinishMsgTimer.current);
+  }, []);
+
+  const showAutoMsg = (summary: string, issues: string[]) => {
+    const msg = issues.length > 0 ? `${summary} · ${issues.join(" · ")}` : summary;
+    setAutoFinishMsg(msg);
+    if (autoFinishMsgTimer.current) clearTimeout(autoFinishMsgTimer.current);
+    autoFinishMsgTimer.current = setTimeout(() => setAutoFinishMsg(null), 8000);
+  };
+
+  const handleAutoFinish = () => {
+    const result = autoFinishBoard();
+    const added: string[] = [];
+    if (result.cuts.length > 0) added.push(`${result.cuts.length} cut${result.cuts.length > 1 ? "s" : ""}`);
+    if (result.wires.length > 0) added.push(`${result.wires.length} wire${result.wires.length > 1 ? "s" : ""}`);
+    showAutoMsg(added.length > 0 ? `Added ${added.join(" and ")}` : "Nothing to add", result.issues);
+  };
+
+  const handleAutoLayout = () => {
+    const result = autoLayoutBoard();
+    const parts: string[] = [];
+    if (result.placements.length > 0) parts.push(`arranged ${result.placements.length} part${result.placements.length > 1 ? "s" : ""}`);
+    if (result.cuts.length > 0) parts.push(`${result.cuts.length} cut${result.cuts.length > 1 ? "s" : ""}`);
+    if (result.wires.length > 0) parts.push(`${result.wires.length} wire${result.wires.length > 1 ? "s" : ""}`);
+    const summary = parts.length > 0
+      ? parts.join(", ").replace(/^./, (c) => c.toUpperCase())
+      : "Nothing to do";
+    showAutoMsg(summary, result.issues);
+  };
 
   const { segments, connectivity, conflictCount } = useStripSegments();
 
@@ -64,6 +98,28 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
         </div>
         {!readOnly && (
           <div className="flex items-center gap-4 font-mono text-sm font-normal text-neutral-600 dark:text-neutral-400">
+            {autoFinishMsg && (
+              <span
+                className="max-w-72 truncate text-xs text-neutral-500 dark:text-neutral-400"
+                title={autoFinishMsg}
+              >
+                {autoFinishMsg}
+              </span>
+            )}
+            <button
+              onClick={handleAutoLayout}
+              title="Arrange all unlocked parts and regenerate the cuts and link wires to complete the board. Lock components to keep them in place."
+              className="border border-neutral-300 dark:border-neutral-600 rounded px-2 py-1 text-sm text-neutral-900 dark:text-neutral-100 dark:bg-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-700 transition-colors"
+            >
+              Auto-layout
+            </button>
+            <button
+              onClick={handleAutoFinish}
+              title="Add the strip cuts and link wires needed to complete the current placement"
+              className="border border-neutral-300 dark:border-neutral-600 rounded px-2 py-1 text-sm text-neutral-900 dark:text-neutral-100 dark:bg-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-700 transition-colors"
+            >
+              Auto-finish
+            </button>
             <div className="flex items-center gap-1.5">
               <span>Rows:</span>
               <input

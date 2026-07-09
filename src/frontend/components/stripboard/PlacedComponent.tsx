@@ -177,7 +177,7 @@ export default function PlacedComponent({ component, isSelected, onMouseDown, on
             style={{ cursor: "grab" }}
             onMouseDown={(e) => handleLabelMouseDown(e, cx, cy - pad - 4)}
           >
-            <tspan x={cx + (component.boardLabelOffset?.x ?? 0)}>{component.label}</tspan>
+            <tspan x={cx + (component.boardLabelOffset?.x ?? 0)}>{component.locked ? `${component.label} \u{1F512}` : component.label}</tspan>
             {showValues && allowsValue && component.value && (
               <tspan x={cx + (component.boardLabelOffset?.x ?? 0)} dy="1.15em" fontWeight={400} fillOpacity={0.7}>
                 {component.value}
@@ -220,7 +220,7 @@ export default function PlacedComponent({ component, isSelected, onMouseDown, on
           const lx = topLeft.x + ((bounds.maxCol - bounds.minCol) * HOLE_SPACING) / 2 + (component.boardLabelOffset?.x ?? 0);
           return (
             <>
-              <tspan x={lx}>{component.label}</tspan>
+              <tspan x={lx}>{component.locked ? `${component.label} \u{1F512}` : component.label}</tspan>
               {showValues && allowsValue && component.value && (
                 <tspan x={lx} dy="1.15em" fontWeight={400} fillOpacity={0.7}>{component.value}</tspan>
               )}

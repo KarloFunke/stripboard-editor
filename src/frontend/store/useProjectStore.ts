@@ -18,6 +18,8 @@ import { recalculateNets } from "@/components/schematic/netInference";
 import { getRotatedPinPositions } from "@/components/schematic/SymbolRenderer";
 import { pointKey } from "@/utils/schematicConstants";
 import { createFootprintSymbol, registerCustomSymbol } from "@/data/symbolDefs";
+import { computeAutoFinish, AutoFinishResult } from "@/components/stripboard/autoFinish";
+import { computeAutoLayout, AutoLayoutResult } from "@/components/stripboard/autoLayout";
 
 function generateId(): string {
   return crypto.randomUUID();
@@ -73,6 +75,7 @@ interface ProjectActions {
   moveComponentsOnBoard: (ids: string[], deltaRow: number, deltaCol: number, wireIds?: string[], cutPositions?: Cut[]) => void;
   removeFromBoard: (id: string) => void;
   setBoardExcluded: (id: string, excluded: boolean) => void;
+  toggleBoardLock: (id: string) => void;
   setFlexibleEndPos: (id: string, pos: { row: number; col: number }) => void;
   rotateComponent: (id: string) => void;
 
@@ -92,6 +95,10 @@ interface ProjectActions {
   setBoardSize: (rows: number, cols: number) => void;
   addWire: (from: BoardPosition, to: BoardPosition) => void;
   removeWire: (wireId: string) => void;
+  // Derive and apply the cuts/wires needed to complete the current placement
+  autoFinishBoard: () => AutoFinishResult;
+  // Place all unplaced flexible 2-pin components and complete cuts/wires
+  autoLayoutBoard: () => AutoLayoutResult;
 
   // UI state
 
@@ -650,6 +657,15 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }));
   },
 
+  toggleBoardLock: (id) => {
+    get().pushSnapshot();
+    set((s) => ({
+      components: s.components.map((c) =>
+        c.id === id ? { ...c, locked: !c.locked } : c
+      ),
+    }));
+  },
+
   // Set pin 2 position for flexible components (no snapshot — called per-pixel during drag)
   setFlexibleEndPos: (id, pos) =>
     set((s) => ({
@@ -854,6 +870,67 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         wires: s.board.wires.filter((w) => w.id !== wireId),
       },
     }));
+  },
+
+  autoLayoutBoard: () => {
+    const s = get();
+    const result = computeAutoLayout(
+      s.board, s.components, s.componentDefs, s.nets, s.netAssignments
+    );
+    // Auto-layout regenerates cuts and wires; only apply (and snapshot) when
+    // something actually changes.
+    const cutKey = (c: Cut) => `${c.row}:${c.col}:${c.kind === "hole"}`;
+    const wireKey = (w: { from: BoardPosition; to: BoardPosition }) =>
+      [`${w.from.row},${w.from.col}`, `${w.to.row},${w.to.col}`].sort().join("-");
+    const sameCuts =
+      result.cuts.length === s.board.cuts.length &&
+      result.cuts.map(cutKey).sort().join("|") === s.board.cuts.map(cutKey).sort().join("|");
+    const sameWires =
+      result.wires.length === s.board.wires.length &&
+      result.wires.map(wireKey).sort().join("|") === s.board.wires.map(wireKey).sort().join("|");
+    if (result.placements.length === 0 && sameCuts && sameWires) return result;
+
+    get().pushSnapshot();
+    const byId = new Map(result.placements.map((p) => [p.componentId, p]));
+    set((st) => ({
+      components: st.components.map((c) => {
+        const p = byId.get(c.id);
+        if (!p) return c;
+        return {
+          ...c,
+          boardPos: p.boardPos,
+          ...(p.rotation !== undefined ? { rotation: p.rotation } : {}),
+          ...(p.flexibleEndPos !== undefined ? { flexibleEndPos: p.flexibleEndPos } : {}),
+        };
+      }),
+      board: {
+        ...st.board,
+        cuts: result.cuts,
+        wires: result.wires.map((w) => ({ id: generateId(), from: w.from, to: w.to })),
+      },
+    }));
+    return result;
+  },
+
+  autoFinishBoard: () => {
+    const s = get();
+    const result = computeAutoFinish(
+      s.board, s.components, s.componentDefs, s.nets, s.netAssignments
+    );
+    if (result.cuts.length > 0 || result.wires.length > 0) {
+      get().pushSnapshot();
+      set((st) => ({
+        board: {
+          ...st.board,
+          cuts: [...st.board.cuts, ...result.cuts],
+          wires: [
+            ...st.board.wires,
+            ...result.wires.map((w) => ({ id: generateId(), from: w.from, to: w.to })),
+          ],
+        },
+      }));
+    }
+    return result;
   },
 
   // ── UI State ─────────────────────────────────────────

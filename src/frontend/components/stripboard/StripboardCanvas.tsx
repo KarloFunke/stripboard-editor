@@ -32,7 +32,7 @@ import { StripSegment } from "./stripSegments";
 import PlacedComponent, { suppressNextCanvasClick } from "./PlacedComponent";
 import CutMark from "./CutMark";
 import WireLine from "./WireLine";
-import { SelectionActionBar, RotateIcon, DeleteIcon, FootprintIcon, type CanvasAction } from "@/components/canvas/SelectionActionBar";
+import { SelectionActionBar, RotateIcon, DeleteIcon, FootprintIcon, LockIcon, UnlockIcon, type CanvasAction } from "@/components/canvas/SelectionActionBar";
 
 export default function StripboardCanvas({
   readOnly = false,
@@ -115,6 +115,7 @@ export default function StripboardCanvas({
   } | null>(null);
 
   const rotateComponent = useProjectStore((s) => s.rotateComponent);
+  const toggleBoardLock = useProjectStore((s) => s.toggleBoardLock);
   const pushSnapshot = useProjectStore((s) => s.pushSnapshot);
   const removeFromBoard = useProjectStore((s) => s.removeFromBoard);
   const moveComponentsOnBoard = useProjectStore((s) => s.moveComponentsOnBoard);
@@ -1099,6 +1100,15 @@ export default function StripboardCanvas({
             shortcut: "R",
             icon: RotateIcon,
             onClick: () => rotateComponent(selectedId),
+          });
+          actions.push({
+            key: "lock",
+            label: comp.locked ? "Unlock" : "Lock",
+            title: comp.locked
+              ? "Unlock: auto-layout may move this component again"
+              : "Lock in place: auto-layout will never move this component",
+            icon: comp.locked ? UnlockIcon : LockIcon,
+            onClick: () => toggleBoardLock(selectedId),
           });
           actions.push({
             key: "delete",

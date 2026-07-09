@@ -66,6 +66,9 @@ export interface Component {
   // parts connected via jumper wires). Ignored by board placement and net
   // completeness checks.
   boardExcluded?: boolean;
+
+  // Locked on the board: auto-layout never moves this component.
+  locked?: boolean;
 }
 
 // ── Nets ───────────────────────────────────────────────
