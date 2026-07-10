@@ -15,7 +15,7 @@ import {
 } from "./boardLayout";
 import { computeStripSegments, StripSegment } from "./stripSegments";
 import { computeConnectivity } from "./connectivity";
-import { corridorHoles } from "./flexGeometry";
+import { corridorHoles, segmentsOverlapCollinear } from "./flexGeometry";
 
 export interface AutoFinishResult {
   cuts: Cut[];
@@ -30,6 +30,9 @@ export interface CompletionPlan {
   wires: { from: BoardPosition; to: BoardPosition }[];
   issues: string[];
   unresolvedConflicts: number;
+  // Nets left without a free hole for a needed or future wire — the layout
+  // optimizer uses these to target its repair moves
+  starvedNetIds: string[];
 }
 
 interface BoardPin {
@@ -77,7 +80,8 @@ function collectBoardPins(
 /**
  * Holes that cannot take a jumper endpoint: component pins, body cells
  * (including everything under an IC), flexible-component body corridors,
- * existing wire endpoints, and drilled-out holes.
+ * and drilled-out holes. Wire endpoints do NOT block: several wires may
+ * share one hole (daisy chains), they just may not run on top of each other.
  */
 function collectOccupiedHoles(
   board: Board,
@@ -108,11 +112,6 @@ function collectOccupiedHoles(
         occupied.add(holeKey(cell.row, cell.col));
       }
     }
-  }
-
-  for (const wire of board.wires) {
-    occupied.add(holeKey(wire.from.row, wire.from.col));
-    occupied.add(holeKey(wire.to.row, wire.to.col));
   }
 
   for (const cut of board.cuts) {
@@ -221,7 +220,9 @@ function deriveCuts(
 
 /**
  * Connect each net's disconnected strip groups with jumper wires (Prim-style
- * MST: always join the nearest pair of free holes).
+ * MST: always join the nearest pair of free holes). Wires may share endpoint
+ * holes but must not run collinearly on top of another wire — unless that is
+ * the only way to complete the net.
  */
 function deriveWires(
   segments: StripSegment[],
@@ -229,7 +230,10 @@ function deriveWires(
   nets: Net[],
   pins: BoardPin[],
   occupied: Set<string>,
-  issues: string[]
+  existingWires: { from: BoardPosition; to: BoardPosition }[],
+  reserveNets: Set<string>,
+  issues: string[],
+  starvedNetIds: string[]
 ): { from: BoardPosition; to: BoardPosition }[] {
   const segIndexAt = (row: number, col: number) =>
     segments.findIndex((s) => s.row === row && col >= s.startCol && col <= s.endCol);
@@ -251,6 +255,10 @@ function deriveWires(
   };
 
   const newWires: { from: BoardPosition; to: BoardPosition }[] = [];
+  const allWires = [...existingWires];
+
+  const overlapsAWire = (from: BoardPosition, to: BoardPosition) =>
+    allWires.some((w) => segmentsOverlapCollinear(from, to, w.from, w.to));
 
   for (const net of nets) {
     const groupIdxs = new Set<number>();
@@ -259,44 +267,59 @@ function deriveWires(
       const si = segIndexAt(pin.row, pin.col);
       if (si >= 0 && segToGroup.has(si)) groupIdxs.add(segToGroup.get(si)!);
     }
-    if (groupIdxs.size <= 1) continue;
+    if (groupIdxs.size === 0) continue;
 
     const [first, ...rest] = Array.from(groupIdxs);
-    let connectedHoles = freeHolesOfGroup(first);
+    const connectedHoles = freeHolesOfGroup(first);
     const remaining = new Set(rest);
 
     while (remaining.size > 0) {
-      let best: { from: BoardPosition; to: BoardPosition; group: number; dist: number } | null = null;
-      for (const gi of remaining) {
-        for (const hb of freeHolesOfGroup(gi)) {
-          for (const ha of connectedHoles) {
-            const dr = ha.row - hb.row;
-            const dc = ha.col - hb.col;
-            const dist = Math.sqrt(dr * dr + dc * dc);
-            // Tiebreak: prefer straight vertical jumpers
-            const better =
-              !best ||
-              dist < best.dist - 1e-9 ||
-              (dist < best.dist + 1e-9 &&
-                Math.abs(dc) < Math.abs(best.from.col - best.to.col));
-            if (better) best = { from: ha, to: hb, group: gi, dist };
+      const findBest = (allowOverlap: boolean) => {
+        let best: { from: BoardPosition; to: BoardPosition; group: number; dist: number } | null = null;
+        for (const gi of remaining) {
+          for (const hb of freeHolesOfGroup(gi)) {
+            for (const ha of connectedHoles) {
+              const dr = ha.row - hb.row;
+              const dc = ha.col - hb.col;
+              const dist = Math.sqrt(dr * dr + dc * dc);
+              // Tiebreak: prefer straight vertical jumpers
+              const better =
+                !best ||
+                dist < best.dist - 1e-9 ||
+                (dist < best.dist + 1e-9 &&
+                  Math.abs(dc) < Math.abs(best.from.col - best.to.col));
+              if (!better) continue;
+              if (!allowOverlap && overlapsAWire(ha, hb)) continue;
+              best = { from: ha, to: hb, group: gi, dist };
+            }
           }
         }
-      }
+        return best;
+      };
 
+      const best = findBest(false) ?? findBest(true);
       if (!best) {
         issues.push(`Net "${net.name}": no free hole to attach a link wire`);
+        starvedNetIds.push(net.id);
         break;
       }
 
       newWires.push({ from: best.from, to: best.to });
-      occupied.add(holeKey(best.from.row, best.from.col));
-      occupied.add(holeKey(best.to.row, best.to.col));
+      allWires.push({ from: best.from, to: best.to });
       remaining.delete(best.group);
-      connectedHoles = connectedHoles.filter(
-        (h) => !(h.row === best!.from.row && h.col === best!.from.col)
-      );
+      // Endpoints stay available: further wires of this net may chain there
       connectedHoles.push(...freeHolesOfGroup(best.group));
+    }
+
+    // Nets that still await unplaced components must keep a free hole, or
+    // the future part/wire will have nowhere to attach (e.g. a pin boxed in
+    // between the board edge and its own forced cut).
+    if (reserveNets.has(net.id)) {
+      const hasFree = Array.from(groupIdxs).some((gi) => freeHolesOfGroup(gi).length > 0);
+      if (!hasFree) {
+        issues.push(`Net "${net.name}": no free hole left for further connections`);
+        starvedNetIds.push(net.id);
+      }
     }
   }
 
@@ -326,7 +349,17 @@ export function deriveCompletion(
   const segments = computeStripSegments(boardWithCuts, components, componentDefs, netAssignments);
   const connectivity = computeConnectivity(segments, board.wires);
 
-  const wires = deriveWires(segments, connectivity, nets, pins, occupied, issues);
+  // Nets with assignments on still-unplaced components need reserve holes
+  const reserveNets = new Set<string>();
+  for (const a of netAssignments) {
+    const comp = components.find((c) => c.id === a.componentId);
+    if (comp && !comp.boardPos && !comp.boardExcluded) reserveNets.add(a.netId);
+  }
+
+  const starvedNetIds: string[] = [];
+  const wires = deriveWires(
+    segments, connectivity, nets, pins, occupied, board.wires, reserveNets, issues, starvedNetIds
+  );
 
   const finalBoard: Board = {
     ...boardWithCuts,
@@ -336,7 +369,7 @@ export function deriveCompletion(
   const finalConnectivity = computeConnectivity(finalSegments, finalBoard.wires);
   const unresolvedConflicts = finalConnectivity.filter((g) => g.hasConflict).length;
 
-  return { cuts, wires, issues, unresolvedConflicts };
+  return { cuts, wires, issues, unresolvedConflicts, starvedNetIds };
 }
 
 /**

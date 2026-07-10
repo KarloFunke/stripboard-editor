@@ -93,6 +93,24 @@ export function segmentsIntersect(a1: Pt, a2: Pt, b1: Pt, b2: Pt): boolean {
   return false;
 }
 
+/**
+ * Whether two segments lie on the same line and share more than a single
+ * point. Used to keep wires readable: crossing at an angle and touching at
+ * a shared endpoint are fine, running on top of each other is not.
+ */
+export function segmentsOverlapCollinear(a1: Pt, a2: Pt, b1: Pt, b2: Pt): boolean {
+  const dr = a2.row - a1.row;
+  const dc = a2.col - a1.col;
+  if (Math.abs(dr * (b2.col - b1.col) - dc * (b2.row - b1.row)) > 1e-9) return false; // not parallel
+  if (Math.abs(dr * (b1.col - a1.col) - dc * (b1.row - a1.row)) > 1e-9) return false; // parallel, different line
+  const along = (p: Pt) => p.row * dr + p.col * dc;
+  const aMin = Math.min(along(a1), along(a2));
+  const aMax = Math.max(along(a1), along(a2));
+  const bMin = Math.min(along(b1), along(b2));
+  const bMax = Math.max(along(b1), along(b2));
+  return Math.min(aMax, bMax) - Math.max(aMin, bMin) > 1e-9;
+}
+
 /** Minimum distance between segments a1-a2 and b1-b2, 0 if they intersect */
 export function segmentSegmentDistance(a1: Pt, a2: Pt, b1: Pt, b2: Pt): number {
   if (segmentsIntersect(a1, a2, b1, b2)) return 0;

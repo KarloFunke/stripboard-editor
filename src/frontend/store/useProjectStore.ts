@@ -19,7 +19,7 @@ import { getRotatedPinPositions } from "@/components/schematic/SymbolRenderer";
 import { pointKey } from "@/utils/schematicConstants";
 import { createFootprintSymbol, registerCustomSymbol } from "@/data/symbolDefs";
 import { computeAutoFinish, AutoFinishResult } from "@/components/stripboard/autoFinish";
-import { computeAutoLayout, AutoLayoutResult } from "@/components/stripboard/autoLayout";
+import { AutoLayoutResult } from "@/components/stripboard/autoLayout";
 
 function generateId(): string {
   return crypto.randomUUID();
@@ -97,8 +97,8 @@ interface ProjectActions {
   removeWire: (wireId: string) => void;
   // Derive and apply the cuts/wires needed to complete the current placement
   autoFinishBoard: () => AutoFinishResult;
-  // Place all unplaced flexible 2-pin components and complete cuts/wires
-  autoLayoutBoard: () => AutoLayoutResult;
+  // Apply an auto-layout result computed in the worker (placements + regenerated cuts/wires)
+  applyAutoLayout: (result: AutoLayoutResult) => void;
 
   // UI state
 
@@ -635,7 +635,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     get().pushSnapshot();
     set((s) => ({
       components: s.components.map((c) =>
-        c.id === id ? { ...c, boardPos: null, flexibleEndPos: undefined } : c
+        // Unplacing clears the lock: it refers to a board position
+        c.id === id ? { ...c, boardPos: null, flexibleEndPos: undefined, locked: undefined } : c
       ),
     }));
   },
@@ -872,11 +873,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }));
   },
 
-  autoLayoutBoard: () => {
+  applyAutoLayout: (result) => {
     const s = get();
-    const result = computeAutoLayout(
-      s.board, s.components, s.componentDefs, s.nets, s.netAssignments
-    );
     // Auto-layout regenerates cuts and wires; only apply (and snapshot) when
     // something actually changes.
     const cutKey = (c: Cut) => `${c.row}:${c.col}:${c.kind === "hole"}`;
@@ -888,7 +886,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const sameWires =
       result.wires.length === s.board.wires.length &&
       result.wires.map(wireKey).sort().join("|") === s.board.wires.map(wireKey).sort().join("|");
-    if (result.placements.length === 0 && sameCuts && sameWires) return result;
+    if (result.placements.length === 0 && sameCuts && sameWires) return;
 
     get().pushSnapshot();
     const byId = new Map(result.placements.map((p) => [p.componentId, p]));
@@ -909,7 +907,6 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         wires: result.wires.map((w) => ({ id: generateId(), from: w.from, to: w.to })),
       },
     }));
-    return result;
   },
 
   autoFinishBoard: () => {

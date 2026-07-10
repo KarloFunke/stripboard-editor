@@ -4,6 +4,8 @@ import { useState, useMemo, useRef, useEffect } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useStripSegments } from "@/hooks/useStripSegments";
 import { checkNetCompleteness } from "./stripboard/netCompleteness";
+import type { AutoLayoutProgress } from "./stripboard/autoLayout";
+import type { AutoLayoutRequest, AutoLayoutWorkerMessage } from "./stripboard/autoLayoutWorker";
 import ComponentTray from "./stripboard/ComponentTray";
 import StripboardCanvas from "./stripboard/StripboardCanvas";
 import StripboardFootprintEditor from "./stripboard/StripboardFootprintEditor";
@@ -22,11 +24,14 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
   const setShowValuesOnBoard = useProjectStore((s) => s.setShowValuesOnBoard);
   const [editFootprintId, setEditFootprintId] = useState<string | null>(null);
   const autoFinishBoard = useProjectStore((s) => s.autoFinishBoard);
-  const autoLayoutBoard = useProjectStore((s) => s.autoLayoutBoard);
+  const applyAutoLayout = useProjectStore((s) => s.applyAutoLayout);
   const [autoFinishMsg, setAutoFinishMsg] = useState<string | null>(null);
   const autoFinishMsgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [autoProgress, setAutoProgress] = useState<AutoLayoutProgress | null>(null);
+  const autoWorkerRef = useRef<Worker | null>(null);
   useEffect(() => () => {
     if (autoFinishMsgTimer.current) clearTimeout(autoFinishMsgTimer.current);
+    autoWorkerRef.current?.terminate();
   }, []);
 
   const showAutoMsg = (summary: string, issues: string[]) => {
@@ -44,16 +49,45 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
     showAutoMsg(added.length > 0 ? `Added ${added.join(" and ")}` : "Nothing to add", result.issues);
   };
 
+  const stopAutoWorker = () => {
+    autoWorkerRef.current?.terminate();
+    autoWorkerRef.current = null;
+    setAutoProgress(null);
+  };
+
   const handleAutoLayout = () => {
-    const result = autoLayoutBoard();
-    const parts: string[] = [];
-    if (result.placements.length > 0) parts.push(`arranged ${result.placements.length} part${result.placements.length > 1 ? "s" : ""}`);
-    if (result.cuts.length > 0) parts.push(`${result.cuts.length} cut${result.cuts.length > 1 ? "s" : ""}`);
-    if (result.wires.length > 0) parts.push(`${result.wires.length} wire${result.wires.length > 1 ? "s" : ""}`);
-    const summary = parts.length > 0
-      ? parts.join(", ").replace(/^./, (c) => c.toUpperCase())
-      : "Nothing to do";
-    showAutoMsg(summary, result.issues);
+    if (autoWorkerRef.current) {
+      stopAutoWorker();
+      showAutoMsg("Auto-layout cancelled", []);
+      return;
+    }
+    const worker = new Worker(new URL("./stripboard/autoLayoutWorker.ts", import.meta.url));
+    autoWorkerRef.current = worker;
+    setAutoProgress({ phase: "arrange", attempt: 1, maxAttempts: 1, frac: 0 });
+    worker.onmessage = (e: MessageEvent<AutoLayoutWorkerMessage>) => {
+      if (e.data.type === "progress") {
+        setAutoProgress(e.data.progress);
+        return;
+      }
+      stopAutoWorker();
+      const result = e.data.result;
+      applyAutoLayout(result);
+      const parts: string[] = [];
+      if (result.placements.length > 0) parts.push(`arranged ${result.placements.length} part${result.placements.length > 1 ? "s" : ""}`);
+      if (result.cuts.length > 0) parts.push(`${result.cuts.length} cut${result.cuts.length > 1 ? "s" : ""}`);
+      if (result.wires.length > 0) parts.push(`${result.wires.length} wire${result.wires.length > 1 ? "s" : ""}`);
+      const summary = parts.length > 0
+        ? parts.join(", ").replace(/^./, (c) => c.toUpperCase())
+        : "Nothing to do";
+      showAutoMsg(summary, result.issues);
+    };
+    worker.onerror = (err) => {
+      console.error("Auto-layout worker failed", err);
+      stopAutoWorker();
+      showAutoMsg("Auto-layout failed", []);
+    };
+    const request: AutoLayoutRequest = { board, components, componentDefs, nets, netAssignments };
+    worker.postMessage(request);
   };
 
   const { segments, connectivity, conflictCount } = useStripSegments();
@@ -98,7 +132,20 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
         </div>
         {!readOnly && (
           <div className="flex items-center gap-4 font-mono text-sm font-normal text-neutral-600 dark:text-neutral-400">
-            {autoFinishMsg && (
+            {autoProgress ? (
+              <span className="flex items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400">
+                <span className="whitespace-nowrap">
+                  {{ arrange: "Arranging parts", place: "Placing & routing", repair: "Repairing" }[autoProgress.phase]}
+                  {autoProgress.attempt > 1 ? ` (attempt ${autoProgress.attempt}/${autoProgress.maxAttempts})` : ""}
+                </span>
+                <span className="w-24 h-1.5 rounded bg-neutral-200 dark:bg-neutral-700 overflow-hidden">
+                  <span
+                    className="block h-full bg-[#113768] dark:bg-[#5b9bd5] transition-[width] duration-200"
+                    style={{ width: `${Math.round(autoProgress.frac * 100)}%` }}
+                  />
+                </span>
+              </span>
+            ) : autoFinishMsg && (
               <span
                 className="max-w-72 truncate text-xs text-neutral-500 dark:text-neutral-400"
                 title={autoFinishMsg}
@@ -108,15 +155,18 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
             )}
             <button
               onClick={handleAutoLayout}
-              title="Arrange all unlocked parts and regenerate the cuts and link wires to complete the board. Lock components to keep them in place."
+              title={autoProgress
+                ? "Cancel the running auto-layout"
+                : "Arrange all unlocked parts and regenerate the cuts and link wires to complete the board. Lock components to keep them in place."}
               className="border border-neutral-300 dark:border-neutral-600 rounded px-2 py-1 text-sm text-neutral-900 dark:text-neutral-100 dark:bg-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-700 transition-colors"
             >
-              Auto-layout
+              {autoProgress ? "Cancel" : "Auto-layout"}
             </button>
             <button
               onClick={handleAutoFinish}
+              disabled={!!autoProgress}
               title="Add the strip cuts and link wires needed to complete the current placement"
-              className="border border-neutral-300 dark:border-neutral-600 rounded px-2 py-1 text-sm text-neutral-900 dark:text-neutral-100 dark:bg-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-700 transition-colors"
+              className="border border-neutral-300 dark:border-neutral-600 rounded px-2 py-1 text-sm text-neutral-900 dark:text-neutral-100 dark:bg-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-700 transition-colors disabled:opacity-50 disabled:pointer-events-none"
             >
               Auto-finish
             </button>
