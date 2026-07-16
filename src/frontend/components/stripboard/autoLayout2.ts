@@ -2169,6 +2169,92 @@ export function computeAutoLayout2(
     }
     return cand;
   };
+  // Slide only the FREE content sideways by dc columns, locked parts staying
+  // put. A uniform shift leaves free-vs-free geometry unchanged, so only the
+  // new relations against locked parts need checking here; whether the result
+  // routes better is judged by route() as usual. Returns null when a shifted
+  // part would leave the board or violate geometry against a locked part.
+  const shiftFreeSideways = (
+    virtual: Component[],
+    dc: number,
+    cols: number
+  ): Component[] | null => {
+    interface Geo {
+      rects: FootprintRect[];
+      segs: { p1: BoardPosition; p2: BoardPosition }[];
+      pins: BoardPosition[];
+    }
+    const geoOf = (comps: Component[]): Geo => {
+      const g: Geo = { rects: [], segs: [], pins: [] };
+      for (const c of comps) {
+        if (!c.boardPos || c.boardExcluded) continue;
+        const def = resolveComponentDef(c, componentDefs);
+        if (!def) continue;
+        if (def.flexible) {
+          const p2 = c.flexibleEndPos ?? c.boardPos;
+          g.segs.push({ p1: c.boardPos, p2 });
+          g.pins.push(c.boardPos, p2);
+        } else {
+          g.rects.push(getComponentBounds(def, c.boardPos, c.rotation));
+          for (const p of getRotatedPinPositions(def, c.boardPos, c.rotation)) {
+            g.pins.push({ row: p.row, col: p.col });
+          }
+        }
+      }
+      return g;
+    };
+    const shifted: Component[] = [];
+    const free: Component[] = [];
+    for (const c of virtual) {
+      if (!c.boardPos || lockedIds.has(c.id)) {
+        shifted.push(c);
+        continue;
+      }
+      const s: Component = {
+        ...c,
+        boardPos: { row: c.boardPos.row, col: c.boardPos.col + dc },
+        ...(c.flexibleEndPos
+          ? { flexibleEndPos: { row: c.flexibleEndPos.row, col: c.flexibleEndPos.col + dc } }
+          : {}),
+      };
+      shifted.push(s);
+      free.push(s);
+    }
+    const freeGeo = geoOf(free);
+    const lockGeo = geoOf(lockedParts);
+    for (const r of freeGeo.rects) if (r.minCol < 0 || r.maxCol >= cols) return null;
+    for (const p of freeGeo.pins) if (p.col < 0 || p.col >= cols) return null;
+    const overlap = (a: FootprintRect, b: FootprintRect) =>
+      a.minRow <= b.maxRow && b.minRow <= a.maxRow && a.minCol <= b.maxCol && b.minCol <= a.maxCol;
+    const inRect = (p: BoardPosition, r: FootprintRect) =>
+      p.row >= r.minRow && p.row <= r.maxRow && p.col >= r.minCol && p.col <= r.maxCol;
+    for (const fr of freeGeo.rects) {
+      if (lockGeo.rects.some((lr) => overlap(fr, lr))) return null;
+      if (lockGeo.segs.some((ls) => bodyIntersectsRect(ls.p1, ls.p2, fr))) return null;
+      if (lockGeo.pins.some((p) => inRect(p, fr))) return null;
+    }
+    for (const fs of freeGeo.segs) {
+      if (lockGeo.rects.some((lr) => bodyIntersectsRect(fs.p1, fs.p2, lr))) return null;
+      if (
+        lockGeo.segs.some(
+          (ls) =>
+            segmentsIntersect(fs.p1, fs.p2, ls.p1, ls.p2) ||
+            bodiesTooClose(fs.p1, fs.p2, ls.p1, ls.p2)
+        )
+      )
+        return null;
+    }
+    const lockedHoles = new Set(lockGeo.pins.map((p) => `${p.row},${p.col}`));
+    for (const s of lockGeo.segs)
+      for (const h of corridorHoles(s.p1, s.p2)) lockedHoles.add(`${h.row},${h.col}`);
+    for (const p of freeGeo.pins) if (lockedHoles.has(`${p.row},${p.col}`)) return null;
+    const freeCorridor = new Set<string>();
+    for (const s of freeGeo.segs)
+      for (const h of corridorHoles(s.p1, s.p2)) freeCorridor.add(`${h.row},${h.col}`);
+    for (const p of lockGeo.pins) if (freeCorridor.has(`${p.row},${p.col}`)) return null;
+    return shifted;
+  };
+
   // gap 2 leaves one empty column between tiles so edge parts keep body
   // clearance; compaction closes the seam wherever that stays legal.
   const runLadder = () => {
@@ -2228,6 +2314,17 @@ export function computeAutoLayout2(
         });
         route(shifted, c0.rows, c0.cols + 1, c0.movedIds); // left channel only
         route(shifted, c0.rows, c0.cols + 2, c0.movedIds); // both edges
+      } else if (chosen!.bad > 0) {
+        // With locked parts that shift would move them off their positions.
+        // But a starved segment flush against a board edge (e.g. a horizontal
+        // part's cut-off pin at col 0, unwireable: pin + body corridor fill
+        // the segment) can still be rescued by sliding only the free content
+        // sideways within the same board.
+        for (const dc of [1, -1, 2, -2]) {
+          if (chosen!.bad === 0) break;
+          const slid = shiftFreeSideways(c0.virtual, dc, c0.cols);
+          if (slid) route(slid, c0.rows, c0.cols, c0.movedIds);
+        }
       }
     }
   };
