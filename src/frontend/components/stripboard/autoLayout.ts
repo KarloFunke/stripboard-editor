@@ -45,6 +45,33 @@ export interface AutoLayoutResult {
   cuts: Cut[];
   wires: { from: BoardPosition; to: BoardPosition }[];
   issues: string[];
+  // What the user would see: conflicts*100 + incomplete nets + unplaced*2.
+  // 0 = fully solved. Lets parallel runs pick the best result.
+  quality: number;
+  // Nets that could not be completed (for highlighting in the UI)
+  starvedNetIds: string[];
+  // v2 layouter: the board size the layout was built for — applying the
+  // result resizes the board (the solver chooses the size, not the user)
+  boardSize?: { rows: number; cols: number };
+  // Components that must be taken OFF the board (the new layout could not
+  // place them); without this a stale position would survive the apply
+  unplaceIds?: string[];
+}
+
+// One stage-A/stage-B configuration; the retry ladder walks these
+export interface AttemptConfig {
+  spacing: number;
+  bboxWeight: number;
+}
+
+export interface AutoLayoutOptions {
+  // Subset of the retry ladder to run (parallel callers run one each)
+  attempts?: AttemptConfig[];
+  // Anneal RNG seed: different seeds explore different arrangements
+  seed?: number;
+  // Re-layout only these components; everything else stays exactly as it is
+  // (cuts and wires are still regenerated for the whole board)
+  onlyIds?: string[];
 }
 
 // Coarse progress for a UI indicator: `frac` is 0..1 within the current
@@ -61,6 +88,11 @@ interface FlexOptimizeResult {
   cuts: Cut[];
   wires: { from: BoardPosition; to: BoardPosition }[];
   issues: string[];
+  // Nets still starved after all flexible-level repair: fixing these needs
+  // rigid moves, which only stage A can do
+  starvedNets: string[];
+  // Pin positions of the exact strip groups that starved
+  starvedPins: BoardPosition[];
 }
 
 // ── Cost weights (build effort, lower is better) ───────
@@ -97,12 +129,46 @@ interface Placement {
   p2: BoardPosition;
 }
 
+/** Map that counts its mutations, so derived caches know when to refresh */
+class VersionedMap<K, V> extends Map<K, V> {
+  version = 0;
+  set(key: K, value: V): this {
+    this.version++;
+    return super.set(key, value);
+  }
+  delete(key: K): boolean {
+    this.version++;
+    return super.delete(key);
+  }
+}
+
 function holeKey(row: number, col: number): string {
   return `${row},${col}`;
 }
 
 function manhattan(a: BoardPosition, b: BoardPosition): number {
   return Math.abs(a.row - b.row) + Math.abs(a.col - b.col);
+}
+
+// All (dr, dc) offsets whose Euclidean length lies within a span range,
+// memoized per range: the candidate enumeration visits them millions of
+// times, so the hypot + range check must not run per pair.
+const ringCache = new Map<string, [number, number][]>();
+function ringOffsets(min: number, max: number): [number, number][] {
+  const key = `${min}:${max}`;
+  let ring = ringCache.get(key);
+  if (!ring) {
+    ring = [];
+    const s = Math.ceil(max);
+    for (let dr = -s; dr <= s; dr++) {
+      for (let dc = -s; dc <= s; dc++) {
+        const d = Math.hypot(dr, dc);
+        if (d >= min - 1e-6 && d <= max + 1e-6) ring.push([dr, dc]);
+      }
+    }
+    ringCache.set(key, ring);
+  }
+  return ring;
 }
 
 /**
@@ -249,10 +315,16 @@ function optimizeFlexibles(
   }
 
   // ── Current solution state ───────────────────────────
-  const pos = new Map<string, Placement>();
+  const pos = new VersionedMap<string, Placement>();
   const seed = computeAutoPlace(board, components, componentDefs, netAssignments);
   for (const p of seed.placements) {
     pos.set(p.componentId, { p1: p.boardPos, p2: p.flexibleEndPos });
+  }
+
+  // Net of every assigned pin, for the hot lookups below
+  const assignedNetOf = new Map<string, string>();
+  for (const a of netAssignments) {
+    assignedNetOf.set(`${a.componentId}:${a.pinId}`, a.netId);
   }
 
   const virtualComponents = (): Component[] =>
@@ -277,13 +349,17 @@ function optimizeFlexibles(
   }
 
   // ── Full evaluator: run the router, price the completion ──
-  // `bad` marks layouts with unresolved conflicts or starved nets (a net
-  // left without a free hole to attach a wire) — never settle for those.
-  const fullCost = (): { cost: number; bad: boolean; starvedNets: string[] } => {
+  // `problems` counts unresolved conflicts and issues (starved nets etc.);
+  // `bad` = any problem — never settle for those when avoidable.
+  const fullCost = (): { cost: number; bad: boolean; problems: number; starvedNets: string[] } => {
     const plan = deriveCompletion(board, virtualComponents(), componentDefs, nets, netAssignments);
     let cost =
       plan.cuts.length * COST_CUT +
       plan.wires.length * COST_WIRE +
+      // Messy wires (long off-axis runs, crossings over components) are
+      // priced like extra wire length, so placements that allow tidy
+      // wiring win over ones that force ugly jumpers
+      plan.wireMess * COST_WIRE_LEN +
       (plan.unresolvedConflicts + plan.issues.length) * COST_UNRESOLVED;
     const ext = { ...staticExtent };
     const extend = (p: BoardPosition) => {
@@ -306,9 +382,11 @@ function optimizeFlexibles(
     if (ext.minR !== Infinity) {
       cost += COST_BBOX * (ext.maxR - ext.minR + (ext.maxC - ext.minC));
     }
+    const problems = plan.unresolvedConflicts + plan.issues.length;
     return {
       cost,
-      bad: plan.unresolvedConflicts > 0 || plan.issues.length > 0,
+      bad: problems > 0,
+      problems,
       starvedNets: plan.starvedNetIds,
     };
   };
@@ -341,13 +419,28 @@ function optimizeFlexibles(
     return true;
   };
 
-  const endpointFree = (row: number, col: number): boolean =>
-    row >= 0 && row < board.rows && col >= 0 && col < board.cols &&
-    !hard.has(holeKey(row, col)) && !blocked.has(holeKey(row, col)) &&
-    ![...pos.values()].some(
-      (p) =>
-        pointSegmentDistance({ row, col }, p.p1, p.p2) <= FLEXIBLE_CORRIDOR_RADIUS + 1e-6
-    );
+  // Holes covered by the placed movables' corridors, cached against the
+  // position map's version: endpointFree runs for every board hole during
+  // pool building, so a per-hole distance scan over all parts is too slow.
+  // corridorHoles uses the same distance predicate, so this is equivalent.
+  let posBlockedVersion = -1;
+  const posBlocked = new Set<string>();
+  const posBlockedNow = (): Set<string> => {
+    if (posBlockedVersion !== pos.version) {
+      posBlocked.clear();
+      for (const p of pos.values()) {
+        for (const h of corridorHoles(p.p1, p.p2)) posBlocked.add(holeKey(h.row, h.col));
+      }
+      posBlockedVersion = pos.version;
+    }
+    return posBlocked;
+  };
+
+  const endpointFree = (row: number, col: number): boolean => {
+    if (row < 0 || row >= board.rows || col < 0 || col >= board.cols) return false;
+    const k = holeKey(row, col);
+    return !hard.has(k) && !blocked.has(k) && !posBlockedNow().has(k);
+  };
 
   // Would this candidate swallow a guarded run's last free hole? Exception:
   // when the candidate's own pin joins the run and thereby completes the
@@ -417,10 +510,8 @@ function optimizeFlexibles(
       const def = resolveComponentDef(comp, componentDefs);
       if (!def) continue;
       for (const pin of getComponentPinPositions(comp, def)) {
-        const a = netAssignments.find(
-          (x) => x.componentId === comp.id && x.pinId === pin.pinId
-        );
-        if (a) add(a.netId, pin.row, pin.col, pin.col);
+        const netId = assignedNetOf.get(`${comp.id}:${pin.pinId}`);
+        if (netId !== undefined) add(netId, pin.row, pin.col, pin.col);
       }
     }
     return map;
@@ -453,10 +544,16 @@ function optimizeFlexibles(
   };
 
   // ── Re-place one part optimally (rip-up must be done by caller) ──
+  // digTarget: keep evaluating past TOP_K until a candidate has at most
+  // this many problems (conflicts + starved nets). On a clean board that is
+  // 0 (hunt until nothing starves); on an already-bad board the caller sets
+  // its baseline, so pre-existing problems don't burn the whole eval cap on
+  // every part.
   const findBest = (
     m: Movable,
-    evalCap = MAX_EVALS
-  ): { cand: Placement; cost: number; bad: boolean } | null => {
+    evalCap = MAX_EVALS,
+    digTarget = 0
+  ): { cand: Placement; cost: number; bad: boolean; problems: number } | null => {
     const strips = netStripsFor();
 
     // Pin-1 pool: free holes near either net's copper (whole board if none)
@@ -480,58 +577,83 @@ function optimizeFlexibles(
       }
     }
 
-    // Rank all span-valid pairs cheaply, keep the best MAX_EVALS, then
-    // full-evaluate in rank order. Stop after TOP_K once a placement exists
-    // that leaves every net connectable; keep digging (up to MAX_EVALS)
-    // while all evaluated candidates starve a net.
-    interface Scored extends Placement {
-      score: number;
-    }
-    const search = (bboxBias: boolean, cap: number): { cand: Placement; cost: number; bad: boolean } | null => {
-      const top: Scored[] = [];
-      const maxSpan = Math.ceil(m.max);
+    // Rank all span-valid pairs cheaply, then full-evaluate in rank order.
+    // Geometric validity, pin guards and per-strip-pair diversity are checked
+    // during the ranked walk, so invalid candidates never use up eval slots.
+    // Stop after TOP_K once a placement exists that leaves every net
+    // connectable; keep digging (up to the eval cap) while all evaluated
+    // candidates starve a net.
+    // Candidates live in flat arrays bucketed by score (half-unit steps):
+    // the walk usually consumes only the best few buckets, so the tail is
+    // never sorted and no per-pair objects are allocated.
+    // Off-net cost of landing pin 2 on a hole, cached per hole: the same
+    // hole is a pin-2 candidate for many pin-1 anchors.
+    const dBCache = new Float64Array(board.rows * board.cols).fill(-1);
+    const dBAt = (r: number, c: number): number => {
+      const i = r * board.cols + c;
+      let v = dBCache[i];
+      if (v < 0) {
+        v = offNetCost(distToNet(strips, { row: r, col: c }, m.netB));
+        dBCache[i] = v;
+      }
+      return v;
+    };
+
+    const search = (bboxBias: boolean, cap: number): { cand: Placement; cost: number; bad: boolean; problems: number } | null => {
+      const candP1: BoardPosition[] = [];
+      const candRow: number[] = [];
+      const candCol: number[] = [];
+      const candScore: number[] = [];
+      const buckets: number[][] = [];
+      const ring = ringOffsets(m.min, m.max);
       for (const p1 of pool1) {
         const dA = offNetCost(distToNet(strips, p1, m.netA));
-        for (let r = p1.row - maxSpan; r <= p1.row + maxSpan; r++) {
-          for (let c = p1.col - maxSpan; c <= p1.col + maxSpan; c++) {
-            const d = Math.hypot(r - p1.row, c - p1.col);
-            if (d < m.min - 1e-6 || d > m.max + 1e-6) continue;
-            const p2 = { row: r, col: c };
-            const diag = r !== p1.row && c !== p1.col ? DIAGONAL_PENALTY : 0;
-            const score =
-              manhattan(p1, p2) + diag + dA + offNetCost(distToNet(strips, p2, m.netB)) +
-              (bboxBias ? COST_BBOX * (extGrowth(p1.row, p1.col) + extGrowth(r, c)) : 0);
-            if (top.length === cap && score >= top[top.length - 1].score) continue;
-            if (!endpointFree(r, c)) continue;
-            // Diversity: an attractive strip pair may fill at most a few slots,
-            // so the full evaluator always sees alternatives on other strips
-            const rowPair = `${p1.row}:${r}`;
-            const same = top.filter((t) => `${t.p1.row}:${t.p2.row}` === rowPair);
-            if (same.length >= MAX_PER_ROW_PAIR) {
-              const worstSame = same[same.length - 1];
-              if (score >= worstSame.score) continue;
-              top.splice(top.indexOf(worstSame), 1);
-            }
-            top.push({ p1, p2, score });
-            top.sort((a, b) => a.score - b.score);
-            if (top.length > cap) top.pop();
-          }
+        const g1 = bboxBias ? extGrowth(p1.row, p1.col) : 0;
+        for (const [dr, dc] of ring) {
+          const r = p1.row + dr;
+          const c = p1.col + dc;
+          if (!endpointFree(r, c)) continue;
+          const diag = dr !== 0 && dc !== 0 ? DIAGONAL_PENALTY : 0;
+          const score =
+            Math.abs(dr) + Math.abs(dc) + diag + dA + dBAt(r, c) +
+            (bboxBias ? COST_BBOX * (g1 + extGrowth(r, c)) : 0);
+          const idx = candScore.length;
+          candP1.push(p1);
+          candRow.push(r);
+          candCol.push(c);
+          candScore.push(score);
+          const b = Math.min(511, Math.max(0, Math.floor(score * 2)));
+          (buckets[b] ??= []).push(idx);
         }
       }
 
-      let best: { cand: Placement; cost: number; bad: boolean } | null = null;
+      let best: { cand: Placement; cost: number; bad: boolean; problems: number } | null = null;
       let evals = 0;
-      for (const cand of top) {
-        if (!isValid(m.comp.id, cand.p1, cand.p2)) continue;
-        if (violatesGuard(m.comp.id, m.netA, m.netB, cand.p1, cand.p2)) continue;
-        pos.set(m.comp.id, { p1: cand.p1, p2: cand.p2 });
-        const r = fullCost();
-        pos.delete(m.comp.id);
-        evals++;
-        if (!best || r.cost < best.cost) {
-          best = { cand: { p1: cand.p1, p2: cand.p2 }, cost: r.cost, bad: r.bad };
+      const perRowPair = new Map<string, number>();
+      outer: for (const bucket of buckets) {
+        if (!bucket) continue;
+        bucket.sort((a, b) => candScore[a] - candScore[b]);
+        for (const ci of bucket) {
+          if (evals >= cap) break outer;
+          const p1 = candP1[ci];
+          const p2 = { row: candRow[ci], col: candCol[ci] };
+          // Diversity: an attractive strip pair may take at most a few slots,
+          // so the full evaluator always sees alternatives on other strips
+          const rowPair = `${p1.row}:${p2.row}`;
+          const same = perRowPair.get(rowPair) ?? 0;
+          if (same >= MAX_PER_ROW_PAIR) continue;
+          if (!isValid(m.comp.id, p1, p2)) continue;
+          if (violatesGuard(m.comp.id, m.netA, m.netB, p1, p2)) continue;
+          perRowPair.set(rowPair, same + 1);
+          pos.set(m.comp.id, { p1, p2 });
+          const r = fullCost();
+          pos.delete(m.comp.id);
+          evals++;
+          if (!best || r.cost < best.cost) {
+            best = { cand: { p1, p2 }, cost: r.cost, bad: r.bad, problems: r.problems };
+          }
+          if (evals >= TOP_K && best && best.problems <= digTarget) break outer;
         }
-        if (evals >= TOP_K && best && !best.bad) break;
       }
       return best;
     };
@@ -541,7 +663,7 @@ function optimizeFlexibles(
     // boards they can fill entirely with well-scored-but-invalid spots
     // while a valid one in open space never enters. Scan the whole board
     // validity-first (straight placements only) and evaluate what fits.
-    const searchAnyValid = (respectGuards: boolean): { cand: Placement; cost: number; bad: boolean } | null => {
+    const searchAnyValid = (respectGuards: boolean): { cand: Placement; cost: number; bad: boolean; problems: number } | null => {
       const valid: (Placement & { score: number })[] = [];
       let budget = 3000;
       for (let r = 0; r < board.rows && budget > 0 && valid.length < 60; r++) {
@@ -568,13 +690,13 @@ function optimizeFlexibles(
         }
       }
       valid.sort((a, b) => a.score - b.score);
-      let best: { cand: Placement; cost: number; bad: boolean } | null = null;
+      let best: { cand: Placement; cost: number; bad: boolean; problems: number } | null = null;
       for (const v of valid.slice(0, 16)) {
         pos.set(m.comp.id, { p1: v.p1, p2: v.p2 });
         const r = fullCost();
         pos.delete(m.comp.id);
         if (!best || r.cost < best.cost) {
-          best = { cand: { p1: v.p1, p2: v.p2 }, cost: r.cost, bad: r.bad };
+          best = { cand: { p1: v.p1, p2: v.p2 }, cost: r.cost, bad: r.bad, problems: r.problems };
         }
       }
       return best;
@@ -586,7 +708,7 @@ function optimizeFlexibles(
     // first respecting the pin guards, then (rather than leaving the part
     // unplaced) even a guard-violating spot the evaluator will price.
     let best = search(true, evalCap);
-    if (!best || best.bad) {
+    if (!best || best.problems > digTarget) {
       const alt = search(false, evalCap);
       if (alt && (!best || (best.bad && !alt.bad) || (best.bad === alt.bad && alt.cost < best.cost))) {
         best = alt;
@@ -600,19 +722,24 @@ function optimizeFlexibles(
   // ── Hill-climb: rip up and re-place until no sweep improves ──
   // Sweeps cover the first 85% of this stage's progress, repair the rest;
   // early sweep termination just jumps the bar forward.
-  let currentCost = fullCost().cost;
+  const seedState = fullCost();
+  let currentCost = seedState.cost;
+  let currentProblems = seedState.problems;
   for (let sweep = 0; sweep < MAX_SWEEPS; sweep++) {
     let improved = false;
     for (const [mi, m] of movables.entries()) {
       onProgress?.(((sweep + mi / movables.length) / MAX_SWEEPS) * 0.85, "place");
       const had = pos.get(m.comp.id);
       if (had) pos.delete(m.comp.id);
-      const best = findBest(m);
+      // Dig for a candidate that is at least as clean as the current state;
+      // pre-existing problems are not this part's fault.
+      const best = findBest(m, MAX_EVALS, currentProblems);
       // An unplaced part is always placed if possible, even at a cost
       // increase; a placed one only moves when it beats its old spot.
       if (best && (!had || best.cost < currentCost - 1e-6)) {
         pos.set(m.comp.id, best.cand);
         currentCost = best.cost;
+        currentProblems = best.problems;
         improved = true;
       } else if (had) {
         pos.set(m.comp.id, had);
@@ -631,7 +758,13 @@ function optimizeFlexibles(
   const REPAIR_ROUNDS = 3;
   const REPAIR_RADIUS = 2;
   const REPAIR_EVALS = 240;
+  // Hard deterministic ceiling on repair's evaluator calls: small boards
+  // never come near it, but with dozens of parts the unpruned repair walks
+  // otherwise grind for minutes.
+  const REPAIR_EVAL_BUDGET = 3000;
+  let repairEvals = 0;
   for (let round = 0; round < REPAIR_ROUNDS; round++) {
+    if (repairEvals >= REPAIR_EVAL_BUDGET) break;
     const state = fullCost();
     if (!state.bad) break;
     const starved = new Set(state.starvedNets);
@@ -651,6 +784,7 @@ function optimizeFlexibles(
         return ai - bi;
       });
     for (const [ni, m] of nudgeOrder.entries()) {
+      if (repairEvals >= REPAIR_EVAL_BUDGET) break;
       onProgress?.(roundBase + roundSpan * 0.4 * (ni / nudgeOrder.length), "repair");
       const cur = pos.get(m.comp.id)!;
       pos.delete(m.comp.id);
@@ -676,6 +810,7 @@ function optimizeFlexibles(
         if (!isValid(m.comp.id, p1, p2)) continue;
         pos.set(m.comp.id, { p1, p2 });
         const r = fullCost();
+        repairEvals++;
         pos.delete(m.comp.id);
         if (!best || r.cost < best.cost) best = { cand: { p1, p2 }, cost: r.cost };
       }
@@ -704,10 +839,8 @@ function optimizeFlexibles(
         const def = resolveComponentDef(comp, componentDefs);
         if (!def) continue;
         for (const p of getComponentPinPositions(comp, def)) {
-          const a = netAssignments.find(
-            (x) => x.componentId === comp.id && x.pinId === p.pinId
-          );
-          if (a && starved2.has(a.netId)) starvedPins.push({ row: p.row, col: p.col });
+          const netId = assignedNetOf.get(`${comp.id}:${p.pinId}`);
+          if (netId !== undefined && starved2.has(netId)) starvedPins.push({ row: p.row, col: p.col });
         }
       }
       const nearStarved = (pl: Placement) =>
@@ -722,9 +855,14 @@ function optimizeFlexibles(
         const implicated =
           !cur || starved2.has(m.netA) || starved2.has(m.netB) || nearStarved(cur);
         if (!implicated) continue;
+        const evalCap = Math.min(REPAIR_EVALS, REPAIR_EVAL_BUDGET - repairEvals);
+        if (evalCap <= 0) break;
         onProgress?.(roundBase + roundSpan * (0.4 + 0.6 * (pi / movables.length)), "repair");
         if (cur) pos.delete(m.comp.id);
-        const best = findBest(m, REPAIR_EVALS);
+        // Deep dig, but stop as soon as a candidate strictly reduces the
+        // problem count — that is what repair is hunting for.
+        const best = findBest(m, evalCap, Math.max(0, after.problems - 1));
+        repairEvals += evalCap;
         if (best && (!cur || best.cost < repairCost - 1e-6)) {
           pos.set(m.comp.id, best.cand);
           repairCost = best.cost;
@@ -768,6 +906,8 @@ function optimizeFlexibles(
     cuts: plan.cuts,
     wires: plan.wires,
     issues,
+    starvedNets: plan.starvedNetIds,
+    starvedPins: plan.starvedPinPositions,
   };
 }
 
@@ -786,11 +926,21 @@ const W_SPRING_ROW_SHARE = 2; // ~ one strip cut
 // in practice, and buried between parts their nets starve for free holes.
 // Must beat the combined inward pull of W_HPWL + W_BBOX per hole.
 const W_CONNECTOR_EDGE = 4;
+// Rigid-repair mode: pressure to clear the area around starved pins. Must
+// beat the HPWL pull of a well-connected part (several units per hole), or
+// nothing moves — the quality gate in the orchestrator rejects regressions.
+const W_AVOID = 8;
 const ANNEAL_T0 = 6;
 const ANNEAL_T_END = 0.05;
 const ANNEAL_BASE_ITERS = 8000;
 const ANNEAL_ITERS_PER_PART = 4000;
 const ANNEAL_MAX_ITERS = 48000;
+// Repair re-anneal: seeded from the failed arrangement, low temperature so
+// the layout shifts locally instead of re-scrambling
+const REPAIR_ANNEAL_T0 = 1.5;
+const REPAIR_ANNEAL_BASE_ITERS = 4000;
+const REPAIR_ANNEAL_ITERS_PER_PART = 2000;
+const REPAIR_ANNEAL_MAX_ITERS = 16000;
 
 /** Deterministic RNG so identical inputs produce identical layouts */
 function mulberry32(seed: number): () => number {
@@ -853,6 +1003,13 @@ interface FlexSpring {
  * @param bboxWeight Compactness pressure; relaxed on retries so congested
  * arrangements spread over the available board instead of one dense band.
  */
+/** Rigid-repair mode: re-anneal from a failed arrangement, clearing the
+ * area around starved pins so stage B gets free holes to work with. */
+interface RigidRepair {
+  seed: Map<string, RigidState>;
+  avoidPins: BoardPosition[];
+}
+
 function arrangeRigids(
   board: Board,
   components: Component[],
@@ -861,8 +1018,10 @@ function arrangeRigids(
   springs: FlexSpring[],
   spacing: number,
   bboxWeight: number,
+  seed: number,
   issues: string[],
-  onProgress?: (frac: number) => void
+  onProgress?: (frac: number) => void,
+  repair?: RigidRepair
 ): Map<string, RigidState> {
   interface MovableRigid {
     comp: Component;
@@ -984,7 +1143,10 @@ function arrangeRigids(
   // ── State ────────────────────────────────────────────
   const states = new Map<string, RigidState>();
   for (const m of movables) {
-    if (m.comp.boardPos) {
+    const seeded = repair?.seed.get(m.comp.id);
+    if (seeded) {
+      states.set(m.comp.id, { ...seeded });
+    } else if (m.comp.boardPos) {
       states.set(m.comp.id, {
         row: m.comp.boardPos.row,
         col: m.comp.boardPos.col,
@@ -1091,6 +1253,16 @@ function arrangeRigids(
           board.cols - 1 - rect.maxCol
         );
       }
+      if (repair) {
+        // Starved-pin avoidance, graded by clearance so every single-hole
+        // step away from the starved spot pays off: footprint on the point
+        // costs 2×W_AVOID, one hole clear costs W_AVOID, two or more is free.
+        for (const ap of repair.avoidPins) {
+          const dr = Math.max(0, rect.minRow - ap.row, ap.row - rect.maxRow);
+          const dc = Math.max(0, rect.minCol - ap.col, ap.col - rect.maxCol);
+          connectorEdgeCost += W_AVOID * Math.max(0, 2 - Math.max(dr, dc));
+        }
+      }
     }
 
     let cost = connectorEdgeCost;
@@ -1147,13 +1319,13 @@ function arrangeRigids(
   if (active.length === 0) return states;
 
   // ── Anneal ───────────────────────────────────────────
-  const rand = mulberry32(0x5eed);
-  const iters = Math.min(
-    ANNEAL_MAX_ITERS,
-    ANNEAL_BASE_ITERS + ANNEAL_ITERS_PER_PART * active.length
-  );
-  const cooling = Math.pow(ANNEAL_T_END / ANNEAL_T0, 1 / iters);
-  let temperature = ANNEAL_T0;
+  const rand = mulberry32(seed);
+  const t0 = repair ? REPAIR_ANNEAL_T0 : ANNEAL_T0;
+  const iters = repair
+    ? Math.min(REPAIR_ANNEAL_MAX_ITERS, REPAIR_ANNEAL_BASE_ITERS + REPAIR_ANNEAL_ITERS_PER_PART * active.length)
+    : Math.min(ANNEAL_MAX_ITERS, ANNEAL_BASE_ITERS + ANNEAL_ITERS_PER_PART * active.length);
+  const cooling = Math.pow(ANNEAL_T_END / t0, 1 / iters);
+  let temperature = t0;
   let cost = proxyCost();
   let bestCost = cost;
   let bestStates = new Map(Array.from(states, ([k, v]) => [k, { ...v }]));
@@ -1226,20 +1398,42 @@ function arrangeRigids(
  * parts move they would refer to positions that no longer exist. Locked
  * components never move.
  */
+const DEFAULT_SEED = 0x5eed;
+
+export const DEFAULT_ATTEMPTS: AttemptConfig[] = [
+  { spacing: 1, bboxWeight: W_BBOX },
+  { spacing: 2, bboxWeight: W_BBOX },
+  { spacing: 3, bboxWeight: W_BBOX / 2 },
+  { spacing: 4, bboxWeight: W_BBOX / 4 },
+];
+
 export function computeAutoLayout(
   board: Board,
   components: Component[],
   componentDefs: ComponentDef[],
   nets: Net[],
   netAssignments: NetAssignment[],
-  onProgress?: (p: AutoLayoutProgress) => void
+  onProgress?: (p: AutoLayoutProgress) => void,
+  options?: AutoLayoutOptions
 ): AutoLayoutResult {
   const issues: string[] = [];
   const baseBoard: Board = { ...board, cuts: [], wires: [] };
 
+  // Scoped run: everything outside the scope is frozen exactly as it is —
+  // placed parts act like locked parts, unplaced parts stay off the board.
+  const scopeIds = options?.onlyIds?.length ? new Set(options.onlyIds) : null;
+  const frozen = new Set<string>();
+  if (scopeIds) {
+    for (const comp of components) {
+      if (!scopeIds.has(comp.id)) frozen.add(comp.id);
+    }
+    components = components.map((c) => (frozen.has(c.id) ? { ...c, locked: true } : c));
+  }
+
   // A locked component without a board position can never be placed (lock
   // means "never move") — say so instead of silently leaving nets open.
   for (const comp of components) {
+    if (frozen.has(comp.id)) continue; // out of scope by choice, not an error
     if (comp.locked && !comp.boardPos && !comp.boardExcluded) {
       issues.push(`${comp.label}: locked but not on the board, unlock or place it manually`);
     }
@@ -1286,7 +1480,8 @@ export function computeAutoLayout(
     const incomplete = checkNetCompleteness(
       nets, netAssignments, segments, connectivity, finalComps, componentDefs
     );
-    const unplaced = finalComps.filter((c) => !c.boardPos && !c.boardExcluded).length;
+    // Frozen (out-of-scope) parts stay unplaced by choice, not by failure
+    const unplaced = finalComps.filter((c) => !c.boardPos && !c.boardExcluded && !frozen.has(c.id)).length;
     return conflicts * 100 + incomplete.length + unplaced * 2;
   };
 
@@ -1294,12 +1489,10 @@ export function computeAutoLayout(
   let flexResult: FlexOptimizeResult | null = null;
   let attemptIssues: string[] = [];
   let bestQuality = Infinity;
-  const attempts = [
-    { spacing: 1, bboxWeight: W_BBOX },
-    { spacing: 2, bboxWeight: W_BBOX },
-    { spacing: 3, bboxWeight: W_BBOX / 2 },
-    { spacing: 4, bboxWeight: W_BBOX / 4 },
-  ];
+  const netOfPin = new Map<string, string>();
+  for (const a of netAssignments) netOfPin.set(`${a.componentId}:${a.pinId}`, a.netId);
+  const attempts = options?.attempts?.length ? options.attempts : DEFAULT_ATTEMPTS;
+  const seed = options?.seed ?? DEFAULT_SEED;
   for (const [ai, { spacing, bboxWeight }] of attempts.entries()) {
     // Stage A fills the first 35% of an attempt's progress, stage B the rest
     const report = onProgress
@@ -1308,7 +1501,7 @@ export function computeAutoLayout(
       : undefined;
     const tryIssues: string[] = [];
     const tryStates = arrangeRigids(
-      baseBoard, stageAComponents, componentDefs, netAssignments, springs, spacing, bboxWeight, tryIssues,
+      baseBoard, stageAComponents, componentDefs, netAssignments, springs, spacing, bboxWeight, seed, tryIssues,
       report && ((f) => report("arrange", f * 0.35))
     );
     const arranged = stageAComponents.map((c) => {
@@ -1319,12 +1512,66 @@ export function computeAutoLayout(
       baseBoard, arranged, componentDefs, nets, netAssignments,
       report && ((f, phase) => report(phase, 0.35 + f * 0.65))
     );
-    tryIssues.push(...tryFlex.issues);
-    const quality = attemptQuality(arranged, tryFlex);
+    let chosenStates = tryStates;
+    let chosenFlex = tryFlex;
+    let chosenIssues = [...tryIssues, ...tryFlex.issues];
+    let quality = attemptQuality(arranged, tryFlex);
+
+    // Rigid-move repair: flexible-level repair could not clear the starved
+    // nets, so re-anneal the rigids from this arrangement at low temperature
+    // with pressure to give the starved pins air, then route again. Kept
+    // only when the re-run is strictly better.
+    if (quality > 0 && tryFlex.starvedNets.length > 0 && tryStates.size > 0) {
+      // Clear the air exactly where a group starved; fall back to all pins
+      // of the starved nets when no positions were reported.
+      const avoidPins: BoardPosition[] = [...tryFlex.starvedPins];
+      if (avoidPins.length === 0) {
+        const starved = new Set(tryFlex.starvedNets);
+        for (const comp of arranged) {
+          if (!comp.boardPos || comp.boardExcluded) continue;
+          const def = resolveComponentDef(comp, componentDefs);
+          if (!def) continue;
+          for (const p of getComponentPinPositions(comp, def)) {
+            const nid = netOfPin.get(`${comp.id}:${p.pinId}`);
+            if (nid !== undefined && starved.has(nid)) avoidPins.push({ row: p.row, col: p.col });
+          }
+        }
+      }
+      if (avoidPins.length > 0) {
+        const repairIssues: string[] = [];
+        const repairStates = arrangeRigids(
+          baseBoard, stageAComponents, componentDefs, netAssignments, springs, spacing, bboxWeight, seed, repairIssues,
+          report && ((f) => report("repair", f * 0.35)),
+          { seed: tryStates, avoidPins }
+        );
+        const movedAny = Array.from(repairStates).some(([id, st]) => {
+          const prev = tryStates.get(id);
+          return !prev || prev.row !== st.row || prev.col !== st.col || prev.rot !== st.rot;
+        });
+        if (movedAny) {
+          const arranged2 = stageAComponents.map((c) => {
+            const st = repairStates.get(c.id);
+            return st ? { ...c, boardPos: { row: st.row, col: st.col }, rotation: st.rot } : c;
+          });
+          const flex2 = optimizeFlexibles(
+            baseBoard, arranged2, componentDefs, nets, netAssignments,
+            report && ((f, phase) => report(phase, 0.35 + f * 0.65))
+          );
+          const q2 = attemptQuality(arranged2, flex2);
+          if (q2 < quality) {
+            chosenStates = repairStates;
+            chosenFlex = flex2;
+            chosenIssues = [...repairIssues, ...flex2.issues];
+            quality = q2;
+          }
+        }
+      }
+    }
+
     if (!flexResult || quality < bestQuality) {
-      rigidStates = tryStates;
-      flexResult = tryFlex;
-      attemptIssues = tryIssues;
+      rigidStates = chosenStates;
+      flexResult = chosenFlex;
+      attemptIssues = chosenIssues;
       bestQuality = quality;
     }
     if (quality === 0) break;
@@ -1356,5 +1603,12 @@ export function computeAutoLayout(
     });
   }
 
-  return { placements, cuts: flexResult!.cuts, wires: flexResult!.wires, issues };
+  return {
+    placements,
+    cuts: flexResult!.cuts,
+    wires: flexResult!.wires,
+    issues,
+    quality: bestQuality,
+    starvedNetIds: flexResult!.starvedNets,
+  };
 }

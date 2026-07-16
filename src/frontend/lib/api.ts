@@ -155,6 +155,28 @@ export async function getUserProjects(): Promise<ProjectMeta[]> {
   return res.json();
 }
 
+// ── Layout ratings ────────────────────────────────────
+
+export async function submitLayoutRating(input: {
+  rating: number;
+  snapshot: Record<string, unknown>;
+  metrics?: Record<string, unknown>;
+  solverVersion?: string;
+  projectEditUuid?: string | null;
+}): Promise<void> {
+  const res = await apiFetch("/layout-ratings/", {
+    method: "POST",
+    body: JSON.stringify({
+      rating: input.rating,
+      snapshot: input.snapshot,
+      metrics: input.metrics ?? {},
+      solver_version: input.solverVersion ?? "",
+      project_edit_uuid: input.projectEditUuid ?? null,
+    }),
+  });
+  if (!res.ok) throw new Error("Failed to submit rating");
+}
+
 // ── Auth ──────────────────────────────────────────────
 
 export interface User {

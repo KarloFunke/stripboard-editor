@@ -4,7 +4,7 @@ from django.db.models import F, Max, Q
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 from django.utils.html import format_html
-from .models import Project, PowChallenge, Feedback, FeedbackReply
+from .models import Project, PowChallenge, Feedback, FeedbackReply, LayoutRating
 
 
 @admin.register(Project)
@@ -19,6 +19,28 @@ class ProjectAdmin(admin.ModelAdmin):
     def view_link(self, obj):
         url = f"https://stripboard-editor.com/view/{obj.view_uuid}"
         return format_html('<a href="{}" target="_blank">Open</a>', url)
+
+
+@admin.register(LayoutRating)
+class LayoutRatingAdmin(admin.ModelAdmin):
+    list_display = ["rating", "solver_version", "metrics_summary", "project_edit_uuid", "user", "created_at"]
+    list_filter = ["rating", "solver_version", "created_at"]
+    readonly_fields = ["rating", "solver_version", "metrics", "snapshot_size", "user", "project", "project_edit_uuid", "created_at"]
+    exclude = ["snapshot_gz"]
+    raw_id_fields = ["user", "project"]
+
+    @admin.display(description="Metrics")
+    def metrics_summary(self, obj):
+        m = obj.metrics or {}
+        rows, cols = m.get("rows"), m.get("cols")
+        parts = m.get("parts")
+        if rows is None and cols is None:
+            return "-"
+        return f"{rows}x{cols}, {parts} parts, q{m.get('quality')}"
+
+    @admin.display(description="Snapshot (gzipped bytes)")
+    def snapshot_size(self, obj):
+        return len(obj.snapshot_gz) if obj.snapshot_gz else 0
 
 
 @admin.register(PowChallenge)

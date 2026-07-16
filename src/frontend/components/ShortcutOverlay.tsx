@@ -22,6 +22,7 @@ const SHORTCUTS = [
   ]},
   { section: "Stripboard", items: [
     ["R", "Rotate selected component"],
+    ["L", "Lock / unlock selected component(s) so auto-layout keeps them in place"],
     ["Delete", "Remove selected component"],
     ["Escape", "Clear selection"],
     ["Arrow keys / Drag", "Move selected components, one or many"],

@@ -121,6 +121,7 @@ REST_FRAMEWORK = {
         "password_reset": "5/minute",
         "pow_challenge": "120/minute",
         "feedback": "30/minute",
+        "layout_rating": "60/minute",
     },
 }
 

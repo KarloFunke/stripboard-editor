@@ -16,22 +16,33 @@ export function computeStripSegments(
   componentDefs: ComponentDef[],
   netAssignments: NetAssignment[]
 ): StripSegment[] {
-  // Pre-compute all pin positions for placed components
-  const allPins: { componentId: string; pinId: string; row: number; col: number }[] = [];
+  // Pre-compute pin positions (with resolved nets) per row, and cuts per row,
+  // so the per-segment work below stays linear.
+  const netOfPin = new Map<string, string>();
+  for (const a of netAssignments) {
+    netOfPin.set(`${a.componentId}:${a.pinId}`, a.netId);
+  }
+  const pinsByRow = new Map<number, { col: number; netId: string | undefined }[]>();
   for (const comp of components) {
     if (!comp.boardPos) continue;
     const def = resolveComponentDef(comp, componentDefs);
     if (!def) continue;
     const pins = getComponentPinPositions(comp, def);
     for (const pin of pins) {
-      allPins.push({ componentId: comp.id, pinId: pin.pinId, row: pin.row, col: pin.col });
+      if (!pinsByRow.has(pin.row)) pinsByRow.set(pin.row, []);
+      pinsByRow.get(pin.row)!.push({ col: pin.col, netId: netOfPin.get(`${comp.id}:${pin.pinId}`) });
     }
+  }
+  const cutsByRow = new Map<number, Board["cuts"]>();
+  for (const cut of board.cuts) {
+    if (!cutsByRow.has(cut.row)) cutsByRow.set(cut.row, []);
+    cutsByRow.get(cut.row)!.push(cut);
   }
 
   const segments: StripSegment[] = [];
 
   for (let row = 0; row < board.rows; row++) {
-    const rowCuts = board.cuts.filter((c) => c.row === row);
+    const rowCuts = cutsByRow.get(row) ?? [];
 
     // Build segment boundaries. A boundary value B starts a new segment at col B.
     // - between-cut at col X: severs X | X+1, so a boundary at X+1.
@@ -53,19 +64,11 @@ export function computeStripSegments(
       const endCol = i + 1 < boundaries.length ? boundaries[i + 1] - 1 : board.cols - 1;
       if (startCol > endCol) continue;
 
-      // Find pins on this segment
-      const pinsOnSegment = allPins.filter(
-        (p) => p.row === row && p.col >= startCol && p.col <= endCol
-      );
-
-      // Look up nets for these pins
+      // Nets of the pins on this segment
       const netIdSet = new Set<string>();
-      for (const pin of pinsOnSegment) {
-        const assignment = netAssignments.find(
-          (a) => a.componentId === pin.componentId && a.pinId === pin.pinId
-        );
-        if (assignment) {
-          netIdSet.add(assignment.netId);
+      for (const pin of pinsByRow.get(row) ?? []) {
+        if (pin.col >= startCol && pin.col <= endCol && pin.netId !== undefined) {
+          netIdSet.add(pin.netId);
         }
       }
 

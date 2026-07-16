@@ -149,6 +149,25 @@ class ProjectCreateSerializer(serializers.Serializer):
             return value
 
 
+class LayoutRatingCreateSerializer(serializers.Serializer):
+    rating = serializers.IntegerField(min_value=1, max_value=5)
+    snapshot = serializers.JSONField()
+    metrics = serializers.JSONField(required=False, default=dict)
+    solver_version = serializers.CharField(
+        max_length=64, required=False, allow_blank=True, default=""
+    )
+    project_edit_uuid = serializers.UUIDField(required=False, allow_null=True)
+
+    def validate_snapshot(self, value):
+        import json
+        size = len(json.dumps(value).encode("utf-8"))
+        if size > MAX_PROJECT_DATA_BYTES:
+            raise serializers.ValidationError(
+                f"Snapshot too large ({size} bytes). Maximum is {MAX_PROJECT_DATA_BYTES} bytes."
+            )
+        return value
+
+
 class UserRegistrationSerializer(serializers.Serializer):
     username = serializers.CharField(max_length=150)
     password = serializers.CharField(write_only=True)

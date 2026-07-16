@@ -76,6 +76,7 @@ interface ProjectActions {
   removeFromBoard: (id: string) => void;
   setBoardExcluded: (id: string, excluded: boolean) => void;
   toggleBoardLock: (id: string) => void;
+  setBoardLock: (ids: string[], locked: boolean) => void;
   setFlexibleEndPos: (id: string, pos: { row: number; col: number }) => void;
   rotateComponent: (id: string) => void;
 
@@ -93,6 +94,7 @@ interface ProjectActions {
   removeCut: (cut: Cut) => void;
   // Board wires
   setBoardSize: (rows: number, cols: number) => void;
+  setBoardDimLock: (dim: "rows" | "cols", locked: boolean) => void;
   addWire: (from: BoardPosition, to: BoardPosition) => void;
   removeWire: (wireId: string) => void;
   // Derive and apply the cuts/wires needed to complete the current placement
@@ -282,6 +284,8 @@ function prepareProjectState(data: Project) {
       cols: data.board?.cols ?? 20,
       cuts: data.board?.cuts ?? [],
       wires: data.board?.wires ?? [],
+      lockedRows: data.board?.lockedRows,
+      lockedCols: data.board?.lockedCols,
     },
     showValuesOnBoard: data.showValuesOnBoard ?? false,
     autoSave: data.autoSave ?? false,
@@ -651,7 +655,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           ? {
               ...c,
               boardExcluded: excluded,
-              ...(excluded ? { boardPos: null, flexibleEndPos: undefined } : {}),
+              // Unplacing clears the lock: it refers to a board position
+              ...(excluded ? { boardPos: null, flexibleEndPos: undefined, locked: undefined } : {}),
             }
           : c
       ),
@@ -663,6 +668,18 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set((s) => ({
       components: s.components.map((c) =>
         c.id === id ? { ...c, locked: !c.locked } : c
+      ),
+    }));
+  },
+
+  // Set the lock flag on many components at once (bulk lock/unlock) as one
+  // undo step.
+  setBoardLock: (ids, locked) => {
+    get().pushSnapshot();
+    const idSet = new Set(ids);
+    set((s) => ({
+      components: s.components.map((c) =>
+        idSet.has(c.id) ? { ...c, locked } : c
       ),
     }));
   },
@@ -831,6 +848,13 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }));
   },
 
+  setBoardDimLock: (dim, locked) => {
+    set((s) => ({
+      board: { ...s.board, ...(dim === "rows" ? { lockedRows: locked } : { lockedCols: locked }) },
+      isDirty: true,
+    }));
+  },
+
   placeCut: (cut) => {
     get().pushSnapshot();
     set((s) => ({
@@ -886,12 +910,19 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const sameWires =
       result.wires.length === s.board.wires.length &&
       result.wires.map(wireKey).sort().join("|") === s.board.wires.map(wireKey).sort().join("|");
-    if (result.placements.length === 0 && sameCuts && sameWires) return;
+    const sameSize =
+      !result.boardSize ||
+      (result.boardSize.rows === s.board.rows && result.boardSize.cols === s.board.cols);
+    const unplace = new Set(result.unplaceIds ?? []);
+    if (result.placements.length === 0 && sameCuts && sameWires && sameSize && unplace.size === 0) return;
 
     get().pushSnapshot();
     const byId = new Map(result.placements.map((p) => [p.componentId, p]));
     set((st) => ({
       components: st.components.map((c) => {
+        if (unplace.has(c.id)) {
+          return { ...c, boardPos: null, flexibleEndPos: undefined, locked: undefined };
+        }
         const p = byId.get(c.id);
         if (!p) return c;
         return {
@@ -903,6 +934,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       }),
       board: {
         ...st.board,
+        ...(result.boardSize ?? {}),
         cuts: result.cuts,
         wires: result.wires.map((w) => ({ id: generateId(), from: w.from, to: w.to })),
       },

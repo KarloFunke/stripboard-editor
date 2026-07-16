@@ -12,9 +12,10 @@ export const BODY_END_SHRINK = 0.5;
 export const MIN_BODY_SEPARATION = 2;
 
 // Pin-to-pin span limits in hole pitches (Euclidean). Axial parts with a fat
-// body (resistors, inductors) can't sit closer than ~5; small parts (caps,
-// LEDs, small diodes) can stand upright at any spacing but shouldn't stretch.
-const AXIAL_SPAN = { min: 5, max: 10 };
+// body (resistors, inductors) can't sit closer than 4 (5 holes end to end);
+// small parts (caps, LEDs, small diodes) can stand upright at any spacing
+// but shouldn't stretch.
+const AXIAL_SPAN = { min: 4, max: 10 };
 const COMPACT_SPAN = { min: 1, max: 6 };
 const AXIAL_DEF_IDS = new Set(["def-resistor", "def-inductor"]);
 
@@ -151,6 +152,64 @@ export interface FootprintRect {
   minCol: number;
   maxRow: number;
   maxCol: number;
+}
+
+// ── Wire tidiness (soft costs, expressed as extra effective length) ──
+// Short off-axis jumpers are fine; long ones that are slightly (or very)
+// off 90° look messy, so every hole beyond WIRE_OFFAXIS_FREE of a non-
+// axis-aligned wire counts half again. Wires may still cross components
+// (insulated), but each crossed component costs WIRE_CROSS_EXTRA holes so
+// a clean detour of similar length wins. Crossing other wires stays free.
+export const WIRE_OFFAXIS_FREE = 3;
+export const WIRE_OFFAXIS_RATE = 0.5;
+export const WIRE_CROSS_EXTRA = 8;
+
+export interface WireObstacles {
+  rects: FootprintRect[];
+  bodies: { p1: Pt; p2: Pt }[];
+}
+
+/** Whether the segment p1-p2 touches the (unexpanded) rectangle */
+export function segmentIntersectsRect(p1: Pt, p2: Pt, rect: FootprintRect): boolean {
+  const inside = (p: Pt) =>
+    p.row >= rect.minRow && p.row <= rect.maxRow && p.col >= rect.minCol && p.col <= rect.maxCol;
+  if (inside(p1) || inside(p2)) return true;
+  const a = { row: rect.minRow, col: rect.minCol };
+  const b = { row: rect.minRow, col: rect.maxCol };
+  const c = { row: rect.maxRow, col: rect.maxCol };
+  const d = { row: rect.maxRow, col: rect.minCol };
+  return (
+    segmentsIntersect(p1, p2, a, b) ||
+    segmentsIntersect(p1, p2, b, c) ||
+    segmentsIntersect(p1, p2, c, d) ||
+    segmentsIntersect(p1, p2, d, a)
+  );
+}
+
+/** Extra effective length (holes) a wire pays for being messy */
+export function wireExtraLength(from: Pt, to: Pt, obstacles: WireObstacles): number {
+  const dr = Math.abs(to.row - from.row);
+  const dc = Math.abs(to.col - from.col);
+  let extra = 0;
+  if (dr > 1e-9 && dc > 1e-9) {
+    extra += WIRE_OFFAXIS_RATE * Math.max(0, Math.hypot(dr, dc) - WIRE_OFFAXIS_FREE);
+  }
+  // Bounding-box prefilter: this runs for thousands of candidate pairs per
+  // routing pass, and almost every obstacle is nowhere near the wire.
+  const minR = Math.min(from.row, to.row);
+  const maxR = Math.max(from.row, to.row);
+  const minC = Math.min(from.col, to.col);
+  const maxC = Math.max(from.col, to.col);
+  for (const rect of obstacles.rects) {
+    if (rect.maxRow < minR || rect.minRow > maxR || rect.maxCol < minC || rect.minCol > maxC) continue;
+    if (segmentIntersectsRect(from, to, rect)) extra += WIRE_CROSS_EXTRA;
+  }
+  for (const body of obstacles.bodies) {
+    if (Math.max(body.p1.row, body.p2.row) < minR || Math.min(body.p1.row, body.p2.row) > maxR) continue;
+    if (Math.max(body.p1.col, body.p2.col) < minC || Math.min(body.p1.col, body.p2.col) > maxC) continue;
+    if (segmentsIntersect(from, to, body.p1, body.p2)) extra += WIRE_CROSS_EXTRA;
+  }
+  return extra;
 }
 
 /**

@@ -26,6 +26,9 @@ urlpatterns = [
     # Proof of Work
     path("pow/challenge/", views.pow_challenge, name="pow-challenge"),
 
+    # Layout ratings
+    path("layout-ratings/", views.layout_rating_create, name="layout-rating-create"),
+
     # Feedback
     path("feedback/", views.feedback_create, name="feedback-create"),
     path("feedback/mine/", views.feedback_mine, name="feedback-mine"),

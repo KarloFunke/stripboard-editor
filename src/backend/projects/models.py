@@ -28,6 +28,39 @@ class Project(models.Model):
         return f"{self.name} ({self.edit_uuid})"
 
 
+class LayoutRating(models.Model):
+    """A user's 1-5 rating of an auto-layout result, stored with a full snapshot
+    of the project as the router left it so the layout can be reopened for
+    evaluation later."""
+    rating = models.PositiveSmallIntegerField()  # 1..5
+    # Full project JSON, gzip-compressed. Ratings are expected in volume, so the
+    # snapshot is stored compressed to keep disk use down. To read one: gzip
+    # decompress the bytes, then json.loads.
+    snapshot_gz = models.BinaryField()
+    metrics = models.JSONField(default=dict, blank=True)
+    solver_version = models.CharField(max_length=64, blank=True)
+    # Deleting the account or the rated project takes its ratings with it.
+    user = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.CASCADE, related_name="layout_ratings"
+    )
+    project = models.ForeignKey(
+        Project, null=True, blank=True, on_delete=models.CASCADE, related_name="layout_ratings"
+    )
+    # Kept next to the FK so a rating can be traced to its project without a
+    # join, and for ratings of projects that were never saved server-side.
+    project_edit_uuid = models.UUIDField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["solver_version", "-created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.rating} stars ({self.solver_version or 'unknown'})"
+
+
 class PowChallenge(models.Model):
     challenge = models.CharField(max_length=64, unique=True, db_index=True)
     expires_at = models.DateTimeField()

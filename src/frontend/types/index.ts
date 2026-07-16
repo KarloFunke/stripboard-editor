@@ -122,6 +122,10 @@ export interface Wire {
 export interface Board {
   rows: number;
   cols: number;
+  // A locked dimension is a hard limit for the auto-layouter: the result
+  // keeps exactly this many rows/cols instead of choosing its own.
+  lockedRows?: boolean;
+  lockedCols?: boolean;
   cuts: Cut[];
   wires: Wire[];
 }

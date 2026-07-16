@@ -10,7 +10,18 @@ export const metadata: Metadata = {
   alternates: { canonical: "https://stripboard-editor.com/updates" },
 };
 
-const updates: { date: string; items: string[] }[] = [
+const updates: { date: string; items: string[]; link?: { href: string; lead: string; text: string } }[] = [
+  {
+    date: "2026-07-16",
+    items: [
+      "New auto-layout router (alpha). Click Auto-layout and the program will try to find an good layout of all components. It works but please consider it the first version I felt comfortable releasing. I plan to further improve on it in the future.",
+    ],
+    link: {
+      href: "/guide/auto-layout",
+      lead: "If you are interested in how it works,",
+      text: "here is a look under the hood.",
+    },
+  },
   {
     date: "2026-07-07",
     items: [
@@ -100,6 +111,12 @@ export default function UpdatesPage() {
                       <li key={i}>{item}</li>
                     ))}
                   </ul>
+                  {u.link && (
+                    <p className="text-sm text-neutral-600 dark:text-neutral-400 mt-1.5">
+                      {u.link.lead}{" "}
+                      <Link href={u.link.href} className="text-[var(--copper)] hover:underline">{u.link.text}</Link>
+                    </p>
+                  )}
                 </div>
               ))}
             </div>

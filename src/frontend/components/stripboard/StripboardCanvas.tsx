@@ -32,14 +32,16 @@ import { StripSegment } from "./stripSegments";
 import PlacedComponent, { suppressNextCanvasClick } from "./PlacedComponent";
 import CutMark from "./CutMark";
 import WireLine from "./WireLine";
-import { SelectionActionBar, RotateIcon, DeleteIcon, FootprintIcon, LockIcon, UnlockIcon, type CanvasAction } from "@/components/canvas/SelectionActionBar";
+import { SelectionActionBar, RotateIcon, DeleteIcon, FootprintIcon, LockIcon, UnlockIcon, WandIcon, type CanvasAction } from "@/components/canvas/SelectionActionBar";
 
 export default function StripboardCanvas({
   readOnly = false,
   onEditFootprint,
+  onAutoLayoutSelection,
 }: {
   readOnly?: boolean;
   onEditFootprint?: (componentId: string) => void;
+  onAutoLayoutSelection?: (componentIds: string[]) => void;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -116,6 +118,7 @@ export default function StripboardCanvas({
 
   const rotateComponent = useProjectStore((s) => s.rotateComponent);
   const toggleBoardLock = useProjectStore((s) => s.toggleBoardLock);
+  const setBoardLock = useProjectStore((s) => s.setBoardLock);
   const transact = useProjectStore((s) => s.transact);
   const pushSnapshot = useProjectStore((s) => s.pushSnapshot);
   const removeFromBoard = useProjectStore((s) => s.removeFromBoard);
@@ -260,10 +263,21 @@ export default function StripboardCanvas({
       if (selectedId && (e.key === "r" || e.key === "R")) {
         rotateComponent(selectedId);
       }
+
+      // L locks/unlocks the whole selection (single or multi). Locks when any
+      // selected part is still unlocked, otherwise unlocks the lot.
+      if (e.key === "l" || e.key === "L") {
+        const ids = selectedIds.length > 0 ? selectedIds : selectedId ? [selectedId] : [];
+        const lockable = ids.filter((id) => components.find((c) => c.id === id)?.boardPos);
+        if (lockable.length > 0) {
+          const anyUnlocked = lockable.some((id) => !components.find((c) => c.id === id)?.locked);
+          setBoardLock(lockable, anyUnlocked);
+        }
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [wirePlacementFrom, cancelWirePlacement, selectedId, selectedIds, selectedWireIds, selectedCuts, rotateComponent, removeFromBoard, removeWire, removeCut, transact, moveComponentsOnBoard, pushSnapshot, computeBoardSelectionBounds, board.rows, board.cols, setSelectedId, setSelectedIds]);
+  }, [wirePlacementFrom, cancelWirePlacement, selectedId, selectedIds, selectedWireIds, selectedCuts, rotateComponent, removeFromBoard, removeWire, removeCut, transact, moveComponentsOnBoard, pushSnapshot, computeBoardSelectionBounds, board.rows, board.cols, setSelectedId, setSelectedIds, components, setBoardLock]);
 
 
   const getSVGPoint = useCallback((e: React.MouseEvent | React.DragEvent) => {
@@ -1121,6 +1135,7 @@ export default function StripboardCanvas({
             title: comp.locked
               ? "Unlock: auto-layout may move this component again"
               : "Lock in place: auto-layout will never move this component",
+            shortcut: "L",
             icon: comp.locked ? UnlockIcon : LockIcon,
             onClick: () => toggleBoardLock(selectedId),
           });
@@ -1133,6 +1148,46 @@ export default function StripboardCanvas({
             variant: "danger",
             onClick: () => {
               removeFromBoard(selectedId);
+              clearSelection();
+            },
+          });
+          return <SelectionActionBar actions={actions} />;
+        })()}
+
+        {/* Multi-selection actions */}
+        {!readOnly && !selectedId && selectedIds.length > 1 && (() => {
+          const actions: CanvasAction[] = [];
+          if (onAutoLayoutSelection) {
+            actions.push({
+              key: "relayout",
+              label: `Re-layout ${selectedIds.length}`,
+              title: "Re-place only the selected components; everything else stays put (cuts and wires are regenerated)",
+              icon: WandIcon,
+              onClick: () => onAutoLayoutSelection(selectedIds),
+            });
+          }
+          const allLocked = selectedIds.every((id) => components.find((c) => c.id === id)?.locked);
+          actions.push({
+            key: "lock",
+            label: allLocked ? `Unlock ${selectedIds.length}` : `Lock ${selectedIds.length}`,
+            title: allLocked
+              ? "Unlock these components: auto-layout may move them again"
+              : "Lock these components in place: auto-layout will never move them",
+            shortcut: "L",
+            icon: allLocked ? UnlockIcon : LockIcon,
+            onClick: () => setBoardLock(selectedIds, !allLocked),
+          });
+          actions.push({
+            key: "delete",
+            label: `Delete ${selectedIds.length}`,
+            title: "Remove the selected components from the board",
+            shortcut: "Del",
+            icon: DeleteIcon,
+            variant: "danger",
+            onClick: () => {
+              transact(() => {
+                for (const id of selectedIds) removeFromBoard(id);
+              });
               clearSelection();
             },
           });

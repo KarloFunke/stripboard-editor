@@ -1,5 +1,6 @@
 import gzip
 import hmac
+import json
 import logging
 import os
 import sqlite3
@@ -26,7 +27,7 @@ from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny
 from rest_framework.response import Response
 
 from .migrations_data.ic_unification import migrate_ic_unification
-from .models import Project, Feedback
+from .models import Project, Feedback, LayoutRating
 from .serializers import (
     ProjectListSerializer,
     ProjectDetailSerializer,
@@ -41,6 +42,7 @@ from .serializers import (
     FeedbackReplyCreateSerializer,
     AdminThreadListSerializer,
     AdminThreadDetailSerializer,
+    LayoutRatingCreateSerializer,
 )
 from .throttles import (
     ProjectCreateThrottle,
@@ -49,6 +51,8 @@ from .throttles import (
     PowChallengeThrottle,
     FeedbackThrottle,
     FeedbackUserThrottle,
+    LayoutRatingThrottle,
+    LayoutRatingUserThrottle,
 )
 from .pow import create_challenge, verify_and_consume, DIFFICULTY
 
@@ -465,6 +469,34 @@ def feedback_create(request):
         message=message,
         contact=serializer.validated_data.get("contact", ""),
         user=None,
+    )
+    return Response({"ok": True}, status=status.HTTP_201_CREATED)
+
+
+# ── Layout ratings ──────────────────────────────────────
+
+@api_view(["POST"])
+@throttle_classes([LayoutRatingThrottle, LayoutRatingUserThrottle])
+def layout_rating_create(request):
+    serializer = LayoutRatingCreateSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    data = serializer.validated_data
+
+    project = None
+    edit_uuid = data.get("project_edit_uuid")
+    if edit_uuid:
+        project = Project.objects.filter(edit_uuid=edit_uuid).first()
+
+    snapshot_gz = gzip.compress(json.dumps(data["snapshot"]).encode("utf-8"))
+
+    LayoutRating.objects.create(
+        rating=data["rating"],
+        snapshot_gz=snapshot_gz,
+        metrics=data.get("metrics") or {},
+        solver_version=data.get("solver_version", ""),
+        user=request.user if request.user.is_authenticated else None,
+        project=project,
+        project_edit_uuid=edit_uuid,
     )
     return Response({"ok": True}, status=status.HTTP_201_CREATED)
 

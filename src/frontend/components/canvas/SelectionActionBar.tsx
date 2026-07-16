@@ -98,6 +98,16 @@ export const UnlockIcon = (
   </svg>
 );
 
+export const WandIcon = (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M15 4V2" />
+    <path d="M15 10V8" />
+    <path d="M12.5 5.5h-2" />
+    <path d="M19.5 5.5h-2" />
+    <path d="M14 7 3 18l3 3L17 10z" />
+  </svg>
+);
+
 export const FootprintIcon = (
   <svg width="14" height="14" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
     <rect x="1" y="1" width="10" height="10" rx="1" />

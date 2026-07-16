@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:solver": "tsc -p tests/solver/tsconfig.json && node tests/solver/run.js"
   },
   "dependencies": {
     "next": "^16.1.7",

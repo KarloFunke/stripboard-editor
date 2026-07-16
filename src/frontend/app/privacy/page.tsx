@@ -43,6 +43,15 @@ export default function PrivacyPage() {
                 are stored on the server so you can access them later.
               </li>
               <li>
+                <strong>Auto-layout ratings:</strong> The auto-layout router is in alpha. If you choose to rate a
+                generated layout with the star prompt, the rating is stored together with a copy of the project
+                exactly as the router left it (components, nets, cuts, wires, board layout), some technical details
+                about the run such as the board size and how long the solver took, and the project id if the project
+                is saved. This is used only to measure and improve the layout algorithm. Rating is entirely optional,
+                nothing is sent unless you click a star, and you can switch the prompt off for one project or for
+                good. These ratings are deleted when you delete the project they belong to, or your account.
+              </li>
+              <li>
                 <strong>Feedback:</strong> If you send a message through the feedback box, it is stored so it
                 can be acted on and replied to. When you are logged in, your messages are linked to your
                 account so you can read replies and continue the conversation on the site. Any contact details
@@ -89,7 +98,8 @@ export default function PrivacyPage() {
             <p>
               Under the GDPR, you have the right to access, correct, or delete your personal data.
               You can delete your account at any time. Deleting your account will also permanently
-              delete all your projects. For any
+              delete all your projects and any auto-layout ratings you submitted. Deleting a single
+              project likewise deletes the ratings stored with it. For any
               data-related requests, please contact me at the address below.
             </p>
           </section>
