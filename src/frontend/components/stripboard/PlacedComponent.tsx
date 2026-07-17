@@ -230,11 +230,10 @@ export default function PlacedComponent({ component, isSelected, onMouseDown, on
       />
     );
   } else if (style === "dip" && pins.length >= 4) {
-    const first = holeCenter(pins[0].row, pins[0].col);
-    const last = holeCenter(pins[pins.length - 1].row, pins[pins.length - 1].col);
+    const pinPts = pins.map((p) => ({ ...holeCenter(p.row, p.col), id: p.pinId }));
     const center = holeCenter((bounds.minRow + bounds.maxRow) / 2, (bounds.minCol + bounds.maxCol) / 2);
     markers = (
-      <path d={dipNotch(first, last, center, pad)} fill="none" stroke={bodyStroke} strokeWidth={1} pointerEvents="none" />
+      <path d={dipNotch(pinPts, center, pad)} fill="none" stroke={bodyStroke} strokeWidth={1} pointerEvents="none" />
     );
   }
 

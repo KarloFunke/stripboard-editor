@@ -98,8 +98,9 @@ export default function PrintBoard({ variant, showLabels, showWires, showCuts, s
           bodyEl = <rect x={bx} y={by} width={bw} height={bh} rx={4} fill="none" stroke={compStroke} strokeWidth={strokeW} />;
           if (style === "dip" && pins.length >= 4) {
             const center = { x: (x1 + x2) / 2, y: (rowY(bounds.minRow) + rowY(bounds.maxRow)) / 2 };
+            const pinPts = pins.map((p) => ({ x: colX(p.col), y: rowY(p.row), id: p.pinId }));
             notchEl = (
-              <path d={dipNotch(pinPt(0), pinPt(pins.length - 1), center, 9)} fill="none" stroke={compStroke} strokeWidth={mirror ? 1.2 : 2} />
+              <path d={dipNotch(pinPts, center, 9)} fill="none" stroke={compStroke} strokeWidth={mirror ? 1.2 : 2} />
             );
           }
         }

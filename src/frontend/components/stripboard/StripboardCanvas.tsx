@@ -1081,7 +1081,7 @@ export default function StripboardCanvas({
             } else if (ghostStyle === "dip" && ghostPins.length >= 4) {
               const ghostCenter = holeCenter((ghostBounds.minRow + ghostBounds.maxRow) / 2, (ghostBounds.minCol + ghostBounds.maxCol) / 2);
               ghostNotch = (
-                <path d={dipNotch(ghostPt(0), ghostPt(ghostPins.length - 1), ghostCenter, ghostPad)} fill="none" stroke="var(--selection-stroke)" strokeWidth={1.5} />
+                <path d={dipNotch(ghostPins.map((p) => ({ ...holeCenter(p.row, p.col), id: p.pinId })), ghostCenter, ghostPad)} fill="none" stroke="var(--selection-stroke)" strokeWidth={1.5} />
               );
             }
             return (

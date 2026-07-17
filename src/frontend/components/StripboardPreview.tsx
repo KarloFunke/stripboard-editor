@@ -198,7 +198,7 @@ export default function StripboardPreview({ data, maxWidth = 280, maxHeight = 16
             y: (hy(bounds.minRow) + hy(bounds.maxRow)) / 2,
           };
           notch = (
-            <path d={dipNotch(pinPt(0), pinPt(pins.length - 1), center, padC)} fill="none" stroke="var(--component-stroke)" strokeWidth={0.5} />
+            <path d={dipNotch(pins.map((p) => ({ x: hx(p.col), y: hy(p.row), id: p.pinId })), center, padC)} fill="none" stroke="var(--component-stroke)" strokeWidth={0.5} />
           );
         }
 

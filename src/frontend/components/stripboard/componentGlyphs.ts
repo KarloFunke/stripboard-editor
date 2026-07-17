@@ -60,11 +60,27 @@ export function bellyPath(a: Pt, b: Pt, pad: number): string {
 }
 
 /**
- * Semicircular pin-1 notch for a DIP, cut into the pin-1 short edge. `first`/
- * `last` are the two end pins sharing that edge; `center` is the body centre.
- * Returns an absolute arc path.
+ * Semicircular pin-1 notch for a DIP, cut into the edge next to pin 1. `pins`
+ * are all pin centres with their ids; `center` is the body centre. Standard DIP
+ * numbering puts pin 1 and the highest-numbered pin together at the notch end,
+ * so the notch edge joins them — selecting by id (not array order or geometry)
+ * keeps it correct under a reordered footprint and under rotation.
  */
-export function dipNotch(first: Pt, last: Pt, center: Pt, pad: number): string {
+export function dipNotch(pins: { x: number; y: number; id: string }[], center: Pt, pad: number): string {
+  let first: Pt = pins[0];
+  let last: Pt = pins[pins.length - 1];
+  let minId = Infinity;
+  let maxId = -Infinity;
+  let lo: Pt | null = null;
+  let hi: Pt | null = null;
+  for (const p of pins) {
+    const n = parseInt(p.id, 10);
+    if (Number.isNaN(n)) continue;
+    if (n < minId) { minId = n; lo = p; }
+    if (n > maxId) { maxId = n; hi = p; }
+  }
+  if (lo && hi && lo !== hi) { first = lo; last = hi; }
+
   const edgeMid = { x: (first.x + last.x) / 2, y: (first.y + last.y) / 2 };
   let ox = edgeMid.x - center.x;
   let oy = edgeMid.y - center.y;
