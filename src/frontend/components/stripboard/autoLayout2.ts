@@ -148,6 +148,7 @@ interface RigidRotation {
   box: FootprintRect; // local bounds (pins + body) at this rotation
   pinned: Map<string, { row: number; side: Side }>; // net -> first local pin row
   pinClaims: { net: string; row: number; col: number }[]; // every assigned pin hole
+  clean: boolean; // every assigned pin can reach open board along its row
 }
 
 interface RigidCand {
@@ -183,30 +184,49 @@ function rigidRotations(comp: Component, def: ComponentDef, netOf: Map<string, s
       if (!byRow.has(p.row)) byRow.set(p.row, []);
       byRow.get(p.row)!.push({ col: p.col, netId: netOf.get(`${comp.id}:${p.pinId}`) });
     }
-    // Pins per row decide what the row can host: one pin = the net owns the
-    // rigid's stretch of it ("F"); two different-net pins = left/right
-    // segments with a cut under the body; more than two = unbuildable.
+    // Pins per row decide what the row can host. The assigned pins, in
+    // column order, must form at most two same-net blocks: one block owns
+    // the row ("F"), two blocks split it left/right with a cut between
+    // them. Floating pins anywhere just get cut off and don't count.
+    // Interleavings like A B A can never share the row's copper and
+    // reject the rotation.
     let ok = true;
+    let clean = true;
     const pinned = new Map<string, { row: number; side: Side }>();
     const pinClaims: RigidRotation["pinClaims"] = [];
     for (const [row, rowPins] of byRow) {
-      const distinct = new Set(rowPins.filter((x) => x.netId).map((x) => x.netId!));
-      if (distinct.size > 2 || (rowPins.length > 2 && distinct.size > 1)) {
+      const sorted = [...rowPins].sort((a, b) => a.col - b.col);
+      const seq = sorted.filter((x) => x.netId);
+      let blocks = 0;
+      for (let i = 0; i < seq.length; i++) {
+        if (i === 0 || seq[i].netId !== seq[i - 1].netId) blocks++;
+      }
+      if (blocks > 2) {
         ok = false;
         break;
       }
-      const rowMin = Math.min(...rowPins.map((x) => x.col));
-      for (const { col, netId } of rowPins) {
+      const firstNet = seq[0]?.netId;
+      for (const { col, netId } of sorted) {
         if (!netId) continue;
         pinClaims.push({ net: netId, row, col });
-        const side: Side = distinct.size <= 1 ? "F" : col === rowMin ? "L" : "R";
+        const side: Side = blocks <= 1 ? "F" : netId === firstNet ? "L" : "R";
         if (!pinned.has(netId)) pinned.set(netId, { row, side });
+        // Every floating neighbour forces a cut, so an assigned pin walled
+        // in by other-net or floating pins on BOTH sides sits on a one-hole
+        // segment nothing can ever reach (a DIP laid along a strip). Such a
+        // rotation is legal but unbuildable in practice.
+        const openLeft = rowPins.every((x) => x.col >= col || x.netId === netId);
+        const openRight = rowPins.every((x) => x.col <= col || x.netId === netId);
+        if (!openLeft && !openRight) clean = false;
       }
     }
     if (!ok) continue;
-    out.push({ rot, box: getComponentBounds(def, { row: 0, col: 0 }, rot), pinned, pinClaims });
+    out.push({ rot, box: getComponentBounds(def, { row: 0, col: 0 }, rot), pinned, pinClaims, clean });
   }
-  return out;
+  // Prefer buildable orientations; fall back to the full list only when no
+  // rotation is clean (grid-array parts) so the part still places somehow.
+  const cleanOut = out.filter((r) => r.clean);
+  return cleanOut.length > 0 ? cleanOut : out;
 }
 
 function analyzeCluster(
@@ -242,7 +262,13 @@ function analyzeCluster(
       continue;
     }
     const assigned = def.pins.filter((p) => netOf.has(`${comp.id}:${p.id}`));
-    if (assigned.length <= 1 && !isFixed) {
+    // The tap path claims exactly one hole, so only parts that ARE one hole
+    // belong there. A bigger rigid with a single connected pin (a transistor
+    // with dangling legs, an IC with one net wired) goes the rigid route so
+    // its whole footprint occupies space; with no connected pin it stays
+    // here and comes back unplaced, like any other unconnected part.
+    const oneHole = def.pins.length === 1 && def.width === 1 && def.height === 1;
+    if (!isFixed && (assigned.length === 0 || (assigned.length === 1 && oneHole))) {
       taps.push({ comp, def });
     } else {
       // a locked rigid joins with its rotation frozen and position pinned;
@@ -1591,7 +1617,19 @@ function compactPlacements(
       ],
     };
   };
-  const violations = (s: Snap): Set<string> => {
+  // Nets still owed a connection to a part that isn't on the board keep
+  // every run needy even when the placed pins form one copper run.
+  const unplacedNets = new Set<string>();
+  {
+    const onBoard = new Set(comps.filter((_, i) => pos[i]).map((c) => c.id));
+    for (const [pk, net] of netOfPin) {
+      const cid = pk.slice(0, pk.indexOf(":"));
+      if (onBoard.has(cid)) continue;
+      const comp = comps.find((c) => c.id === cid);
+      if (comp && !comp.boardExcluded) unplacedNets.add(net);
+    }
+  }
+  const violations = (s: Snap, nCols: number): Set<string> => {
     const out = new Set<string>();
     for (let i = 0; i < s.flexPts.length; i++) {
       const a = s.flexPts[i];
@@ -1627,9 +1665,60 @@ function compactPlacements(
         }
       }
     }
+    // ── Wire attachability ──
+    // A net whose pins sit on more than one copper run needs link wires,
+    // and every one of its runs must keep a free hole to take an endpoint
+    // (pins, bodies and corridors all block endpoints). A removal that
+    // seals a needy run's last flank saves a column but strands the net,
+    // so it counts as a violation like any geometric one. A hole between
+    // two needy runs can serve only one of them (greedy left-to-right is
+    // exact on a row).
+    const occ2 = new Set<string>();
+    for (const p of s.pins) occ2.add(`${p.row},${p.col}`);
+    for (const r of s.rects)
+      for (let rr = r.minRow; rr <= r.maxRow; rr++)
+        for (let cc = r.minCol; cc <= r.maxCol; cc++) occ2.add(`${rr},${cc}`);
+    for (const f of s.flexPts)
+      for (const h of corridorHoles(f.p1, f.p2)) occ2.add(`${h.row},${h.col}`);
+    interface Run { net?: string; id: string; minCol: number; maxCol: number; free: number }
+    const rowRuns = new Map<number, Run[]>();
+    const runsPerNet = new Map<string, number>();
+    for (const [row, pins] of byRow) {
+      const runs: Run[] = [];
+      for (const p of pins) {
+        const last = runs[runs.length - 1];
+        if (last && last.net !== undefined && last.net === p.net) {
+          // holes between same-net pins always stay with the run
+          for (let c = last.maxCol + 1; c < p.col; c++) if (!occ2.has(`${row},${c}`)) last.free++;
+          last.maxCol = p.col;
+        } else {
+          runs.push({ net: p.net, id: p.id, minCol: p.col, maxCol: p.col, free: 0 });
+        }
+      }
+      rowRuns.set(row, runs);
+      for (const r of runs) if (r.net !== undefined) runsPerNet.set(r.net, (runsPerNet.get(r.net) ?? 0) + 1);
+    }
+    const needy = (net?: string) =>
+      net !== undefined && ((runsPerNet.get(net) ?? 0) > 1 || unplacedNets.has(net));
+    for (const [row, runs] of rowRuns) {
+      const gapFree: number[] = [];
+      for (let i = 0; i <= runs.length; i++) {
+        const lo = i === 0 ? 0 : runs[i - 1].maxCol + 1;
+        const hi = i === runs.length ? nCols - 1 : runs[i].minCol - 1;
+        let n = 0;
+        for (let c = lo; c <= hi; c++) if (!occ2.has(`${row},${c}`)) n++;
+        gapFree.push(n);
+      }
+      runs.forEach((r, i) => {
+        if (!needy(r.net) || r.free > 0) return;
+        if (gapFree[i] > 0) gapFree[i]--;
+        else if (gapFree[i + 1] > 0) gapFree[i + 1]--;
+        else out.add(`flank:${r.id}`);
+      });
+    }
     return out;
   };
-  let baseViol = violations(snapshot());
+  let baseViol = violations(snapshot(), cols);
 
   const tryRemove = (line: number, isCol: boolean): boolean => {
     if (isCol ? line <= lockCol : line <= lockRow) return false;
@@ -1646,7 +1735,7 @@ function compactPlacements(
       const len = Math.hypot(na.row - nb.row, na.col - nb.col);
       if (len < f.span.min - 1e-6 || len > f.span.max + 1e-6) return false;
     }
-    const post = violations(snapshot(line, isCol));
+    const post = violations(snapshot(line, isCol), isCol ? cols - 1 : cols);
     for (const v of post) if (!baseViol.has(v)) return false;
     if (validate) {
       const cand = comps.map((c, i) => {
@@ -2084,7 +2173,7 @@ export function computeAutoLayout2(
       }
     }
     const rows = Math.max(5, floorplan ? oy0 + fpRows : (fixedRects.length > 0 ? 0 : board.rows), fixedMaxRow + 1);
-    const cols = Math.max(5, floorplan ? ox + fpCols : (fixedRects.length > 0 ? 0 : board.cols), fixedMaxCol + 1);
+    let cols = Math.max(5, floorplan ? ox + fpCols : (fixedRects.length > 0 ? 0 : board.cols), fixedMaxCol + 1);
     const moved = new Map<string, Component>();
     for (const t of anchoredTiles) {
       const ar = t.anchor!.row;
@@ -2127,6 +2216,23 @@ export function computeAutoLayout2(
           moved.set(p.comp.id, { ...p.comp, boardPos: pos, rotation: 0, flexibleEndPos: end });
         }
       }
+    }
+    // One empty column on each board edge: an edge pin column whose net
+    // needs a link wire has no flank otherwise, and no cut position can
+    // conjure one. Flank-aware compaction strips whichever margin no needy
+    // run actually uses, so unneeded margins cost nothing. Skipped when
+    // parts are locked (content must not shift relative to them).
+    if (lockedParts.length === 0) {
+      for (const [id, m] of moved) {
+        moved.set(id, {
+          ...m,
+          boardPos: m.boardPos ? { row: m.boardPos.row, col: m.boardPos.col + 1 } : m.boardPos,
+          ...(m.flexibleEndPos
+            ? { flexibleEndPos: { row: m.flexibleEndPos.row, col: m.flexibleEndPos.col + 1 } }
+            : {}),
+        });
+      }
+      cols += 2;
     }
     const virtual = components.map((c) => {
       const m = moved.get(c.id);

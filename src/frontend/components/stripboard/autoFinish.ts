@@ -147,12 +147,14 @@ function bestCutPosition(
   row: number,
   colA: number,
   colB: number,
-  occupied: Set<string>
+  occupied: Set<string>,
+  gLo = colA,
+  gHi = colB - 1
 ): number {
   const mid = (colA + colB - 1) / 2;
-  let bestG = Math.floor(mid);
+  let bestG = Math.max(gLo, Math.min(gHi, Math.floor(mid)));
   let bestScore = -Infinity;
-  for (let g = colA; g < colB; g++) {
+  for (let g = gLo; g <= gHi; g++) {
     let left = 0;
     let right = 0;
     for (let c = colA + 1; c <= g; c++) if (!occupied.has(holeKey(row, c))) left++;
@@ -175,7 +177,8 @@ function deriveCuts(
   board: Board,
   pins: BoardPin[],
   occupied: Set<string>,
-  issues: string[]
+  issues: string[],
+  reserveNets?: Set<string>
 ): Cut[] {
   // gap g on a row = the copper between col g and col g+1 is severed
   const severedGaps = new Set<string>();
@@ -197,7 +200,16 @@ function deriveCuts(
     cols.get(pin.col)!.add(pin.netKey);
   }
 
-  const newCuts: Cut[] = [];
+  // ── Run census ──
+  // A run = a maximal stretch of same-net pins on one row; holes between
+  // its pins always stay on its copper. A net whose pins sit in more than
+  // one run (or that still awaits unplaced parts) needs link wires, so
+  // every one of its runs must end the cut pass with a free hole. That
+  // knowledge steers each cut position below instead of being discovered
+  // as starvation during routing.
+  interface Run { key: string; minCol: number; maxCol: number; freeInside: number }
+  const runsByRow = new Map<number, Run[]>();
+  const runCount = new Map<string, number>();
   for (const [row, cols] of rows) {
     const sortedCols = Array.from(cols.keys()).sort((a, b) => a - b);
 
@@ -207,28 +219,68 @@ function deriveCuts(
       }
     }
 
-    for (let i = 0; i + 1 < sortedCols.length; i++) {
-      const colA = sortedCols[i];
-      const colB = sortedCols[i + 1];
-      const keysA = cols.get(colA)!;
-      const keysB = cols.get(colB)!;
-      const sameNet =
-        keysA.size === 1 && keysB.size === 1 &&
-        keysA.values().next().value === keysB.values().next().value;
-      if (sameNet) continue;
-
-      let alreadySevered = false;
-      for (let g = colA; g < colB; g++) {
-        if (severedGaps.has(`${row}:${g}`)) {
-          alreadySevered = true;
-          break;
+    const runs: Run[] = [];
+    for (const col of sortedCols) {
+      const key = cols.get(col)!.values().next().value!;
+      const last = runs[runs.length - 1];
+      if (last && last.key === key) {
+        for (let c = last.maxCol + 1; c < col; c++) {
+          if (!occupied.has(holeKey(row, c))) last.freeInside++;
         }
+        last.maxCol = col;
+      } else {
+        runs.push({ key, minCol: col, maxCol: col, freeInside: 0 });
       }
-      if (alreadySevered) continue;
+    }
+    runsByRow.set(row, runs);
+    for (const r of runs) runCount.set(r.key, (runCount.get(r.key) ?? 0) + 1);
+  }
+  // floating pins have a unique key each, so their count stays 1
+  const needy = (key: string) =>
+    (runCount.get(key) ?? 0) > 1 || (reserveNets?.has(key) ?? false);
 
-      const cutCol = bestCutPosition(row, colA, colB, occupied);
+  const newCuts: Cut[] = [];
+  for (const [row, runs] of runsByRow) {
+    // free holes the leading run already owns on its board-edge side
+    let carry = 0;
+    if (runs.length > 0) {
+      for (let c = 0; c < runs[0].minCol; c++) if (!occupied.has(holeKey(row, c))) carry++;
+    }
+    for (let i = 0; i + 1 < runs.length; i++) {
+      const a = runs[i];
+      const b = runs[i + 1];
+      const colA = a.maxCol;
+      const colB = b.minCol;
+
+      let sevMax = -1;
+      for (let g = colA; g < colB; g++) {
+        if (severedGaps.has(`${row}:${g}`)) sevMax = g;
+      }
+      const gapFree: number[] = [];
+      for (let c = colA + 1; c < colB; c++) {
+        if (!occupied.has(holeKey(row, c))) gapFree.push(c);
+      }
+      if (sevMax >= 0) {
+        carry = gapFree.filter((c) => c > sevMax).length;
+        continue;
+      }
+
+      // Allocate the gap's free holes: the left run's flanks are final
+      // after this cut, so it gets the leftmost free hole when it still
+      // has none; the right run keeps the rightmost when it may need one
+      // and enough holes exist for both.
+      const aNeeds = needy(a.key) && a.freeInside === 0 && carry === 0;
+      const bNeeds = needy(b.key) && b.freeInside === 0;
+      let gLo = colA;
+      let gHi = colB - 1;
+      if (aNeeds && gapFree.length > 0) gLo = gapFree[0];
+      if (bNeeds && gapFree.length > 0 && (!aNeeds || gapFree.length >= 2)) {
+        gHi = Math.max(gLo, gapFree[gapFree.length - 1] - 1);
+      }
+      const cutCol = bestCutPosition(row, colA, colB, occupied, gLo, gHi);
       newCuts.push({ row, col: cutCol });
       severedGaps.add(`${row}:${cutCol}`);
+      carry = gapFree.filter((c) => c > cutCol).length;
     }
   }
   return newCuts;
@@ -509,15 +561,9 @@ export function deriveCompletion(
   nets: Net[],
   netAssignments: NetAssignment[]
 ): CompletionPlan {
-  const issues: string[] = [];
+  const cutIssues: string[] = [];
   const pins = collectBoardPins(board, components, componentDefs, netAssignments);
   const occupied = collectOccupiedHoles(board, components, componentDefs, pins);
-
-  const cuts = deriveCuts(board, pins, occupied, issues);
-
-  const boardWithCuts: Board = { ...board, cuts: [...board.cuts, ...cuts] };
-  const segments = computeStripSegments(boardWithCuts, components, componentDefs, netAssignments);
-  const connectivity = computeConnectivity(segments, board.wires);
 
   // Nets with assignments on still-unplaced components need reserve holes
   const reserveNets = new Set<string>();
@@ -525,6 +571,8 @@ export function deriveCompletion(
     const comp = components.find((c) => c.id === a.componentId);
     if (comp && !comp.boardPos && !comp.boardExcluded) reserveNets.add(a.netId);
   }
+
+  const cuts = deriveCuts(board, pins, occupied, cutIssues, reserveNets);
 
   // Component geometry the wires should preferably not run over
   const obstacles: WireObstacles = { rects: [], bodies: [] };
@@ -540,10 +588,14 @@ export function deriveCompletion(
     }
   }
 
+  const boardWithCuts: Board = { ...board, cuts: [...board.cuts, ...cuts] };
+  const segments = computeStripSegments(boardWithCuts, components, componentDefs, netAssignments);
+  const connectivity = computeConnectivity(segments, board.wires);
+  const wireIssues: string[] = [];
   const starvedNetIds: string[] = [];
   const starvedPinPositions: BoardPosition[] = [];
   const { wires, wireMess } = deriveWires(
-    segments, connectivity, nets, pins, occupied, board.wires, reserveNets, obstacles, issues, starvedNetIds, starvedPinPositions
+    segments, connectivity, nets, pins, occupied, board.wires, reserveNets, obstacles, wireIssues, starvedNetIds, starvedPinPositions
   );
 
   const finalBoard: Board = {
@@ -554,7 +606,15 @@ export function deriveCompletion(
   const finalConnectivity = computeConnectivity(finalSegments, finalBoard.wires);
   const unresolvedConflicts = finalConnectivity.filter((g) => g.hasConflict).length;
 
-  return { cuts, wires, issues, unresolvedConflicts, starvedNetIds, starvedPinPositions, wireMess };
+  return {
+    cuts,
+    wires,
+    issues: [...cutIssues, ...wireIssues],
+    unresolvedConflicts,
+    starvedNetIds,
+    starvedPinPositions,
+    wireMess,
+  };
 }
 
 /**

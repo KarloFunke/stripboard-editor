@@ -94,9 +94,8 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 
-NUM_PROXIES = 2  # global reverse proxy + nginx container
-
 REST_FRAMEWORK = {
+    "NUM_PROXIES": 2,  # global reverse proxy + nginx container
     "DEFAULT_RENDERER_CLASSES": [
         "rest_framework.renderers.JSONRenderer",
     ] if not DEBUG else [
