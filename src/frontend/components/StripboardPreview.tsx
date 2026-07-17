@@ -11,6 +11,7 @@ import {
   getFlexiblePinPositions,
   getFlexibleBounds,
 } from "./stripboard/boardLayout";
+import { bodyStyle, bellyPath, dipNotch } from "./stripboard/componentGlyphs";
 
 const HOLE_SP = 12; // compact spacing for preview
 const HOLE_R = 2;
@@ -170,21 +171,41 @@ export default function StripboardPreview({ data, maxWidth = 280, maxHeight = 16
           ? getFlexiblePinPositions(comp, def)
           : getRotatedPinPositions(def, comp.boardPos, comp.rotation);
         const padC = HOLE_SP * 0.3;
+        const style = bodyStyle(def);
+        const pinPt = (i: number) => ({ x: hx(pins[i].col), y: hy(pins[i].row) });
+        const rectBody = (
+          <rect
+            x={hx(bounds.minCol) - padC}
+            y={hy(bounds.minRow) - padC}
+            width={(bounds.maxCol - bounds.minCol) * HOLE_SP + padC * 2}
+            height={(bounds.maxRow - bounds.minRow) * HOLE_SP + padC * 2}
+            rx={1.5}
+            fill="var(--component-fill)"
+            stroke="var(--component-stroke)"
+            strokeWidth={0.5}
+            strokeDasharray="2 1.5"
+          />
+        );
+        let body = rectBody;
+        let notch: React.ReactNode = null;
+        if (style === "belly" && pins.length === 3) {
+          body = (
+            <path d={bellyPath(pinPt(0), pinPt(2), padC)} fill="var(--component-fill)" stroke="var(--component-stroke)" strokeWidth={0.5} />
+          );
+        } else if (style === "dip" && pins.length >= 4) {
+          const center = {
+            x: (hx(bounds.minCol) + hx(bounds.maxCol)) / 2,
+            y: (hy(bounds.minRow) + hy(bounds.maxRow)) / 2,
+          };
+          notch = (
+            <path d={dipNotch(pinPt(0), pinPt(pins.length - 1), center, padC)} fill="none" stroke="var(--component-stroke)" strokeWidth={0.5} />
+          );
+        }
 
         return (
           <g key={comp.id}>
-            {/* Body rect */}
-            <rect
-              x={hx(bounds.minCol) - padC}
-              y={hy(bounds.minRow) - padC}
-              width={(bounds.maxCol - bounds.minCol) * HOLE_SP + padC * 2}
-              height={(bounds.maxRow - bounds.minRow) * HOLE_SP + padC * 2}
-              rx={1.5}
-              fill="var(--component-fill)"
-              stroke="var(--component-stroke)"
-              strokeWidth={0.5}
-              strokeDasharray="2 1.5"
-            />
+            {body}
+            {notch}
             {/* Pins */}
             {pins.map((pin) => {
               const assignment = netAssignments.find(
@@ -193,7 +214,7 @@ export default function StripboardPreview({ data, maxWidth = 280, maxHeight = 16
               const net = assignment ? nets.find((n) => n.id === assignment.netId) : null;
               return (
                 <circle
-                  key={pin.pinId}
+                  key={`${pin.pinId}-${pin.row}-${pin.col}`}
                   cx={hx(pin.col)}
                   cy={hy(pin.row)}
                   r={net ? 2.5 : HOLE_R}

@@ -170,7 +170,6 @@ export default function CustomComponentEditor({ onSave, onClose }: Props) {
   return (
     <div
       className="fixed inset-0 bg-black/30 flex items-center justify-center z-50"
-      onClick={onClose}
       onMouseUp={() => { setDraggingPin(null); setHoverCell(null); }}
     >
       <div

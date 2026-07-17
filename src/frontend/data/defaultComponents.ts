@@ -88,6 +88,49 @@ function createDIP(pinCount: number): Omit<ComponentDef, "id" | "name" | "catego
   };
 }
 
+/**
+ * Dev-board breakout footprint: two rows of pins spanning a wide body, like an
+ * ESP32 straddling the centre of a breadboard. `leftNames`/`rightNames` are the
+ * silk labels in physical top-to-bottom order for each column; `width` is the
+ * hole span between the two rows (row spacing in 0.1in units, plus 1).
+ *
+ * Right-column ids run bottom-to-top so a generic-ic schematic symbol places
+ * every pin at its physical position, and the last pin stays on the top edge so
+ * the pin-1 notch renders there.
+ */
+function createBreakoutBoard(
+  leftNames: string[],
+  rightNames: string[],
+  width: number,
+): Omit<ComponentDef, "id" | "name" | "category" | "symbol" | "defaultLabelPrefix"> {
+  const perSide = leftNames.length;
+  const pins: PinDef[] = [];
+  const bodyCells: BodyCell[] = [];
+
+  leftNames.forEach((name, i) => {
+    pins.push({ id: String(i + 1), name, offsetRow: i, offsetCol: 0 });
+  });
+  for (let i = perSide - 1; i >= 0; i--) {
+    pins.push({ id: String(2 * perSide - i), name: rightNames[i], offsetRow: i, offsetCol: width - 1 });
+  }
+  for (let r = 0; r < perSide; r++) {
+    for (let c = 1; c < width - 1; c++) bodyCells.push({ row: r, col: c });
+  }
+
+  return { width, height: perSide, pins, bodyCells };
+}
+
+// ESP32 dev-board pinouts, physical top-to-bottom per column (antenna at top).
+const ESP32_V1_LEFT = ["EN", "IO36", "IO39", "IO34", "IO35", "IO32", "IO33", "IO25", "IO26", "IO27", "IO14", "IO12", "IO13", "GND", "VIN"];
+const ESP32_V1_RIGHT = ["IO23", "IO22", "IO1", "IO3", "IO21", "IO19", "IO18", "IO5", "IO17", "IO16", "IO4", "IO2", "IO15", "GND", "3V3"];
+// 36-pin DOIT V1 additionally breaks out the flash pins (IO9/10/11 left, IO0/8/7/6 right).
+const ESP32_36_LEFT = ["EN", "IO36", "IO39", "IO34", "IO35", "IO32", "IO33", "IO25", "IO26", "IO27", "IO14", "IO12", "IO13", "IO9", "IO10", "IO11", "GND", "VIN"];
+const ESP32_36_RIGHT = ["IO23", "IO22", "IO1", "IO3", "IO21", "IO19", "IO18", "IO5", "IO17", "IO16", "IO4", "IO2", "IO15", "IO0", "IO8", "IO7", "IO6", "3V3"];
+const ESP32_C_LEFT = ["3V3", "EN", "IO36", "IO39", "IO34", "IO35", "IO32", "IO33", "IO25", "IO26", "IO27", "IO14", "IO12", "GND", "IO13", "IO9", "IO10", "IO11", "VIN"];
+const ESP32_C_RIGHT = ["GND", "IO23", "IO22", "IO1", "IO3", "IO21", "GND", "IO19", "IO18", "IO5", "IO17", "IO16", "IO4", "IO0", "IO2", "IO15", "IO8", "IO7", "IO6"];
+const NANO_LEFT = ["TX", "RX", "RST", "GND", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9", "D10", "D11", "D12"];
+const NANO_RIGHT = ["VIN", "GND", "RST", "5V", "A7", "A6", "A5", "A4", "A3", "A2", "A1", "A0", "AREF", "3V3", "D13"];
+
 // ── Component Library ─────────────────────────────────
 
 /** Category grouping for the visual library */
@@ -212,6 +255,62 @@ export const COMPONENT_GROUPS: ComponentGroup[] = [
         symbol: "switch",
         defaultLabelPrefix: "S",
         ...create2Pin(4),
+      },
+      {
+        id: "def-potentiometer",
+        name: "Potentiometer",
+        category: "passive",
+        hasValue: true,
+        symbol: "potentiometer",
+        defaultLabelPrefix: "RV",
+        width: 1,
+        height: 3,
+        pins: [
+          { id: "1", name: "VCC", offsetRow: 0, offsetCol: 0 },
+          { id: "2", name: "OUT", offsetRow: 1, offsetCol: 0 },
+          { id: "3", name: "GND", offsetRow: 2, offsetCol: 0 },
+        ],
+      },
+      {
+        id: "def-trimpot",
+        name: "Trimmer",
+        category: "passive",
+        hasValue: true,
+        symbol: "potentiometer",
+        defaultLabelPrefix: "RV",
+        width: 3,
+        height: 3,
+        pins: [
+          { id: "1", name: "VCC", offsetRow: 2, offsetCol: 0 },
+          { id: "2", name: "OUT", offsetRow: 0, offsetCol: 1 },
+          { id: "3", name: "GND", offsetRow: 2, offsetCol: 2 },
+        ],
+        bodyCells: [
+          { row: 0, col: 0 }, { row: 0, col: 2 },
+          { row: 1, col: 0 }, { row: 1, col: 1 }, { row: 1, col: 2 },
+          { row: 2, col: 1 },
+        ],
+      },
+      {
+        id: "def-pushbutton",
+        name: "Push Button",
+        category: "passive",
+        symbol: "pushbutton",
+        defaultLabelPrefix: "SW",
+        width: 4,
+        height: 3,
+        // 4 legs, 2 electrical nodes: same-id legs share a net (and a strip).
+        pins: [
+          { id: "1", name: "1", offsetRow: 0, offsetCol: 0 },
+          { id: "1", name: "1", offsetRow: 0, offsetCol: 3 },
+          { id: "2", name: "2", offsetRow: 2, offsetCol: 0 },
+          { id: "2", name: "2", offsetRow: 2, offsetCol: 3 },
+        ],
+        bodyCells: [
+          { row: 0, col: 1 }, { row: 0, col: 2 },
+          { row: 1, col: 0 }, { row: 1, col: 1 }, { row: 1, col: 2 }, { row: 1, col: 3 },
+          { row: 2, col: 1 }, { row: 2, col: 2 },
+        ],
       },
     ],
   },
@@ -370,6 +469,38 @@ export const COMPONENT_GROUPS: ComponentGroup[] = [
           { id: "7", name: "V+", offsetRow: 1, offsetCol: 3 },
           { id: "8", name: "NC", offsetRow: 0, offsetCol: 3 },
         ],
+      },
+      {
+        id: "def-esp32-devkit-v1",
+        name: "ESP32 DevKit V1 (30-pin)",
+        category: "ic" as const,
+        symbol: "generic-ic-30",
+        defaultLabelPrefix: "U",
+        ...createBreakoutBoard(ESP32_V1_LEFT, ESP32_V1_RIGHT, 10),
+      },
+      {
+        id: "def-esp32-devkit-v1-36",
+        name: "ESP32 DevKit V1 (36-pin)",
+        category: "ic" as const,
+        symbol: "generic-ic-36",
+        defaultLabelPrefix: "U",
+        ...createBreakoutBoard(ESP32_36_LEFT, ESP32_36_RIGHT, 10),
+      },
+      {
+        id: "def-esp32-devkitc-38",
+        name: "ESP32 DevKitC (38-pin)",
+        category: "ic" as const,
+        symbol: "generic-ic-38",
+        defaultLabelPrefix: "U",
+        ...createBreakoutBoard(ESP32_C_LEFT, ESP32_C_RIGHT, 11),
+      },
+      {
+        id: "def-arduino-nano",
+        name: "Arduino Nano (30-pin)",
+        category: "ic" as const,
+        symbol: "generic-ic-30",
+        defaultLabelPrefix: "U",
+        ...createBreakoutBoard(NANO_LEFT, NANO_RIGHT, 7),
       },
     ],
   },

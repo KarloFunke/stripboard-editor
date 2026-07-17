@@ -463,10 +463,55 @@ const switchSPST: SymbolDef = {
   ],
 };
 
+// Potentiometer: resistor box with a wiper arrow into the side (3 terminals)
+const potentiometer: SymbolDef = {
+  symbolId: "potentiometer",
+  label: "Potentiometer",
+  labelYOffset: 15,
+  category: "passive",
+  bodyPaths: [
+    { d: "M -7 -16 L 7 -16 L 7 16 L -7 16 Z", fill: "none" },
+    { d: `M 0 -16 L 0 ${-2 * G}`, fill: "none" },
+    { d: `M 0 16 L 0 ${2 * G}`, fill: "none" },
+    { d: `M ${-2 * G} 0 L -7 0`, fill: "none" }, // wiper lead into the body
+    { d: "M -7 0 L -14 -4 M -7 0 L -14 4", fill: "none" }, // wiper arrowhead
+  ],
+  pins: [
+    { pinId: "1", defaultName: "VCC", stubStart: { x: 0, y: -16 }, stubEnd: { x: 0, y: -2 * G }, side: "top" },
+    { pinId: "2", defaultName: "OUT", stubStart: { x: -14, y: 0 }, stubEnd: { x: -2 * G, y: 0 }, side: "left" },
+    { pinId: "3", defaultName: "GND", stubStart: { x: 0, y: 16 }, stubEnd: { x: 0, y: 2 * G }, side: "bottom" },
+  ],
+};
+
+// Push button (momentary SPST): two contacts bridged by a plunger bar
+const pushbutton: SymbolDef = {
+  symbolId: "pushbutton",
+  label: "Push Button",
+  labelYOffset: 22,
+  hidePinLabels: true,
+  category: "passive",
+  bodyPaths: [
+    { d: `M ${-2 * G} 0 L -12 0`, fill: "none" }, // left lead
+    { d: `M ${2 * G} 0 L 12 0`, fill: "none" }, // right lead
+    { d: "M -16 -12 L 16 -12", fill: "none" }, // movable bar
+    { d: "M 0 -12 L 0 -22", fill: "none" }, // plunger stem
+    { d: "M -10 -22 L 10 -22", fill: "none" }, // button top
+  ],
+  extraElements: [
+    { type: "circle", props: { cx: -12, cy: 0, r: 2, fill: "currentColor" } },
+    { type: "circle", props: { cx: 12, cy: 0, r: 2, fill: "currentColor" } },
+  ],
+  pins: [
+    { pinId: "1", defaultName: "1", stubStart: { x: -12, y: 0 }, stubEnd: { x: -2 * G, y: 0 }, side: "left" },
+    { pinId: "2", defaultName: "2", stubStart: { x: 12, y: 0 }, stubEnd: { x: 2 * G, y: 0 }, side: "right" },
+  ],
+};
+
 // ── Static symbol registry ────────────────────────────
 
 const STATIC_SYMBOLS: SymbolDef[] = [
   resistor, capacitor, capPolarized, diode, led, zener, inductor, transformer, switchSPST,
+  potentiometer, pushbutton,
   npn, pnp, nmos, pmos, vreg,
   timer555, optocoupler, opamp,
   generic2pin, generic3pin,

@@ -13,6 +13,7 @@ import {
   HOLE_SPACING,
   PinPosition,
 } from "./boardLayout";
+import { bodyStyle, bellyPath, dipNotch } from "./componentGlyphs";
 
 const PIN_HIT_RADIUS = HOLE_SPACING * 0.35;
 
@@ -99,7 +100,7 @@ export default function PlacedComponent({ component, isSelected, onMouseDown, on
     const hasNet = !!net;
 
     return (
-      <g key={pin.pinId}>
+      <g key={`${pin.pinId}-${pin.row}-${pin.col}`}>
         {/* Large hit area for flexible pin dragging */}
         {isFlexible && onPinDragStart && (
           <circle
@@ -191,21 +192,56 @@ export default function PlacedComponent({ component, isSelected, onMouseDown, on
   }
 
   // Standard (axis-aligned) rendering
-  return (
-    <g>
-      <rect
-        x={topLeft.x - pad}
-        y={topLeft.y - pad}
-        width={(bounds.maxCol - bounds.minCol) * HOLE_SPACING + pad * 2}
-        height={(bounds.maxRow - bounds.minRow) * HOLE_SPACING + pad * 2}
-        rx={3}
-        fill={isSelected ? "var(--selection-fill)" : "var(--component-fill)"}
-        stroke={isSelected ? "var(--selection-stroke)" : "var(--component-stroke)"}
-        strokeWidth={isSelected ? 1.5 : 1}
-        strokeDasharray="4 3"
+  const style = bodyStyle(def);
+  const bodyFill = isSelected ? "var(--selection-fill)" : "var(--component-fill)";
+  const bodyStroke = isSelected ? "var(--selection-stroke)" : "var(--component-stroke)";
+  const bodyStrokeWidth = isSelected ? 1.5 : 1;
+
+  const rectBody = (
+    <rect
+      x={topLeft.x - pad}
+      y={topLeft.y - pad}
+      width={(bounds.maxCol - bounds.minCol) * HOLE_SPACING + pad * 2}
+      height={(bounds.maxRow - bounds.minRow) * HOLE_SPACING + pad * 2}
+      rx={3}
+      fill={bodyFill}
+      stroke={bodyStroke}
+      strokeWidth={bodyStrokeWidth}
+      strokeDasharray="4 3"
+      style={{ cursor: "grab" }}
+      onMouseDown={onMouseDown}
+    />
+  );
+
+  let body = rectBody;
+  let markers: React.ReactNode = null;
+
+  if (style === "belly" && pins.length === 3) {
+    const first = holeCenter(pins[0].row, pins[0].col);
+    const last = holeCenter(pins[2].row, pins[2].col);
+    body = (
+      <path
+        d={bellyPath(first, last, pad)}
+        fill={bodyFill}
+        stroke={bodyStroke}
+        strokeWidth={bodyStrokeWidth}
         style={{ cursor: "grab" }}
         onMouseDown={onMouseDown}
       />
+    );
+  } else if (style === "dip" && pins.length >= 4) {
+    const first = holeCenter(pins[0].row, pins[0].col);
+    const last = holeCenter(pins[pins.length - 1].row, pins[pins.length - 1].col);
+    const center = holeCenter((bounds.minRow + bounds.maxRow) / 2, (bounds.minCol + bounds.maxCol) / 2);
+    markers = (
+      <path d={dipNotch(first, last, center, pad)} fill="none" stroke={bodyStroke} strokeWidth={1} pointerEvents="none" />
+    );
+  }
+
+  return (
+    <g>
+      {body}
+      {markers}
       <text
         x={topLeft.x + ((bounds.maxCol - bounds.minCol) * HOLE_SPACING) / 2 + (component.boardLabelOffset?.x ?? 0)}
         y={topLeft.y - pad - 4 + (component.boardLabelOffset?.y ?? 0)}

@@ -29,6 +29,7 @@ import {
   getGroupForWire,
 } from "./connectivity";
 import { StripSegment } from "./stripSegments";
+import { bodyStyle, bellyPath, dipNotch } from "./componentGlyphs";
 import PlacedComponent, { suppressNextCanvasClick } from "./PlacedComponent";
 import CutMark from "./CutMark";
 import WireLine from "./WireLine";
@@ -1056,24 +1057,42 @@ export default function StripboardCanvas({
             const ghostTopLeft = holeCenter(ghostBounds.minRow, ghostBounds.minCol);
             const ghostPad = HOLE_SPACING * 0.4;
             const ghostPins = getRotatedPinPositions(ghostDef, ghostPos, comp.rotation);
+            const ghostStyle = bodyStyle(ghostDef);
+            const ghostPt = (i: number) => holeCenter(ghostPins[i].row, ghostPins[i].col);
+            const rectGhost = (
+              <rect
+                x={ghostTopLeft.x - ghostPad}
+                y={ghostTopLeft.y - ghostPad}
+                width={(ghostBounds.maxCol - ghostBounds.minCol) * HOLE_SPACING + ghostPad * 2}
+                height={(ghostBounds.maxRow - ghostBounds.minRow) * HOLE_SPACING + ghostPad * 2}
+                rx={3}
+                fill="var(--selection-fill)"
+                stroke="var(--selection-stroke)"
+                strokeWidth={1.5}
+                strokeDasharray="4 3"
+              />
+            );
+            let ghostBody = rectGhost;
+            let ghostNotch: React.ReactNode = null;
+            if (ghostStyle === "belly" && ghostPins.length === 3) {
+              ghostBody = (
+                <path d={bellyPath(ghostPt(0), ghostPt(2), ghostPad)} fill="var(--selection-fill)" stroke="var(--selection-stroke)" strokeWidth={1.5} />
+              );
+            } else if (ghostStyle === "dip" && ghostPins.length >= 4) {
+              const ghostCenter = holeCenter((ghostBounds.minRow + ghostBounds.maxRow) / 2, (ghostBounds.minCol + ghostBounds.maxCol) / 2);
+              ghostNotch = (
+                <path d={dipNotch(ghostPt(0), ghostPt(ghostPins.length - 1), ghostCenter, ghostPad)} fill="none" stroke="var(--selection-stroke)" strokeWidth={1.5} />
+              );
+            }
             return (
               <g pointerEvents="none" opacity={0.5}>
-                <rect
-                  x={ghostTopLeft.x - ghostPad}
-                  y={ghostTopLeft.y - ghostPad}
-                  width={(ghostBounds.maxCol - ghostBounds.minCol) * HOLE_SPACING + ghostPad * 2}
-                  height={(ghostBounds.maxRow - ghostBounds.minRow) * HOLE_SPACING + ghostPad * 2}
-                  rx={3}
-                  fill="var(--selection-fill)"
-                  stroke="var(--selection-stroke)"
-                  strokeWidth={1.5}
-                  strokeDasharray="4 3"
-                />
+                {ghostBody}
+                {ghostNotch}
                 {ghostPins.map((pin) => {
                   const center = holeCenter(pin.row, pin.col);
                   return (
                     <circle
-                      key={pin.pinId}
+                      key={`${pin.pinId}-${pin.row}-${pin.col}`}
                       cx={center.x}
                       cy={center.y}
                       r={5}

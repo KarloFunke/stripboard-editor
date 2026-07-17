@@ -9,6 +9,7 @@ import {
   getComponentPinPositions,
   getFlexibleBounds,
 } from "@/components/stripboard/boardLayout";
+import { bodyStyle, bellyPath, dipNotch } from "@/components/stripboard/componentGlyphs";
 
 // Standard stripboard pitch is 0.1 in = 2.54 mm. The board SVG is authored in
 // 30-unit cells; sizing the element in mm at this ratio prints it 1:1.
@@ -84,12 +85,28 @@ export default function PrintBoard({ variant, showLabels, showWires, showCuts, s
         const pins = getComponentPinPositions(comp, def);
         const labelX = bx + bw / 2;
         const labelY = by - 6;
+        const pinPt = (i: number) => ({ x: colX(pins[i].col), y: rowY(pins[i].row) });
+        const style = bodyStyle(def);
+        const strokeW = mirror ? 1.5 : 3;
+        let bodyEl: React.ReactNode;
+        let notchEl: React.ReactNode = null;
+        if (style === "belly" && pins.length === 3) {
+          bodyEl = (
+            <path d={bellyPath(pinPt(0), pinPt(2), 9)} fill="none" stroke={compStroke} strokeWidth={strokeW} />
+          );
+        } else {
+          bodyEl = <rect x={bx} y={by} width={bw} height={bh} rx={4} fill="none" stroke={compStroke} strokeWidth={strokeW} />;
+          if (style === "dip" && pins.length >= 4) {
+            const center = { x: (x1 + x2) / 2, y: (rowY(bounds.minRow) + rowY(bounds.maxRow)) / 2 };
+            notchEl = (
+              <path d={dipNotch(pinPt(0), pinPt(pins.length - 1), center, 9)} fill="none" stroke={compStroke} strokeWidth={mirror ? 1.2 : 2} />
+            );
+          }
+        }
         return (
           <g key={comp.id}>
-            <rect
-              x={bx} y={by} width={bw} height={bh} rx={4}
-              fill="none" stroke={compStroke} strokeWidth={mirror ? 1.5 : 3}
-            />
+            {bodyEl}
+            {notchEl}
             {pins.map((p, i) => (
               <circle key={i} cx={colX(p.col)} cy={rowY(p.row)} r={5}
                 fill={mirror ? "none" : "#000"} stroke={compStroke} strokeWidth={1.5} />

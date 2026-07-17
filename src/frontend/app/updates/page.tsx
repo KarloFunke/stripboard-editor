@@ -12,6 +12,13 @@ export const metadata: Metadata = {
 
 const updates: { date: string; items: string[]; link?: { href: string; lead: string; text: string } }[] = [
   {
+    date: "2026-07-17",
+    items: [
+      "Placed components now show their orientation on the stripboard: a pin-1 notch on ICs, and a flat-belly (TO-92 style) outline on 3-legged parts like transistors and voltage regulators.",
+      "New built-in components: a potentiometer and trimmer, a push button, ESP32 dev boards (30, 36 and 38-pin) and the Arduino Nano.",
+    ],
+  },
+  {
     date: "2026-07-16",
     items: [
       "New auto-layout router (alpha). Click Auto-layout and the program will try to find an good layout of all components. It works but please consider it the first version I felt comfortable releasing. I plan to further improve on it in the future.",
@@ -88,6 +95,10 @@ const updates: { date: string; items: string[]; link?: { href: string; lead: str
 const planned: string[] = [
   "Net list import and export, aiming for compatibility with EDA tools like KiCad so you can move designs in and out of the editor.",
   "A big custom-component overhaul, including a searchable library of both your own and shared community components. Including a better custom component editor.",
+  "Off-board components: place parts next to the board (for example a panel-mounted switch) and wire them directly to it, even when they are not mounted on the stripboard itself.",
+  "A floating menu for wires in the schematic, making them easier to delete (handy on keyboards, where there is no dedicated Delete key).",
+  "Placing a cut directly underneath a component, without having to move the part out of the way first.",
+  "Smoother wire handling on the board: start a new wire from a hole that already has one, instead of having to remove the existing wire first.",
 ];
 
 export default function UpdatesPage() {
