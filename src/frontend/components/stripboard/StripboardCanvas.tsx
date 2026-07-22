@@ -124,6 +124,7 @@ export default function StripboardCanvas({
   const pushSnapshot = useProjectStore((s) => s.pushSnapshot);
   const removeFromBoard = useProjectStore((s) => s.removeFromBoard);
   const moveComponentsOnBoard = useProjectStore((s) => s.moveComponentsOnBoard);
+  const autoAlignPolarity = useProjectStore((s) => s.autoAlignPolarity);
 
   // A drag gesture (component body or flexible pin) arms this on mousedown and
   // commits exactly one snapshot the first time the position actually changes.
@@ -390,10 +391,11 @@ export default function StripboardCanvas({
       if (hole && isValidPlacement(componentId, hole)) {
         pushSnapshot(); // discrete action — placeOnBoard no longer snapshots itself
         placeOnBoard(componentId, hole);
+        autoAlignPolarity([componentId]);
       }
       setTrayGhost(null);
     },
-    [getSVGPoint, board.rows, board.cols, isValidPlacement, placeOnBoard, pushSnapshot]
+    [getSVGPoint, board.rows, board.cols, isValidPlacement, placeOnBoard, pushSnapshot, autoAlignPolarity]
   );
 
   const handleDragLeave = useCallback(() => {
@@ -664,12 +666,19 @@ export default function StripboardCanvas({
 
     if (dragging) {
       markDragComplete();
-      // Position already committed live during drag — no need to placeOnBoard here
+      // Position already committed live during drag — no need to placeOnBoard here.
+      // A real move can land a 2-pin part on the right nets but swapped: fix it.
+      if (dragging.didDrag) {
+        const movedIds = dragging.multi
+          ? multiDragRef.current?.moveIds ?? []
+          : [dragging.componentId];
+        if (movedIds.length > 0) autoAlignPolarity(movedIds);
+      }
     }
     setDragging(null);
     setDragPreviewPos(null);
     multiDragRef.current = null;
-  }, [dragging, dragPreviewPos, components, componentDefs, board.wires, board.cuts, isValidPlacement, placeOnBoard, finalizeSelectionRect, markDragComplete]);
+  }, [dragging, dragPreviewPos, components, componentDefs, board.wires, board.cuts, isValidPlacement, placeOnBoard, finalizeSelectionRect, markDragComplete, autoAlignPolarity]);
 
   // ── Canvas click ────────────────────────────────────────
   // Priority: skip if just dragged → wire drawing → cut toggle → deselect

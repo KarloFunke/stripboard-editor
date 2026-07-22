@@ -13,7 +13,9 @@ import {
 } from "@/types";
 import { DEFAULT_COMPONENTS } from "@/data/defaultComponents";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
-import { getComponentBounds } from "@/components/stripboard/boardLayout";
+import { getComponentBounds, getComponentPinPositions } from "@/components/stripboard/boardLayout";
+import { computeStripSegments } from "@/components/stripboard/stripSegments";
+import { computeConnectivity } from "@/components/stripboard/connectivity";
 import { recalculateNets } from "@/components/schematic/netInference";
 import { getRotatedPinPositions } from "@/components/schematic/SymbolRenderer";
 import { pointKey } from "@/utils/schematicConstants";
@@ -79,6 +81,7 @@ interface ProjectActions {
   setBoardLock: (ids: string[], locked: boolean) => void;
   setFlexibleEndPos: (id: string, pos: { row: number; col: number }) => void;
   rotateComponent: (id: string) => void;
+  autoAlignPolarity: (ids: string[]) => void;
 
   // Schematic wires
   addSchematicWire: (start: { x: number; y: number }, end: { x: number; y: number }) => void;
@@ -744,6 +747,70 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set((s2) => ({
       components: s2.components.map((c) =>
         c.id === id ? { ...c, rotation: newRotation } : c
+      ),
+    }));
+  },
+
+  // Auto-fix swapped polarity: after a 2-pin part is placed or moved, if its two
+  // legs sit on each other's target net (right nets, wrong way round), flip it
+  // 180° so each pin lands on its correct net. Folds into the caller's snapshot.
+  autoAlignPolarity: (ids) => {
+    const s = get();
+    const updates = new Map<string, Partial<Component>>();
+
+    for (const id of ids) {
+      const comp = s.components.find((c) => c.id === id);
+      if (!comp || !comp.boardPos) continue;
+      const def = resolveComponentDef(comp, s.componentDefs);
+      if (!def || def.pins.length !== 2) continue;
+
+      const pins = getComponentPinPositions(comp, def);
+      if (pins.length !== 2) continue;
+      const [p1, p2] = pins;
+
+      // Each pin's correct net, from the schematic.
+      const netOf = (pinId: string) =>
+        s.netAssignments.find((a) => a.componentId === id && a.pinId === pinId)?.netId;
+      const exp1 = netOf(p1.pinId);
+      const exp2 = netOf(p2.pinId);
+      if (!exp1 || !exp2 || exp1 === exp2) continue;
+
+      // Nets already present at each hole, computed WITHOUT this part's own pins.
+      const others = s.components.filter((c) => c.id !== id);
+      const segs = computeStripSegments(s.board, others, s.componentDefs, s.netAssignments);
+      const groups = computeConnectivity(segs, s.board.wires);
+      const ambientAt = (row: number, col: number): Set<string> => {
+        const idx = segs.findIndex(
+          (seg) => seg.row === row && col >= seg.startCol && col <= seg.endCol
+        );
+        if (idx < 0) return new Set();
+        const g = groups.find((gr) => gr.segmentIndices.includes(idx));
+        return new Set(g ? g.netIds : segs[idx].netIds);
+      };
+      const amb1 = ambientAt(p1.row, p1.col);
+      const amb2 = ambientAt(p2.row, p2.col);
+
+      // Clean swap only: each leg sits alone on the OTHER leg's target net.
+      const swapped =
+        amb1.size === 1 && amb1.has(exp2) &&
+        amb2.size === 1 && amb2.has(exp1);
+      if (!swapped) continue;
+
+      if (def.flexible) {
+        // 180° for a flexible part = swap its two endpoints (stays in place).
+        updates.set(id, {
+          boardPos: { row: p2.row, col: p2.col },
+          flexibleEndPos: { row: p1.row, col: p1.col },
+        });
+      } else {
+        updates.set(id, { rotation: ((comp.rotation + 180) % 360) as Component["rotation"] });
+      }
+    }
+
+    if (updates.size === 0) return;
+    set((s2) => ({
+      components: s2.components.map((c) =>
+        updates.has(c.id) ? { ...c, ...updates.get(c.id)! } : c
       ),
     }));
   },

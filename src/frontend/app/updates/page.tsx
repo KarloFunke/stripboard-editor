@@ -15,6 +15,8 @@ const updates: { date: string; items: string[]; link?: { href: string; lead: str
     date: "2026-07-23",
     items: [
       "Netlist export. Export a design to an EDA tool as a KiCad-compatible netlist (.net): components, values, pin numbers and nets all are included, so you can turn a stripboard prototype into a PCB without redesigning the Schematic in another tool.",
+      "Auto-align polarity. Drop or move a 2-legged part like a resistor onto the board with its legs reversed and it flips itself 180 degrees automatically, so each pin lands on its correct net.",
+      "Fixed rotating 2-legged components: parts spanning an even number of holes now rotate in place instead of slowly wandering across the board, and four rotations return to the exact starting position.",
     ]
   },
   {
