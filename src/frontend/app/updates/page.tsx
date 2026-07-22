@@ -12,6 +12,12 @@ export const metadata: Metadata = {
 
 const updates: { date: string; items: string[]; link?: { href: string; lead: string; text: string } }[] = [
   {
+    date: "2026-07-23",
+    items: [
+      "Netlist export. Export a design to an EDA tool as a KiCad-compatible netlist (.net): components, values, pin numbers and nets all are included, so you can turn a stripboard prototype into a PCB without redesigning the Schematic in another tool.",
+    ]
+  },
+  {
     date: "2026-07-17",
     items: [
       "Placed components now show their orientation on the stripboard: a pin-1 notch on ICs, and a flat-belly (TO-92 style) outline on 3-legged parts like transistors and voltage regulators.",
@@ -93,7 +99,7 @@ const updates: { date: string; items: string[]; link?: { href: string; lead: str
 ];
 
 const planned: string[] = [
-  "Net list import and export, aiming for compatibility with EDA tools like KiCad so you can move designs in and out of the editor.",
+  "Net list import, the other half of the KiCad compatibility: bring a circuit in from an EDA tool and lay it out on stripboard. Export is already available.",
   "A big custom-component overhaul, including a searchable library of both your own and shared community components. Including a better custom component editor.",
   "Off-board components: place parts next to the board (for example a panel-mounted switch) and wire them directly to it, even when they are not mounted on the stripboard itself.",
   "A floating menu for wires in the schematic, making them easier to delete (handy on keyboards, where there is no dedicated Delete key).",

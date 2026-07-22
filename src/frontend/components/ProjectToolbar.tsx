@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { useProjectStore } from "@/store/useProjectStore";
 import { getMe, logout, claimProject, migrateProjectData, type User } from "@/lib/api";
 import { track } from "@/lib/track";
+import { toKicadNetlist, collectGeneratedFootprints, FOOTPRINT_LIB_NICKNAME } from "@/lib/netlistExport";
+import { createZip } from "@/lib/zip";
 import ThemeToggle from "./ThemeToggle";
 import PrintPreview from "./print/PrintPreview";
 import AuthModal from "./AuthModal";
@@ -56,6 +58,68 @@ function FeedbackButton({
   );
 }
 
+function Dropdown({ label, children }: { label: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="px-3.5 py-1.5 rounded transition-all text-sm bg-white/10 hover:bg-white/20 text-white inline-flex items-center gap-1.5"
+      >
+        {label}
+        <svg
+          width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"
+          className="opacity-70" aria-hidden="true"
+        >
+          <path d="M6 9l6 6 6-6" />
+        </svg>
+      </button>
+      {open && (
+        <div
+          className="absolute right-0 top-full mt-1 min-w-[11rem] rounded-md bg-[#0d2b52] border border-white/15 shadow-xl py-1 z-50"
+          onClick={() => setOpen(false)}
+        >
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DropdownItem({
+  onClick,
+  disabled,
+  hint,
+  children,
+}: {
+  onClick?: () => void;
+  disabled?: boolean;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className="w-full flex items-center justify-between gap-4 px-3 py-1.5 text-left text-sm text-white hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+    >
+      <span>{children}</span>
+      {hint && <span className="text-[10px] uppercase tracking-wide opacity-60">{hint}</span>}
+    </button>
+  );
+}
+
 function isValidProjectShape(d: unknown): boolean {
   if (!d || typeof d !== "object" || Array.isArray(d)) return false;
   const o = d as Record<string, unknown>;
@@ -93,6 +157,8 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
   const [showPrint, setShowPrint] = useState(false);
   const [showSaveNotice, setShowSaveNotice] = useState(false);
   const hasShownSaveNotice = useRef(false);
+  // Number of generated footprints shipped with the last netlist export, or null.
+  const [footprintNotice, setFootprintNotice] = useState<number | null>(null);
 
   // Auth state
   const [user, setUser] = useState<User | null>(null);
@@ -163,7 +229,7 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
   };
 
   const handleExport = () => {
-    track("project-export");
+    track("export-project");
     const data = exportProject();
     const json = JSON.stringify(data, null, 2);
     const blob = new Blob([json], { type: "application/json" });
@@ -173,6 +239,41 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
     a.download = `${data.name.replace(/[^a-zA-Z0-9_-]/g, "_")}.json`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const downloadBlob = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportNetlist = () => {
+    track("export-net");
+    const s = useProjectStore.getState();
+    const base = s.name.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const netlist = toKicadNetlist({
+      name: s.name,
+      components: s.components,
+      componentDefs: s.componentDefs,
+      nets: s.nets,
+      netAssignments: s.netAssignments,
+      date: new Date().toISOString(),
+    });
+    downloadBlob(new Blob([netlist], { type: "text/plain" }), `${base}.net`);
+
+    // Parts with no stock KiCad footprint (e.g. custom parts with non-numeric
+    // pin ids) reference a generated footprint library; ship it alongside.
+    const footprints = collectGeneratedFootprints(s.components, s.componentDefs);
+    if (footprints.length > 0) {
+      const zip = createZip(
+        footprints.map((f) => ({ name: `${FOOTPRINT_LIB_NICKNAME}.pretty/${f.name}`, content: f.content }))
+      );
+      downloadBlob(zip, `${FOOTPRINT_LIB_NICKNAME}.pretty.zip`);
+      setFootprintNotice(footprints.length);
+    }
   };
 
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -346,6 +447,7 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
               {autoSave ? "Auto-save on" : "Auto-save"}
             </button>
           )}
+          <span className="opacity-20">|</span>
           {user && editUuid && viewUuid && (
             <FeedbackButton
               onClick={() => setShowShare(!showShare)}
@@ -356,15 +458,15 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
             onClick={() => { track("print-open", { source: "edit" }); setShowPrint(true); }}
             label="Print"
           />
-          <FeedbackButton
-            onClick={handleExport}
-            label="Export"
-            feedbackLabel="Exported!"
-          />
-          <FeedbackButton
-            onClick={() => fileInputRef.current?.click()}
-            label="Import"
-          />
+          <span className="opacity-20">|</span>
+          <Dropdown label="Export">
+            <DropdownItem onClick={handleExport}>Raw project (.json)</DropdownItem>
+            <DropdownItem onClick={handleExportNetlist}>Netlist (.net)</DropdownItem>
+          </Dropdown>
+          <Dropdown label="Import">
+            <DropdownItem onClick={() => fileInputRef.current?.click()}>Project (.json)</DropdownItem>
+            <DropdownItem disabled hint="Coming soon">Netlist (.net)</DropdownItem>
+          </Dropdown>
           <input
             ref={fileInputRef}
             type="file"
@@ -478,6 +580,62 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
           >
             ×
           </button>
+        </div>
+      )}
+
+      {/* Netlist export shipped a generated footprint library */}
+      {footprintNotice !== null && (
+        <div
+          className="fixed inset-0 bg-black/30 flex items-center justify-center z-50"
+          onClick={() => setFootprintNotice(null)}
+        >
+          <div
+            className="bg-white dark:bg-neutral-900 rounded-lg shadow-xl dark:shadow-neutral-900/50 p-6 w-[30rem] max-w-[90vw]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100 mb-2">
+              Footprint library included
+            </h2>
+            <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-4">
+              {footprintNotice} part{footprintNotice === 1 ? "" : "s"} in this design{" "}
+              {footprintNotice === 1 ? "has" : "have"} no standard KiCad footprint, so{" "}
+              <code className="font-mono text-xs bg-neutral-100 dark:bg-neutral-800 rounded px-1 py-0.5">
+                {FOOTPRINT_LIB_NICKNAME}.pretty.zip
+              </code>{" "}
+              was downloaded alongside the netlist.
+            </p>
+            <ol className="text-sm text-neutral-600 dark:text-neutral-400 mb-5 space-y-1.5 list-decimal list-outside pl-5">
+              <li>
+                Unzip it to get the{" "}
+                <code className="font-mono text-xs bg-neutral-100 dark:bg-neutral-800 rounded px-1 py-0.5">
+                  {FOOTPRINT_LIB_NICKNAME}.pretty
+                </code>{" "}
+                folder.
+              </li>
+              <li>
+                In KiCad, open{" "}
+                <span className="font-medium text-neutral-700 dark:text-neutral-300">
+                  Preferences → Manage Footprint Libraries
+                </span>
+                .
+              </li>
+              <li>
+                Add that folder with the nickname{" "}
+                <code className="font-mono text-xs bg-neutral-100 dark:bg-neutral-800 rounded px-1 py-0.5">
+                  {FOOTPRINT_LIB_NICKNAME}
+                </code>
+                .
+              </li>
+            </ol>
+            <div className="flex justify-end">
+              <button
+                onClick={() => setFootprintNotice(null)}
+                className="px-4 py-2 text-sm rounded bg-[#113768] text-white font-medium hover:bg-[#0d2a50] transition-colors"
+              >
+                Got it
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

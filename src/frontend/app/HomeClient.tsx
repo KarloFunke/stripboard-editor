@@ -96,9 +96,18 @@ export default function HomeClient({
             name: "Stripboard Editor",
             url: "https://stripboard-editor.com",
             description:
-              "Free online stripboard layout editor with a built-in schematic editor. Draw circuits with standard symbols, wire up nets, and layout on a virtual stripboard with live strip colouring — then print a true-scale build template with a mirrored cut guide and a bill of materials (BOM).",
+              "Free online stripboard layout editor with a built-in schematic editor and an automatic layout router. Draw circuits with standard symbols, wire up nets, then let the router lay out the whole board or place parts by hand with live strip colouring — print a true-scale build template with a mirrored cut guide and a bill of materials (BOM), or export a KiCad-compatible netlist to turn the prototype into a PCB.",
             applicationCategory: "DesignApplication",
             operatingSystem: "Any",
+            featureList: [
+              "Schematic editor with a standard symbol library",
+              "Automatic stripboard layout router",
+              "Live strip colouring with real-time conflict detection",
+              "Editable component footprints and custom components",
+              "Printable 1:1 build template with mirrored cut guide and BOM",
+              "KiCad-compatible netlist export",
+              "Shareable edit and view-only project links",
+            ],
             offers: {
               "@type": "Offer",
               price: "0",
@@ -147,7 +156,7 @@ export default function HomeClient({
       <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12 flex-1">
         {/* Hero */}
         <div className="mb-8">
-          <p className="font-mono text-xs uppercase tracking-[0.2em] text-[var(--copper)] mb-3">// solder-free prototyping</p>
+          <p className="font-mono text-xs uppercase tracking-[0.2em] text-[var(--copper)] mb-3">// PCB-free prototyping</p>
           <h1 className="font-mono text-3xl sm:text-4xl font-bold text-[#113768] dark:text-[#5b9bd5] mb-3 tracking-tight">
             Stripboard Editor
           </h1>
@@ -208,6 +217,24 @@ export default function HomeClient({
         {/* How it works */}
         <div className="mb-12">
           <h2 className="font-mono text-sm uppercase tracking-[0.2em] text-[var(--copper)] mb-5">Steps</h2>
+
+          {/* Optional shortcut: auto-layout covers the placing and fixing steps */}
+          <div className="lg:grid lg:grid-cols-4 lg:gap-px">
+            <div className="lg:col-start-2 lg:col-span-2">
+              <div className="rounded-lg border border-dashed border-[var(--copper)] bg-[var(--copper)]/[0.06] px-4 py-3">
+                <div className="flex items-baseline gap-2 mb-1 flex-wrap">
+                  <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-[var(--copper)]">optional</span>
+                  <p className="text-sm font-medium text-neutral-800 dark:text-neutral-200">Auto-layout (alpha)</p>
+                </div>
+                <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                  Skip steps 2 and 3: the router places every part, picks a board size, and works out the cuts and link wires for you.
+                </p>
+              </div>
+              <div className="flex justify-center text-[var(--copper)] text-[10px] leading-none py-1" aria-hidden="true">▼</div>
+            </div>
+          </div>
+
+          {/* Main flow */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-px rounded-lg overflow-hidden border border-neutral-200 dark:border-neutral-800 bg-neutral-200 dark:bg-neutral-800">
             {steps.map((s, i) => (
               <div key={s.title} className="bg-[#fafafa] dark:bg-[#161616] p-4">
@@ -216,6 +243,22 @@ export default function HomeClient({
                 <p className="text-xs text-neutral-500 dark:text-neutral-400">{s.body}</p>
               </div>
             ))}
+          </div>
+
+          {/* Optional exit: take the finished circuit to an EDA tool */}
+          <div className="lg:grid lg:grid-cols-4 lg:gap-px">
+            <div className="lg:col-start-4">
+              <div className="flex justify-center text-[var(--copper)] text-[10px] leading-none py-1" aria-hidden="true">▼</div>
+              <div className="rounded-lg border border-dashed border-[var(--copper)] bg-[var(--copper)]/[0.06] px-4 py-3">
+                <div className="flex items-baseline gap-2 mb-1 flex-wrap">
+                  <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-[var(--copper)]">optional</span>
+                  <p className="text-sm font-medium text-neutral-800 dark:text-neutral-200">Export a netlist</p>
+                </div>
+                <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                  Take the finished circuit into KiCad or another EDA tool as a netlist and turn it into a real PCB.
+                </p>
+              </div>
+            </div>
           </div>
         </div>
 

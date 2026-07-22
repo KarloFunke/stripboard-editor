@@ -23,7 +23,7 @@ export const metadata: Metadata = {
     template: "%s - Stripboard Editor",
   },
   description:
-    "Free online stripboard layout editor with a built-in schematic editor and an automatic layout router. Draw a schematic with standard symbols, then let the router place every part, size the board, and work out the strip cuts and link wires for you — or lay it out by hand. Copper strips colour-code to your nets in real time so you can instantly see what is connected, then print a true-scale build template with a mirrored cut guide and a bill of materials (BOM).",
+    "Free online stripboard layout editor with a built-in schematic editor and an automatic layout router. Draw a schematic with standard symbols, then let the router place every part, size the board, and work out the strip cuts and link wires for you — or lay it out by hand. Copper strips colour-code to your nets in real time so you can instantly see what is connected, then print a true-scale build template with a mirrored cut guide and a bill of materials (BOM), or export a KiCad-compatible netlist to turn the prototype into a PCB.",
   keywords: [
     "stripboard",
     "veroboard",
@@ -34,6 +34,10 @@ export const metadata: Metadata = {
     "stripboard layout generator",
     "veroboard layout generator",
     "schematic to stripboard",
+    "KiCad netlist",
+    "netlist export",
+    "export stripboard to KiCad",
+    "stripboard to PCB",
     "electronics",
     "PCB layout",
     "through-hole",
@@ -50,7 +54,7 @@ export const metadata: Metadata = {
     siteName: "Stripboard Editor",
     title: "Stripboard Editor",
     description:
-      "Free online stripboard editor with a built-in schematic editor and an automatic layout router. Draw circuits with standard symbols, wire up nets, then let the router lay out the whole board for you or place parts by hand with live strip colouring — and print a 1:1 build template with a parts list (BOM).",
+      "Free online stripboard editor with a built-in schematic editor and an automatic layout router. Draw circuits with standard symbols, wire up nets, then let the router lay out the whole board for you or place parts by hand with live strip colouring — print a 1:1 build template with a parts list (BOM), or export a KiCad netlist.",
     images: [
       {
         url: "/demo-circuit.png",
@@ -64,7 +68,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Stripboard Editor",
     description:
-      "Free online stripboard editor with a built-in schematic editor and an automatic layout router. Draw circuits, wire up nets, let the router lay out the board, and print a 1:1 build template with a BOM.",
+      "Free online stripboard editor with a built-in schematic editor and an automatic layout router. Draw circuits, wire up nets, let the router lay out the board, print a 1:1 build template with a BOM, or export a KiCad netlist.",
     images: ["/demo-circuit.png"],
   },
   alternates: {

@@ -9,7 +9,7 @@ import {
   getComponentPinPositions,
   getFlexibleBounds,
 } from "@/components/stripboard/boardLayout";
-import { bodyStyle, bellyPath, dipNotch } from "@/components/stripboard/componentGlyphs";
+import { bodyStyle, bellyPath, dipNotch, usbPort } from "@/components/stripboard/componentGlyphs";
 
 // Standard stripboard pitch is 0.1 in = 2.54 mm. The board SVG is authored in
 // 30-unit cells; sizing the element in mm at this ratio prints it 1:1.
@@ -101,6 +101,12 @@ export default function PrintBoard({ variant, showLabels, showWires, showCuts, s
             const pinPts = pins.map((p) => ({ x: colX(p.col), y: rowY(p.row), id: p.pinId }));
             notchEl = (
               <path d={dipNotch(pinPts, center, 9)} fill="none" stroke={compStroke} strokeWidth={mirror ? 1.2 : 2} />
+            );
+          } else if (style === "board" && pins.length >= 4) {
+            const center = { x: (x1 + x2) / 2, y: (rowY(bounds.minRow) + rowY(bounds.maxRow)) / 2 };
+            const pinPts = pins.map((p) => ({ x: colX(p.col), y: rowY(p.row), id: p.pinId }));
+            notchEl = (
+              <path d={usbPort(pinPts, center, { x0: bx, y0: by, x1: bx + bw, y1: by + bh }, HOLE_SPACING / 2.54)} fill="none" stroke={compStroke} strokeWidth={mirror ? 1.2 : 2} />
             );
           }
         }

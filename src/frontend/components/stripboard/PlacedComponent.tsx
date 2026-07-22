@@ -13,7 +13,7 @@ import {
   HOLE_SPACING,
   PinPosition,
 } from "./boardLayout";
-import { bodyStyle, bellyPath, dipNotch } from "./componentGlyphs";
+import { bodyStyle, bellyPath, dipNotch, usbPort } from "./componentGlyphs";
 
 const PIN_HIT_RADIUS = HOLE_SPACING * 0.35;
 
@@ -234,6 +234,18 @@ export default function PlacedComponent({ component, isSelected, onMouseDown, on
     const center = holeCenter((bounds.minRow + bounds.maxRow) / 2, (bounds.minCol + bounds.maxCol) / 2);
     markers = (
       <path d={dipNotch(pinPts, center, pad)} fill="none" stroke={bodyStroke} strokeWidth={1} pointerEvents="none" />
+    );
+  } else if (style === "board" && pins.length >= 4) {
+    const pinPts = pins.map((p) => ({ ...holeCenter(p.row, p.col), id: p.pinId }));
+    const center = holeCenter((bounds.minRow + bounds.maxRow) / 2, (bounds.minCol + bounds.maxCol) / 2);
+    const bodyRect = {
+      x0: topLeft.x - pad,
+      y0: topLeft.y - pad,
+      x1: topLeft.x + (bounds.maxCol - bounds.minCol) * HOLE_SPACING + pad,
+      y1: topLeft.y + (bounds.maxRow - bounds.minRow) * HOLE_SPACING + pad,
+    };
+    markers = (
+      <path d={usbPort(pinPts, center, bodyRect, HOLE_SPACING / 2.54)} fill={bodyFill} stroke={bodyStroke} strokeWidth={bodyStrokeWidth} pointerEvents="none" />
     );
   }
 

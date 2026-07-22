@@ -6,7 +6,7 @@ import SiteFooter from "@/components/SiteFooter";
 export const metadata: Metadata = {
   title: "Guide",
   description:
-    "A quick guide to the Stripboard Editor covering keyboard shortcuts, workflow, the auto-layout router, and key concepts.",
+    "A quick guide to the Stripboard Editor covering keyboard shortcuts, workflow, the auto-layout router, KiCad netlist export, and key concepts.",
   alternates: { canonical: "https://stripboard-editor.com/guide" },
 };
 
@@ -64,6 +64,7 @@ export default function GuidePage() {
           <h2 className="font-mono text-xs uppercase tracking-[0.2em] text-[var(--copper)] mb-3">Stripboard Editor (right)</h2>
           <ul className="space-y-2 text-sm text-neutral-700 dark:text-neutral-300">
             <li>Drag components from the <em>Unplaced</em> tray onto the board.</li>
+            <li>Placed parts show which way round they sit: a pin-1 notch on ICs, a flat-belly (TO-92 style) outline on 3-legged parts like transistors and voltage regulators, and the USB connector on dev boards such as the ESP32.</li>
             <li>Strips automatically colour to match the net of the pin sitting on them.</li>
             <li>Red highlighted strips indicate a conflict where two different nets share the same strip.</li>
             <li>Place a <strong>cut</strong> to isolate the strip into sections: click between two holes, or hold <kbd className="px-1.5 py-0.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded text-xs font-mono">Alt</kbd> and click a hole to cut the strip at the hole itself.</li>
@@ -105,6 +106,19 @@ export default function GuidePage() {
             <li>Toggle reference labels, wires, cuts, and pin labels to tailor each sheet to your build.</li>
             <li>Optionally add a <strong>view</strong> or <strong>edit</strong> QR code that links back to the online project.</li>
             <li>Print at 100% / actual size and verify the calibration ruler so hole spacing matches real stripboard.</li>
+          </ul>
+        </section>
+
+        {/* Exporting */}
+        <section className="mb-10">
+          <h2 className="font-mono text-xs uppercase tracking-[0.2em] text-[var(--copper)] mb-3">Exporting</h2>
+          <ul className="space-y-2 text-sm text-neutral-700 dark:text-neutral-300">
+            <li>Open <strong>Export</strong> in the project toolbar and pick <strong>Raw project</strong> to download the whole project as a JSON file. Bring it back any time from the <strong>Import</strong> menu.</li>
+            <li>Pick <strong>Netlist</strong> to export a KiCad-compatible netlist. It carries your components, their reference labels and values, the pin numbers, and every net, so a circuit you prototyped here can go into an EDA tool and become a PCB.</li>
+            <li>Most built-in parts map to real KiCad symbols and through-hole footprints, so the netlist imports straight into the PCB editor without hunting for footprints.</li>
+            <li>Parts with no standard KiCad footprint (custom components, the dev boards, and a few generic parts) are covered by a small footprint library that downloads alongside the netlist as a zip. Unzip it and add the folder once under <em>Preferences &rarr; Manage Footprint Libraries</em>, using the nickname shown in the pop-up.</li>
+            <li>A netlist describes connections rather than drawings, so your schematic layout and stripboard placement are not part of it.</li>
+            <li>Importing a netlist is not supported yet. For now the editor reads its own project files only.</li>
           </ul>
         </section>
 
@@ -153,7 +167,7 @@ export default function GuidePage() {
           <h2 className="font-mono text-xs uppercase tracking-[0.2em] text-[var(--copper)] mb-3">Saving &amp; Sharing</h2>
           <ul className="space-y-2 text-sm text-neutral-700 dark:text-neutral-300">
             <li>No account is required. When you save a project for the first time, a unique link is generated. Bookmark or save this link to return to your project later.</li>
-            <li>You can also export your project as a JSON file and re-import it at any time.</li>
+            <li>You can also export your project as a JSON file from the <strong>Export</strong> menu and re-import it at any time.</li>
             <li>Creating an account lets you access all your projects from a central dashboard without needing to save individual links.</li>
             <li>Logged-in users can share projects. Each project has an edit link for full access and a separate view-only link for sharing with others.</li>
             <li>Anyone viewing a shared project can <strong>fork</strong> it to create their own editable copy.</li>

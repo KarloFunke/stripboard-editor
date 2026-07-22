@@ -9,7 +9,7 @@ export interface Pt {
   y: number;
 }
 
-export type BodyStyle = "belly" | "dip" | "plain";
+export type BodyStyle = "belly" | "dip" | "board" | "plain";
 
 /** Classify a resolved def's stripboard silhouette. */
 export function bodyStyle(def: ComponentDef): BodyStyle {
@@ -20,9 +20,14 @@ export function bodyStyle(def: ComponentDef): BodyStyle {
   if (def.pins.length === 3 && distinctCols === 1 && (category === "semiconductor" || category === "ic")) {
     return "belly";
   }
-  // Two columns of pins on an IC: a DIP package
+  // Two columns of pins on an IC: a DIP package, or a module breakout board.
   if (def.pins.length >= 4 && distinctCols >= 2 && category === "ic") {
-    return "dip";
+    // A DIP is always 4 cells wide (pin-body-body-pin), so its pin columns sit
+    // 3 apart; a module breakout board is far wider. Boards get a USB port and
+    // no pin-1 notch, since they have neither.
+    const cols = def.pins.map((p) => p.offsetCol);
+    const colSpan = Math.max(...cols) - Math.min(...cols);
+    return colSpan > 3 ? "board" : "dip";
   }
   return "plain";
 }
@@ -101,4 +106,63 @@ export function dipNotch(pins: { x: number; y: number; id: string }[], center: P
   // Semicircle (chord 2r) dipping inward; pick sweep so it bulges toward -outward
   const sweep = tx * -oy - ty * -ox > 0 ? 0 : 1;
   return `M ${pa.x} ${pa.y} A ${r} ${r} 0 0 ${sweep} ${pb.x} ${pb.y}`;
+}
+
+// Physical USB connector footprint (mm), drawn at true scale so the port
+// occupies the real board space users lay other components around. USB-C
+// receptacle: ~9mm wide, ~6.5mm deep.
+export const USB_WIDTH_MM = 9.0;
+export const USB_DEPTH_MM = 6.5;
+
+/**
+ * USB-connector silhouette for a module breakout board: a rectangle at true
+ * physical size, centred on the board edge opposite pin 1. `pins` (with ids)
+ * and `center` locate the pin-1 edge exactly as dipNotch does — so the port
+ * stays on the far edge under any rotation; `body` is the drawn body rectangle
+ * and `mmToUnit` converts millimetres into the caller's coordinate units.
+ */
+export function usbPort(
+  pins: { x: number; y: number; id: string }[],
+  center: Pt,
+  body: { x0: number; y0: number; x1: number; y1: number },
+  mmToUnit: number,
+): string {
+  let first: Pt = pins[0];
+  let last: Pt = pins[pins.length - 1];
+  let minId = Infinity, maxId = -Infinity;
+  let lo: Pt | null = null, hi: Pt | null = null;
+  for (const p of pins) {
+    const n = parseInt(p.id, 10);
+    if (Number.isNaN(n)) continue;
+    if (n < minId) { minId = n; lo = p; }
+    if (n > maxId) { maxId = n; hi = p; }
+  }
+  if (lo && hi && lo !== hi) { first = lo; last = hi; }
+
+  // Direction from body center toward pin 1's edge; the USB sits opposite it.
+  let ox = (first.x + last.x) / 2 - center.x;
+  let oy = (first.y + last.y) / 2 - center.y;
+  const ol = Math.hypot(ox, oy) || 1;
+  ox /= ol; oy /= ol;
+
+  const horizontal = Math.abs(ox) >= Math.abs(oy); // pin-1 edge is left/right
+  // Edge midpoint on the far side, along-edge unit vector, and outward normal.
+  let ex: number, ey: number, ax: number, ay: number, nx: number, ny: number;
+  if (horizontal) {
+    ex = ox > 0 ? body.x0 : body.x1; // opposite pin-1 edge
+    ey = (body.y0 + body.y1) / 2;
+    ax = 0; ay = 1; nx = ox > 0 ? -1 : 1; ny = 0;
+  } else {
+    ex = (body.x0 + body.x1) / 2;
+    ey = oy > 0 ? body.y0 : body.y1;
+    ax = 1; ay = 0; nx = 0; ny = oy > 0 ? -1 : 1;
+  }
+  // True-size connector, centred on the edge (straddling it).
+  const halfW = (USB_WIDTH_MM * mmToUnit) / 2;
+  const halfD = (USB_DEPTH_MM * mmToUnit) / 2;
+  const c1 = { x: ex - ax * halfW - nx * halfD, y: ey - ay * halfW - ny * halfD };
+  const c2 = { x: ex + ax * halfW - nx * halfD, y: ey + ay * halfW - ny * halfD };
+  const c3 = { x: ex + ax * halfW + nx * halfD, y: ey + ay * halfW + ny * halfD };
+  const c4 = { x: ex - ax * halfW + nx * halfD, y: ey - ay * halfW + ny * halfD };
+  return `M ${c1.x} ${c1.y} L ${c2.x} ${c2.y} L ${c3.x} ${c3.y} L ${c4.x} ${c4.y} Z`;
 }

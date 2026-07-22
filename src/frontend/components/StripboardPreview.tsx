@@ -11,7 +11,7 @@ import {
   getFlexiblePinPositions,
   getFlexibleBounds,
 } from "./stripboard/boardLayout";
-import { bodyStyle, bellyPath, dipNotch } from "./stripboard/componentGlyphs";
+import { bodyStyle, bellyPath, dipNotch, usbPort } from "./stripboard/componentGlyphs";
 
 const HOLE_SP = 12; // compact spacing for preview
 const HOLE_R = 2;
@@ -199,6 +199,18 @@ export default function StripboardPreview({ data, maxWidth = 280, maxHeight = 16
           };
           notch = (
             <path d={dipNotch(pins.map((p) => ({ x: hx(p.col), y: hy(p.row), id: p.pinId })), center, padC)} fill="none" stroke="var(--component-stroke)" strokeWidth={0.5} />
+          );
+        } else if (style === "board" && pins.length >= 4) {
+          const center = {
+            x: (hx(bounds.minCol) + hx(bounds.maxCol)) / 2,
+            y: (hy(bounds.minRow) + hy(bounds.maxRow)) / 2,
+          };
+          const bodyRect = {
+            x0: hx(bounds.minCol) - padC, y0: hy(bounds.minRow) - padC,
+            x1: hx(bounds.maxCol) + padC, y1: hy(bounds.maxRow) + padC,
+          };
+          notch = (
+            <path d={usbPort(pins.map((p) => ({ x: hx(p.col), y: hy(p.row), id: p.pinId })), center, bodyRect, HOLE_SP / 2.54)} fill="var(--component-fill)" stroke="var(--component-stroke)" strokeWidth={0.5} />
           );
         }
 

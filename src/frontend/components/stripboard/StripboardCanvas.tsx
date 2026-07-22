@@ -29,7 +29,7 @@ import {
   getGroupForWire,
 } from "./connectivity";
 import { StripSegment } from "./stripSegments";
-import { bodyStyle, bellyPath, dipNotch } from "./componentGlyphs";
+import { bodyStyle, bellyPath, dipNotch, usbPort } from "./componentGlyphs";
 import PlacedComponent, { suppressNextCanvasClick } from "./PlacedComponent";
 import CutMark from "./CutMark";
 import WireLine from "./WireLine";
@@ -1082,6 +1082,17 @@ export default function StripboardCanvas({
               const ghostCenter = holeCenter((ghostBounds.minRow + ghostBounds.maxRow) / 2, (ghostBounds.minCol + ghostBounds.maxCol) / 2);
               ghostNotch = (
                 <path d={dipNotch(ghostPins.map((p) => ({ ...holeCenter(p.row, p.col), id: p.pinId })), ghostCenter, ghostPad)} fill="none" stroke="var(--selection-stroke)" strokeWidth={1.5} />
+              );
+            } else if (ghostStyle === "board" && ghostPins.length >= 4) {
+              const ghostCenter = holeCenter((ghostBounds.minRow + ghostBounds.maxRow) / 2, (ghostBounds.minCol + ghostBounds.maxCol) / 2);
+              const ghostRect = {
+                x0: ghostTopLeft.x - ghostPad,
+                y0: ghostTopLeft.y - ghostPad,
+                x1: ghostTopLeft.x + (ghostBounds.maxCol - ghostBounds.minCol) * HOLE_SPACING + ghostPad,
+                y1: ghostTopLeft.y + (ghostBounds.maxRow - ghostBounds.minRow) * HOLE_SPACING + ghostPad,
+              };
+              ghostNotch = (
+                <path d={usbPort(ghostPins.map((p) => ({ ...holeCenter(p.row, p.col), id: p.pinId })), ghostCenter, ghostRect, HOLE_SPACING / 2.54)} fill="var(--selection-fill)" stroke="var(--selection-stroke)" strokeWidth={1.5} />
               );
             }
             return (
