@@ -306,7 +306,10 @@ export function toKicadNetlist(input: NetlistInput): string {
   // ── libparts ──
   lines.push(`  (libparts`);
   for (const [key, def] of usedParts) {
-    const [lib, part] = key.split(/:(.*)/s);
+    // Split on the first colon only: the lib may be empty, the part may contain one.
+    const sep = key.indexOf(":");
+    const lib = key.slice(0, sep);
+    const part = key.slice(sep + 1);
     lines.push(`    (libpart (lib ${q(lib)}) (part ${q(part)})`);
     lines.push(`      (description ${q(def.name)})`);
     lines.push(`      (pins`);
