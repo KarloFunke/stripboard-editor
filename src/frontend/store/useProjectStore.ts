@@ -706,14 +706,18 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         row: pin1.row + (def.pins[1]?.offsetRow ?? 1),
         col: pin1.col + (def.pins[1]?.offsetCol ?? 0),
       };
-      // Midpoint
-      const midRow = (pin1.row + pin2.row) / 2;
-      const midCol = (pin1.col + pin2.col) / 2;
-      // Rotate 90° CW around midpoint: (r,c) → (midR + (c-midC), midC - (r-midR))
-      const new1Row = Math.round(midRow + (pin1.col - midCol));
-      const new1Col = Math.round(midCol - (pin1.row - midRow));
-      const new2Row = Math.round(midRow + (pin2.col - midCol));
-      const new2Col = Math.round(midCol - (pin2.row - midRow));
+      // Rotate the pin1→pin2 offset 90° CW (dr,dc) → (dc,-dr), keeping both pins
+      // on the grid. The anchor is shifted by a closed-form g so the rotation is
+      // an exact period-4 cycle: 2 rotations land in place, 4 return to start.
+      // (Rounding each pin about a half-hole midpoint made even-length parts walk.)
+      const p = pin2.row - pin1.row;
+      const q = pin2.col - pin1.col;
+      const gRow = Math.floor(p / 2) - Math.floor(q / 2);
+      const gCol = Math.floor(p / 2) + Math.ceil(q / 2);
+      const new1Row = pin1.row + gRow;
+      const new1Col = pin1.col + gCol;
+      const new2Row = new1Row + q;
+      const new2Col = new1Col - p;
       // Bounds check
       if (new1Row < 0 || new1Col < 0 || new2Row < 0 || new2Col < 0 ||
           new1Row >= s.board.rows || new1Col >= s.board.cols ||
