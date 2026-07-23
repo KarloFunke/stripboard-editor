@@ -16,6 +16,7 @@ import {
 } from "./boardLayout";
 import { computeStripSegments, StripSegment } from "./stripSegments";
 import { computeConnectivity } from "./connectivity";
+import { bodyStyle } from "./componentGlyphs";
 import {
   WireObstacles,
   corridorHoles,
@@ -47,6 +48,10 @@ export interface CompletionPlan {
   // being messy: long off-axis runs and crossings over components. The
   // layout evaluator prices this like real wire length.
   wireMess: number;
+  // Link wires that had to share a component pin's hole (soldered into the
+  // joint) because their segment had no free hole. Legal but last-resort:
+  // the ladder keeps exploring alternatives while any remain.
+  sharedJoints: number;
 }
 
 interface BoardPin {
@@ -99,6 +104,20 @@ function collectBoardPins(
  * and drilled-out holes. Wire endpoints do NOT block: several wires may
  * share one hole (daisy chains), they just may not run on top of each other.
  */
+/**
+ * Parts whose under-body holes stay reachable for wire endpoints, because
+ * they stand on header sockets. Built-in modules classify via bodyStyle;
+ * user-built ones are recognized by shape — two edge pin columns far apart
+ * and a header-scale pin count. Flat wide parts with few pins (relays)
+ * stay fully blocking.
+ */
+function standsOnHeaders(def: ComponentDef): boolean {
+  if (bodyStyle(def) === "board") return true;
+  if (def.pins.length < 10) return false;
+  const cols = def.pins.map((p) => p.offsetCol);
+  return new Set(cols).size >= 2 && Math.max(...cols) - Math.min(...cols) > 3;
+}
+
 function collectOccupiedHoles(
   board: Board,
   components: Component[],
@@ -123,7 +142,12 @@ function collectOccupiedHoles(
       for (const hole of corridorHoles(p1, p2)) {
         occupied.add(holeKey(hole.row, hole.col));
       }
-    } else {
+    } else if (!standsOnHeaders(def)) {
+      // Flat-bodied rigids (DIPs, TO-92s) sit on the board and their body
+      // holes are unreachable. Module breakout boards stand on header
+      // sockets: the holes under them stay solderable, so only their pins
+      // block wire endpoints — locked ESP32-class modules at a board edge
+      // are unroutable otherwise, and humans do solder there.
       for (const cell of getRotatedBodyCells(def, comp.boardPos, comp.rotation)) {
         occupied.add(holeKey(cell.row, cell.col));
       }
@@ -303,8 +327,9 @@ function deriveWires(
   obstacles: WireObstacles,
   issues: string[],
   starvedNetIds: string[],
-  starvedPinPositions: BoardPosition[]
-): { wires: { from: BoardPosition; to: BoardPosition }[]; wireMess: number } {
+  starvedPinPositions: BoardPosition[],
+  allowSharedJoints: boolean
+): { wires: { from: BoardPosition; to: BoardPosition }[]; wireMess: number; sharedJoints: number } {
   const segsByRow = new Map<number, { idx: number; startCol: number; endCol: number }[]>();
   segments.forEach((s, idx) => {
     if (!segsByRow.has(s.row)) segsByRow.set(s.row, []);
@@ -379,6 +404,30 @@ function deriveWires(
     return out;
   };
 
+  // A group with no free hole left can still take a link wire by sharing a
+  // same-net pin's hole — the wire is soldered into the pin's joint, as
+  // humans do on tight-pitch connectors and grid parts whose interior pins
+  // sit on single-hole segments. Real holes always win: a shared joint is
+  // priced as extra effective wire length, so layouts that avoid the
+  // situation keep beating ones that need it.
+  const PIN_SHARE_PENALTY = 4;
+  const sharedPinPen = new Map<string, number>();
+  const endpointCache = new Map<number, BoardPosition[]>();
+  const endpointHolesOfGroup = (gi: number): BoardPosition[] => {
+    let holes = endpointCache.get(gi);
+    if (!holes) {
+      const free = freeHolesOfGroup(gi);
+      if (free.length > 0 || !allowSharedJoints) {
+        holes = free;
+      } else {
+        holes = groupPins.get(gi) ?? [];
+        for (const p of holes) sharedPinPen.set(holeKey(p.row, p.col), PIN_SHARE_PENALTY);
+      }
+      endpointCache.set(gi, holes);
+    }
+    return holes;
+  };
+
   interface RoutePass {
     wires: { from: BoardPosition; to: BoardPosition }[];
     issues: string[];
@@ -386,10 +435,11 @@ function deriveWires(
     starvedPins: BoardPosition[];
     overlapped: string[]; // nets that had to fall back to overlapping wires
     mess: number; // total extra effective length of the chosen wires
+    sharedJoints: number; // wires soldered into a pin's hole (no free hole left)
   }
 
   const routeAll = (order: Net[]): RoutePass => {
-    const pass: RoutePass = { wires: [], issues: [], starved: [], starvedPins: [], overlapped: [], mess: 0 };
+    const pass: RoutePass = { wires: [], issues: [], starved: [], starvedPins: [], overlapped: [], mess: 0, sharedJoints: 0 };
     const allWires = [...existingWires];
     const overlapsAWire = (from: BoardPosition, to: BoardPosition) =>
       allWires.some((w) => segmentsOverlapCollinear(from, to, w.from, w.to));
@@ -423,7 +473,7 @@ function deriveWires(
       const remaining = new Set(rest);
       // Single-group nets need no wire: don't build the search structure
       if (remaining.size > 0) {
-        for (const h of freeHolesOfGroup(first)) addConnected(h);
+        for (const h of endpointHolesOfGroup(first)) addConnected(h);
       }
       let usedOverlap = false;
 
@@ -444,7 +494,10 @@ function deriveWires(
             // extra length; the bare distance is a lower bound, so most
             // pairs skip the obstacle tests entirely.
             if (best && dist >= best.cost + 1e-9) return null;
-            const mess = wireExtraLength(ha, hb, obstacles);
+            const mess =
+              wireExtraLength(ha, hb, obstacles) +
+              (sharedPinPen.get(holeKey(ha.row, ha.col)) ?? 0) +
+              (sharedPinPen.get(holeKey(hb.row, hb.col)) ?? 0);
             const cost = dist + mess;
             // Tiebreak: prefer straight vertical jumpers
             const better =
@@ -457,7 +510,7 @@ function deriveWires(
             return { from: ha, to: hb, group: gi, cost, mess };
           };
           for (const gi of remaining) {
-            for (const hb of freeHolesOfGroup(gi)) {
+            for (const hb of endpointHolesOfGroup(gi)) {
               const maxDr = Math.max(hb.row - connMinRow, connMaxRow - hb.row);
               for (let dr = 0; dr <= maxDr; dr++) {
                 if (best && dr > best.cost + 1e-9) break;
@@ -502,9 +555,11 @@ function deriveWires(
         pass.wires.push({ from: best.from, to: best.to });
         allWires.push({ from: best.from, to: best.to });
         pass.mess += best.mess;
+        if (sharedPinPen.has(holeKey(best.from.row, best.from.col)) ||
+            sharedPinPen.has(holeKey(best.to.row, best.to.col))) pass.sharedJoints++;
         remaining.delete(best.group);
         // Endpoints stay available: further wires of this net may chain there
-        for (const h of freeHolesOfGroup(best.group)) addConnected(h);
+        for (const h of endpointHolesOfGroup(best.group)) addConnected(h);
       }
       if (usedOverlap) pass.overlapped.push(net.id);
 
@@ -545,7 +600,7 @@ function deriveWires(
   issues.push(...result.issues);
   starvedNetIds.push(...result.starved);
   starvedPinPositions.push(...result.starvedPins);
-  return { wires: result.wires, wireMess: result.mess };
+  return { wires: result.wires, wireMess: result.mess, sharedJoints: result.sharedJoints };
 }
 
 /**
@@ -559,7 +614,11 @@ export function deriveCompletion(
   components: Component[],
   componentDefs: ComponentDef[],
   nets: Net[],
-  netAssignments: NetAssignment[]
+  netAssignments: NetAssignment[],
+  // Pin-joint sharing is a locked-layout rescue: free layouts never need it
+  // (placement avoids the situation), and offering it there lets the
+  // optimizer settle for joint-y variants that compact worse.
+  opts?: { allowSharedJoints?: boolean }
 ): CompletionPlan {
   const cutIssues: string[] = [];
   const pins = collectBoardPins(board, components, componentDefs, netAssignments);
@@ -594,8 +653,9 @@ export function deriveCompletion(
   const wireIssues: string[] = [];
   const starvedNetIds: string[] = [];
   const starvedPinPositions: BoardPosition[] = [];
-  const { wires, wireMess } = deriveWires(
-    segments, connectivity, nets, pins, occupied, board.wires, reserveNets, obstacles, wireIssues, starvedNetIds, starvedPinPositions
+  const { wires, wireMess, sharedJoints } = deriveWires(
+    segments, connectivity, nets, pins, occupied, board.wires, reserveNets, obstacles, wireIssues, starvedNetIds, starvedPinPositions,
+    opts?.allowSharedJoints ?? false
   );
 
   const finalBoard: Board = {
@@ -614,6 +674,7 @@ export function deriveCompletion(
     starvedNetIds,
     starvedPinPositions,
     wireMess,
+    sharedJoints,
   };
 }
 

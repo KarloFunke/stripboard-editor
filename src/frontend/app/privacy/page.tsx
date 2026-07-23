@@ -40,7 +40,9 @@ export default function PrivacyPage() {
               </li>
               <li>
                 <strong>Project data:</strong> Your stripboard projects (components, nets, board layout)
-                are stored on the server so you can access them later.
+                are stored on the server so you can access them later. Stored projects are also used
+                internally, stripped of account information, to test and improve the editor and its
+                auto-layout algorithm. They are never published or shared with third parties.
               </li>
               <li>
                 <strong>Auto-layout ratings:</strong> The auto-layout router is in alpha. If you choose to rate a

@@ -127,14 +127,14 @@ function runAndCheck(label, components, nets, asg) {
     return { components: [u1, u2, j1, ...parts], nets, asg };
   };
 
-  // free run needs more than 14 columns; a locked width must be honored
+  // free run needs more than 10 columns; a locked width must be honored
   const free = build();
   const freeRes = computeAutoLayout2(emptyBoard(10, 10), free.components, DEFS, free.nets, free.asg);
-  assert(freeRes.boardSize.cols > 14, `V5: free run is wide (${freeRes.boardSize.cols} cols)`);
+  assert(freeRes.boardSize.cols > 10, `V5: free run is wide (${freeRes.boardSize.cols} cols)`);
 
   const capped = build();
   const cappedRes = computeAutoLayout2(
-    { ...emptyBoard(30, 16), lockedCols: true },
+    { ...emptyBoard(30, 10), lockedCols: true },
     capped.components, DEFS, capped.nets, capped.asg
   );
   const { board, comps } = applyV2(capped.components, cappedRes);
@@ -144,7 +144,7 @@ function runAndCheck(label, components, nets, asg) {
     const ok = (p) => p.row >= 0 && p.row < board.rows && p.col >= 0 && p.col < board.cols;
     return ok(c.boardPos) && (!c.flexibleEndPos || ok(c.flexibleEndPos));
   });
-  assert(cappedRes.boardSize.cols === 16,
+  assert(cappedRes.boardSize.cols === 10,
     `V5: locked width kept exactly (${cappedRes.boardSize.cols} cols, issues=${JSON.stringify(cappedRes.issues)})`);
   assert(cappedRes.quality === 0 && v.conflicts === 0 && v.incomplete.length === 0 && inBounds,
     `V5: capped run still complete (quality=${cappedRes.quality}, conflicts=${v.conflicts}, incomplete=${v.incomplete.length})`);
