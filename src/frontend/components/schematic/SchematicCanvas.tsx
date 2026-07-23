@@ -2,7 +2,7 @@
 
 import { useRef, useState, useCallback, useEffect, useMemo } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
-import { Component } from "@/types";
+import { Component, SchematicWire } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { usePanZoom } from "@/hooks/usePanZoom";
 import { useCanvasSelection } from "@/hooks/useCanvasSelection";
@@ -17,7 +17,47 @@ import { track } from "@/lib/track";
 const MOVE_STEP = GRID_SIZE;
 const PIN_SNAP_RADIUS = 15;
 
-
+/**
+ * All segments reachable from `startId` without crossing a component pin.
+ * Treating pins as nodes and segments as edges, this is the connected set of
+ * segments bounded only by pin nodes: wire-to-wire junctions are crossed
+ * freely, a pin an endpoint lands on is a wall. `pinNodeKeys` holds the
+ * pointKey() of every component pin.
+ */
+function collectWholeWire(
+  startId: string,
+  wires: SchematicWire[],
+  pinNodeKeys: Set<string>
+): string[] {
+  // Index segments by their two endpoints (start/end only, not bends).
+  const byEndpoint = new Map<string, string[]>();
+  for (const w of wires) {
+    for (const p of [w.start, w.end]) {
+      const k = pointKey(p.x, p.y);
+      const arr = byEndpoint.get(k);
+      if (arr) arr.push(w.id);
+      else byEndpoint.set(k, [w.id]);
+    }
+  }
+  const wireById = new Map(wires.map((w) => [w.id, w]));
+  const found = new Set<string>([startId]);
+  const queue = [startId];
+  while (queue.length) {
+    const w = wireById.get(queue.pop()!);
+    if (!w) continue;
+    for (const p of [w.start, w.end]) {
+      const k = pointKey(p.x, p.y);
+      if (pinNodeKeys.has(k)) continue; // pin node: a wall, don't cross it
+      for (const otherId of byEndpoint.get(k) ?? []) {
+        if (!found.has(otherId)) {
+          found.add(otherId);
+          queue.push(otherId);
+        }
+      }
+    }
+  }
+  return [...found];
+}
 
 /** Find nearest pin connection point to a given SVG coordinate */
 function findNearestPin(
@@ -190,6 +230,24 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
     // Only show dots where 3+ wire segments meet (T-junctions, crosses)
     return Array.from(pointCount.values()).filter((p) => p.count >= 3);
   }, [schematicWires]);
+
+  // pointKey() of every component pin — the walls that bound a "whole wire".
+  const pinNodeKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const comp of components) {
+      const def = resolveComponentDef(comp, componentDefs);
+      if (!def) continue;
+      const pins = getRotatedPinPositions(
+        def.symbol,
+        comp.schematicRotation ?? 0,
+        comp.schematicMirrored ?? false
+      );
+      for (const pin of pins) {
+        keys.add(pointKey(comp.schematicPos.x + pin.x, comp.schematicPos.y + pin.y));
+      }
+    }
+    return keys;
+  }, [components, componentDefs]);
 
   const {
     selectedId, setSelectedId,
@@ -455,9 +513,17 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
         const hasSelection = selectedId || selectedWireId || selectedIds.length > 0 || selectedWireIds.length > 0;
         if (!hasSelection) return;
 
-        const wireIdsToDelete = [...selectedWireIds];
+        let wireIdsToDelete = [...selectedWireIds];
         if (selectedWireId && !wireIdsToDelete.includes(selectedWireId)) {
           wireIdsToDelete.push(selectedWireId);
+        }
+        // Alt+Del: expand each selected wire to its whole continuous run.
+        if (e.altKey && wireIdsToDelete.length > 0) {
+          const expanded = new Set<string>();
+          for (const wid of wireIdsToDelete) {
+            for (const id of collectWholeWire(wid, schematicWires, pinNodeKeys)) expanded.add(id);
+          }
+          wireIdsToDelete = [...expanded];
         }
         const compIdsToDelete = [...selectedIds];
         if (selectedId && !compIdsToDelete.includes(selectedId)) {
@@ -498,7 +564,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selectedId, selectedIds, selectedWireId, selectedWireIds, wireDrawingFrom, wireDrawMode, components, schematicWires, updateSchematicPos, removeComponent, removeSchematicWire, rotateSchematicComponent, toggleExcludeSelection, pushSnapshot, transact, setSchematicWireDrawing, toggleWireDrawMode, addComponentInstance, nudgeSelection]);
+  }, [selectedId, selectedIds, selectedWireId, selectedWireIds, wireDrawingFrom, wireDrawMode, components, schematicWires, updateSchematicPos, removeComponent, removeSchematicWire, rotateSchematicComponent, toggleExcludeSelection, pushSnapshot, transact, setSchematicWireDrawing, toggleWireDrawMode, addComponentInstance, nudgeSelection, pinNodeKeys]);
 
   const getSVGPoint = useCallback((e: React.MouseEvent) => {
     const svg = svgRef.current;
@@ -1018,6 +1084,42 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
           ] satisfies CanvasAction[]}
         />
       )}
+
+      {/* Selection actions — shown when a single wire is selected */}
+      {!readOnly && selectedWireId && !selectedId && (() => {
+        const wholeWireIds = collectWholeWire(selectedWireId, schematicWires, pinNodeKeys);
+        const deleteSegment: CanvasAction = {
+          key: "delete-segment",
+          label: "Delete Segment",
+          title: "Delete this wire segment",
+          shortcut: "Del",
+          icon: DeleteIcon,
+          variant: "danger",
+          onClick: () => {
+            removeSchematicWire(selectedWireId); // pushes its own undo snapshot
+            setSelectedWireId(null);
+          },
+        };
+        const deleteWhole: CanvasAction = {
+          key: "delete-wire",
+          label: "Delete Wire",
+          title: "Delete the whole wire, including all its segments",
+          shortcut: "Alt+Del",
+          icon: DeleteIcon,
+          variant: "danger",
+          onClick: () => {
+            transact(() => {
+              for (const id of wholeWireIds) removeSchematicWire(id);
+            });
+            setSelectedWireId(null);
+          },
+        };
+        return (
+          <SelectionActionBar
+            actions={wholeWireIds.length > 1 ? [deleteSegment, deleteWhole] : [deleteSegment]}
+          />
+        );
+      })()}
 
       {/* Confirm excluding component(s) currently placed on the board */}
       {excludeConfirmIds && (() => {

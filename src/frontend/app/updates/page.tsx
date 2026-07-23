@@ -17,6 +17,7 @@ const updates: { date: string; items: string[]; link?: { href: string; lead: str
       "Netlist export. Export a design to an EDA tool as a KiCad-compatible netlist (.net): components, values, pin numbers and nets all are included, so you can turn a stripboard prototype into a PCB without redesigning the Schematic in another tool.",
       "Auto-align polarity. Drop or move a 2-legged part like a resistor onto the board with its legs reversed and it flips itself 180 degrees automatically, so each pin lands on its correct net.",
       "Fixed rotating 2-legged components: parts spanning an even number of holes now rotate in place instead of slowly wandering across the board, and four rotations return to the exact starting position.",
+      "Floating menu for schematic wires. Select a wire to delete just that segment or the whole wire in one go (or press Alt+Del for the whole wire). A whole wire is everything connected up to the component pins it runs between.",
     ]
   },
   {
@@ -104,7 +105,6 @@ const planned: string[] = [
   "Net list import, the other half of the KiCad compatibility: bring a circuit in from an EDA tool and lay it out on stripboard. Export is already available.",
   "A big custom-component overhaul, including a searchable library of both your own and shared community components. Including a better custom component editor.",
   "Off-board components: place parts next to the board (for example a panel-mounted switch) and wire them directly to it, even when they are not mounted on the stripboard itself.",
-  "A floating menu for wires in the schematic, making them easier to delete (handy on keyboards, where there is no dedicated Delete key).",
   "Placing a cut directly underneath a component, without having to move the part out of the way first.",
   "Smoother wire handling on the board: start a new wire from a hole that already has one, instead of having to remove the existing wire first.",
 ];
