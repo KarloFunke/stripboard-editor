@@ -187,7 +187,53 @@ export default function SchematicComponentBlock({
       )}
 
       {/* Label */}
-      {editingLabel ? (
+      {!editingLabel && (
+        <text
+          x={labelX}
+          y={labelY}
+          textAnchor="middle"
+          fontSize={12}
+          fontWeight={600}
+          fill="var(--component-text)"
+          style={{ cursor: "grab", userSelect: "none" }}
+          onClick={handleLabelClick}
+          onMouseDown={handleLabelDragStart}
+        >
+          <tspan x={labelX}>{component.label}</tspan>
+          {allowsValue && component.value && (
+            <tspan x={labelX} dy="1.2em" fontWeight={400} fillOpacity={0.7}>
+              {component.value}
+            </tspan>
+          )}
+        </text>
+      )}
+
+      {/* Symbol */}
+      <SymbolRenderer
+        symbolId={def.symbol}
+        rotation={rotation}
+        mirrored={mirrored}
+        selected={isSelected}
+        pinColors={pinColors}
+        onPinMouseDown={handlePinMouseDown}
+        onPinLabelClick={readOnly || editingPinId ? undefined : handlePinLabelClick}
+        pinNames={pinNames}
+        pinLabelOffsets={component.pinLabelOffsets ?? {}}
+        onPinLabelDrag={readOnly ? undefined : (pinId, offset) => {
+          if (!pinLabelSnapshotPushed.current) {
+            pushSnapshot();
+            pinLabelSnapshotPushed.current = true;
+          }
+          updatePinLabelOffset(component.id, pinId, offset);
+        }}
+        onPinLabelDragEnd={readOnly ? undefined : () => { pinLabelSnapshotPushed.current = false; }}
+        showPinLabels={!editingPinId}
+      />
+
+      {/* Editing overlays render after the symbol so they stay on top of it.
+          Below it the symbol swallows the click, selecting the component and
+          blurring the field shut before you can type in it. */}
+      {editingLabel && (
         <foreignObject
           x={labelX - 55}
           y={labelY - 16}
@@ -227,25 +273,6 @@ export default function SchematicComponentBlock({
             )}
           </div>
         </foreignObject>
-      ) : (
-        <text
-          x={labelX}
-          y={labelY}
-          textAnchor="middle"
-          fontSize={12}
-          fontWeight={600}
-          fill="var(--component-text)"
-          style={{ cursor: "grab", userSelect: "none" }}
-          onClick={handleLabelClick}
-          onMouseDown={handleLabelDragStart}
-        >
-          <tspan x={labelX}>{component.label}</tspan>
-          {allowsValue && component.value && (
-            <tspan x={labelX} dy="1.2em" fontWeight={400} fillOpacity={0.7}>
-              {component.value}
-            </tspan>
-          )}
-        </text>
       )}
 
       {/* Inline pin name editing overlay */}
@@ -276,28 +303,6 @@ export default function SchematicComponentBlock({
           </foreignObject>
         );
       })()}
-
-      {/* Symbol */}
-      <SymbolRenderer
-        symbolId={def.symbol}
-        rotation={rotation}
-        mirrored={mirrored}
-        selected={isSelected}
-        pinColors={pinColors}
-        onPinMouseDown={handlePinMouseDown}
-        onPinLabelClick={readOnly || editingPinId ? undefined : handlePinLabelClick}
-        pinNames={pinNames}
-        pinLabelOffsets={component.pinLabelOffsets ?? {}}
-        onPinLabelDrag={readOnly ? undefined : (pinId, offset) => {
-          if (!pinLabelSnapshotPushed.current) {
-            pushSnapshot();
-            pinLabelSnapshotPushed.current = true;
-          }
-          updatePinLabelOffset(component.id, pinId, offset);
-        }}
-        onPinLabelDragEnd={readOnly ? undefined : () => { pinLabelSnapshotPushed.current = false; }}
-        showPinLabels={!editingPinId}
-      />
     </g>
   );
 }

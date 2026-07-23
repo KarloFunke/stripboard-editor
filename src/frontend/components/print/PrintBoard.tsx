@@ -9,7 +9,7 @@ import {
   getComponentPinPositions,
   getFlexibleBounds,
 } from "@/components/stripboard/boardLayout";
-import { bodyStyle, bellyPath, dipNotch, usbPort } from "@/components/stripboard/componentGlyphs";
+import { bodyStyle, bellyPath, dipNotch, usbPort, diagonalBody } from "@/components/stripboard/componentGlyphs";
 
 // Standard stripboard pitch is 0.1 in = 2.54 mm. The board SVG is authored in
 // 30-unit cells; sizing the element in mm at this ratio prints it 1:1.
@@ -83,14 +83,27 @@ export default function PrintBoard({ variant, showLabels, showWires, showCuts, s
         const by = rowY(bounds.minRow) - 9;
         const bh = rowY(bounds.maxRow) - rowY(bounds.minRow) + 18;
         const pins = getComponentPinPositions(comp, def);
-        const labelX = bx + bw / 2;
-        const labelY = by - 6;
         const pinPt = (i: number) => ({ x: colX(pins[i].col), y: rowY(pins[i].row) });
         const style = bodyStyle(def);
         const strokeW = mirror ? 1.5 : 3;
+        const diag = def.flexible && pins.length === 2 ? diagonalBody(pinPt(0), pinPt(1), 9) : null;
+        // Label anchors where the board editor anchors it — a diagonal part on
+        // the pin-to-pin midpoint, anything else above its box — then takes the
+        // offset the user dragged on the board. The cut sheet is mirrored, so
+        // the horizontal part of that offset flips with it.
+        const labelOff = comp.boardLabelOffset ?? { x: 0, y: 0 };
+        const labelX =
+          (diag ? (pinPt(0).x + pinPt(1).x) / 2 : bx + bw / 2) +
+          (mirror ? -labelOff.x : labelOff.x);
+        const labelY = (diag ? (pinPt(0).y + pinPt(1).y) / 2 - 15 : by - 6) + labelOff.y;
         let bodyEl: React.ReactNode;
         let notchEl: React.ReactNode = null;
-        if (style === "belly" && pins.length === 3) {
+        if (diag) {
+          bodyEl = (
+            <rect x={diag.x} y={diag.y} width={diag.width} height={diag.height} rx={4}
+              fill="none" stroke={compStroke} strokeWidth={strokeW} transform={diag.transform} />
+          );
+        } else if (style === "belly" && pins.length === 3) {
           bodyEl = (
             <path d={bellyPath(pinPt(0), pinPt(2), 9)} fill="none" stroke={compStroke} strokeWidth={strokeW} />
           );

@@ -11,7 +11,7 @@ import {
   getFlexiblePinPositions,
   getFlexibleBounds,
 } from "./stripboard/boardLayout";
-import { bodyStyle, bellyPath, dipNotch, usbPort } from "./stripboard/componentGlyphs";
+import { bodyStyle, bellyPath, dipNotch, usbPort, diagonalBody } from "./stripboard/componentGlyphs";
 
 const HOLE_SP = 12; // compact spacing for preview
 const HOLE_R = 2;
@@ -186,7 +186,21 @@ export default function StripboardPreview({ data, maxWidth = 280, maxHeight = 16
             strokeDasharray="2 1.5"
           />
         );
-        let body = rectBody;
+        const diag = isFlexible && pins.length === 2 ? diagonalBody(pinPt(0), pinPt(1), padC) : null;
+        let body = diag ? (
+          <rect
+            x={diag.x}
+            y={diag.y}
+            width={diag.width}
+            height={diag.height}
+            rx={1.5}
+            fill="var(--component-fill)"
+            stroke="var(--component-stroke)"
+            strokeWidth={0.5}
+            strokeDasharray="2 1.5"
+            transform={diag.transform}
+          />
+        ) : rectBody;
         let notch: React.ReactNode = null;
         if (style === "belly" && pins.length === 3) {
           body = (

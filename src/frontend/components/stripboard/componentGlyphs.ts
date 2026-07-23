@@ -33,6 +33,32 @@ export function bodyStyle(def: ComponentDef): BodyStyle {
 }
 
 /**
+ * Lean rotated body for a flexible 2-pin part sitting diagonally: a thin bar
+ * along the pin-to-pin line, rather than the axis-aligned bounding box (which
+ * would cover the whole square the two pins span). `a`/`b` are the absolute pin
+ * centers. Returns null when the part is axis-aligned, where the plain
+ * bounding-box body is already lean.
+ */
+export function diagonalBody(
+  a: Pt,
+  b: Pt,
+  pad: number,
+): { x: number; y: number; width: number; height: number; transform: string } | null {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  if (dx === 0 || dy === 0) return null;
+  const length = Math.sqrt(dx * dx + dy * dy);
+  const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+  return {
+    x: -length / 2 - pad * 0.6,
+    y: -pad,
+    width: length + pad * 1.2,
+    height: pad * 2,
+    transform: `translate(${(a.x + b.x) / 2}, ${(a.y + b.y) / 2}) rotate(${angle})`,
+  };
+}
+
+/**
  * Flat-belly "D" silhouette for a 3-legged part. `a` and `b` are the absolute
  * centers of the two end pins. A straight flat edge sits clear on one side of
  * the holes; the opposite side is a cubic-Bézier belly that leaves both corners
