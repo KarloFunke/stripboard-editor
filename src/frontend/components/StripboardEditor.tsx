@@ -9,6 +9,7 @@ import type { AutoLayoutRequest, AutoLayoutWorkerMessage } from "./stripboard/au
 import ComponentTray from "./stripboard/ComponentTray";
 import StripboardCanvas from "./stripboard/StripboardCanvas";
 import StripboardFootprintEditor from "./stripboard/StripboardFootprintEditor";
+import AutoLayoutSettings from "./stripboard/AutoLayoutSettings";
 import ResizableSidebar from "./ResizableSidebar";
 import LayoutRatingPrompt from "./LayoutRatingPrompt";
 import { isLayoutRatingEnabled, projectKeyFromPath } from "@/lib/layoutRating";
@@ -29,6 +30,8 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
   const componentDefs = useProjectStore((s) => s.componentDefs);
   const nets = useProjectStore((s) => s.nets);
   const netAssignments = useProjectStore((s) => s.netAssignments);
+  const spanOverrides = useProjectStore((s) => s.spanOverrides);
+  const clearanceOverrides = useProjectStore((s) => s.clearanceOverrides);
   const isActive = useProjectStore((s) => s.activeEditor === "stripboard");
   const setActiveEditor = useProjectStore((s) => s.setActiveEditor);
   const showValuesOnBoard = useProjectStore((s) => s.showValuesOnBoard);
@@ -41,6 +44,7 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
   const autoFinishMsgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [autoProgress, setAutoProgress] = useState<{ label: string; frac: number } | null>(null);
+  const [showLayoutSettings, setShowLayoutSettings] = useState(false);
   // Snapshot + metrics of a finished v2 layout, shown as a rating prompt in the
   // result popup (only when the user hasn't opted out).
   const [rateData, setRateData] = useState<{ snapshot: Record<string, unknown>; metrics: Record<string, unknown>; runId: number } | null>(null);
@@ -109,7 +113,7 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
     track("auto-layout-run", { engine: onlyIds ? "selection" : "full" });
     const startedAt = performance.now();
     const runId = ++autoRunIdRef.current;
-    const inputs = { board, components, componentDefs, nets, netAssignments };
+    const inputs = { board, components, componentDefs, nets, netAssignments, spanOverrides, clearanceOverrides };
 
     const worker = new Worker(new URL("./stripboard/autoLayoutWorker.ts", import.meta.url));
     autoWorkersRef.current = [worker];
@@ -132,7 +136,8 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
       if (
         s.board !== inputs.board || s.components !== inputs.components ||
         s.componentDefs !== inputs.componentDefs || s.nets !== inputs.nets ||
-        s.netAssignments !== inputs.netAssignments
+        s.netAssignments !== inputs.netAssignments || s.spanOverrides !== inputs.spanOverrides ||
+        s.clearanceOverrides !== inputs.clearanceOverrides
       ) {
         showAutoMsg("Board changed while solving — result discarded, run again", []);
         return;
@@ -244,15 +249,32 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
                 </span>
               </span>
             )}
-            <button
-              onClick={() => handleAutoLayout()}
-              title={autoProgress
-                ? "Cancel the running auto-layout"
-                : "Arrange all unlocked parts and regenerate the cuts and link wires to complete the board. Lock components to keep them in place."}
-              className="border border-neutral-300 dark:border-neutral-600 rounded px-2 py-1 text-sm text-neutral-900 dark:text-neutral-100 dark:bg-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-700 transition-colors"
-            >
-              {autoProgress ? "Cancel" : "Auto-layout (alpha)"}
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => handleAutoLayout()}
+                title={autoProgress
+                  ? "Cancel the running auto-layout"
+                  : "Arrange all unlocked parts and regenerate the cuts and link wires to complete the board. Lock components to keep them in place."}
+                className="border border-neutral-300 dark:border-neutral-600 rounded px-2 py-1 text-sm text-neutral-900 dark:text-neutral-100 dark:bg-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-700 transition-colors"
+              >
+                {autoProgress ? "Cancel" : "Auto-layout"}
+              </button>
+              <div className="relative">
+                <button
+                  onClick={() => setShowLayoutSettings((v) => !v)}
+                  title="Auto-layout settings"
+                  className={`p-1.5 rounded border transition-colors ${showLayoutSettings
+                    ? "border-[#113768] text-[#113768] bg-[#113768]/10 dark:border-[#5b9bd5] dark:text-[#5b9bd5] dark:bg-[#5b9bd5]/15"
+                    : "border-neutral-300 dark:border-neutral-600 text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-700"}`}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                </button>
+                {showLayoutSettings && <AutoLayoutSettings onClose={() => setShowLayoutSettings(false)} />}
+              </div>
+            </div>
             <div className="flex items-center gap-1.5">
               <span>Rows:</span>
               <input

@@ -21,21 +21,9 @@ export default function AutoLayoutGuidePage() {
             <Link href="/guide" className="text-xs font-mono text-[var(--copper)] hover:underline">&larr; Back to the guide</Link>
           </div>
 
-          <h1 className="font-mono text-xl sm:text-2xl font-bold text-[#113768] dark:text-[#5b9bd5] mb-2 tracking-tight">
+          <h1 className="font-mono text-xl sm:text-2xl font-bold text-[#113768] dark:text-[#5b9bd5] mb-6 tracking-tight">
             How Auto-layout Works
           </h1>
-          <p className="text-xs uppercase tracking-[0.2em] text-neutral-400 dark:text-neutral-500 mb-6">alpha</p>
-
-          {/* Alpha caveat, up front */}
-          <div className="mb-8 rounded-md border border-[var(--copper)]/40 bg-[var(--copper)]/5 px-4 py-3">
-            <p className="text-sm text-neutral-700 dark:text-neutral-300 leading-relaxed">
-              <strong className="text-[var(--copper)]">This is an alpha, not a finished tool.</strong> It is an early version of
-              the auto-layouter with a great deal of work still ahead. It handles the circuits in my test set well, but on many
-              boards you will still want to reposition a part or reroute a wire by hand. It is simply the first version I
-              considered ready to release, and it will keep improving. If it produces a poor result, I would be glad to hear about
-              it through the <Link href="/feedback" className="text-[var(--copper)] hover:underline">feedback box</Link>.
-            </p>
-          </div>
 
           {/* Intro */}
           <section className="mb-10">
@@ -78,8 +66,8 @@ export default function AutoLayoutGuidePage() {
               <li>
                 <span className="font-semibold text-neutral-900 dark:text-neutral-100">2. Lay out each group.</span> Within each
                 group it fixes the orientation of every part, aligns the pins to strips, and sets the span of the flexible leads on
-                two-pin parts such as resistors. It evaluates several arrangements per group and retains the tidiest, never
-                allowing parts closer than they can physically sit.
+                two-pin parts such as resistors. It evaluates several arrangements per group and retains the tidiest, keeping to
+                the spacing and clearance you allow for each part type.
               </li>
               <li>
                 <span className="font-semibold text-neutral-900 dark:text-neutral-100">3. Arrange the groups.</span> The finished
@@ -115,7 +103,8 @@ export default function AutoLayoutGuidePage() {
             <ul className="space-y-2 text-sm text-neutral-700 dark:text-neutral-300">
               <li><strong>Board size.</strong> Lock the rows or columns using the padlock beside their field and the router holds exactly that dimension, so the result fits a board you already own.</li>
               <li><strong>Locked parts.</strong> Fix a part in a chosen position and the router designs the remaining layout around it rather than moving it.</li>
-              <li><strong>Physical constraints.</strong> The router always accounts for the space real parts occupy; it will, for example, leave the necessary gap between two through-hole resistors instead of overlapping their bodies.</li>
+              <li><strong>Pin spacing and clearance.</strong> Open the settings with the gear beside the <em>Auto-layout</em> button to tune each flexible part type. <em>Pin spacing</em> sets how many holes a part may span from pin to pin, so you can force resistors to stand upright or stretch flat. <em>Clearance</em> is the air the router keeps around a body: the default leaves one free strip beside the part, and lowering it to 0 lets parts of that type sit directly side by side.</li>
+              <li><strong>Physical constraints.</strong> By default the router accounts for the space real parts occupy; it will, for example, leave a strip between two through-hole resistors instead of overlapping their bodies. The clearance setting above is what governs this, so you decide how tightly a given part type packs.</li>
             </ul>
             <p className="text-sm text-neutral-700 dark:text-neutral-300 leading-relaxed mt-3">
               Locked parts are the hardest case for the router. Everywhere else it is free to choose positions, but a fixed part

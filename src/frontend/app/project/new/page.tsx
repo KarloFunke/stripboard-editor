@@ -12,7 +12,6 @@ import ProjectToolbar from "@/components/ProjectToolbar";
 import SplitPane from "@/components/SplitPane";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import ShortcutOverlay from "@/components/ShortcutOverlay";
-import AlphaAnnouncement from "@/components/AlphaAnnouncement";
 
 export default function NewProjectPage() {
   const router = useRouter();
@@ -230,7 +229,6 @@ export default function NewProjectPage() {
         right={<StripboardEditor />}
       />
       <ShortcutOverlay />
-      <AlphaAnnouncement />
     </div>
   );
 }

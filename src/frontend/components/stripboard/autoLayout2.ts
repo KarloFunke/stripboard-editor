@@ -18,6 +18,7 @@ import {
   segmentsIntersect,
   bodyIntersectsRect,
   corridorHoles,
+  clearanceOf,
 } from "./flexGeometry";
 import { AutoLayoutProgress, AutoLayoutResult, LayoutPlacement, computeAutoLayout } from "./autoLayout";
 import { clusterCapFor, buildComponentGraph, agglomerate } from "./layout2/clustering";
@@ -618,7 +619,7 @@ export function computeAutoLayout2(
   ): Component[] | null => {
     interface Geo {
       rects: FootprintRect[];
-      segs: { p1: BoardPosition; p2: BoardPosition }[];
+      segs: { p1: BoardPosition; p2: BoardPosition; clr: number }[];
       pins: BoardPosition[];
     }
     const geoOf = (comps: Component[]): Geo => {
@@ -629,7 +630,7 @@ export function computeAutoLayout2(
         if (!def) continue;
         if (def.flexible) {
           const p2 = c.flexibleEndPos ?? c.boardPos;
-          g.segs.push({ p1: c.boardPos, p2 });
+          g.segs.push({ p1: c.boardPos, p2, clr: clearanceOf(def) });
           g.pins.push(c.boardPos, p2);
         } else {
           g.rects.push(getComponentBounds(def, c.boardPos, c.rotation));
@@ -667,16 +668,16 @@ export function computeAutoLayout2(
       p.row >= r.minRow && p.row <= r.maxRow && p.col >= r.minCol && p.col <= r.maxCol;
     for (const fr of freeGeo.rects) {
       if (lockGeo.rects.some((lr) => overlap(fr, lr))) return null;
-      if (lockGeo.segs.some((ls) => bodyIntersectsRect(ls.p1, ls.p2, fr))) return null;
+      if (lockGeo.segs.some((ls) => bodyIntersectsRect(ls.p1, ls.p2, fr, ls.clr))) return null;
       if (lockGeo.pins.some((p) => inRect(p, fr))) return null;
     }
     for (const fs of freeGeo.segs) {
-      if (lockGeo.rects.some((lr) => bodyIntersectsRect(fs.p1, fs.p2, lr))) return null;
+      if (lockGeo.rects.some((lr) => bodyIntersectsRect(fs.p1, fs.p2, lr, fs.clr))) return null;
       if (
         lockGeo.segs.some(
           (ls) =>
             segmentsIntersect(fs.p1, fs.p2, ls.p1, ls.p2) ||
-            bodiesTooClose(fs.p1, fs.p2, ls.p1, ls.p2)
+            bodiesTooClose(fs.p1, fs.p2, ls.p1, ls.p2, fs.clr + ls.clr)
         )
       )
         return null;
@@ -694,12 +695,25 @@ export function computeAutoLayout2(
 
   // gap 2 leaves one empty column between tiles so edge parts keep body
   // clearance; compaction closes the seam wherever that stays legal.
+  // Clearances above the default widen the seams: two padded parts may face
+  // each other across a tile boundary the planner never checks pairwise
+  // (gap 2 covers exactly two default halos).
+  const maxClr = Math.max(
+    0,
+    ...components
+      .filter((c) => !c.boardExcluded)
+      .map((c) => {
+        const def = resolveComponentDef(c, componentDefs);
+        return def ? clearanceOf(def) : 0;
+      })
+  );
+  const seamExtra = Math.max(0, Math.ceil(1 + 2 * maxClr - 1e-6) - 2);
   const runLadder = () => {
     // Both stage-2 strategies always contribute candidates and route()
     // keeps the better routed result: the 2D floorplan usually wins, but
     // bands guard against regressions on shapes it composes better.
     for (const use2D of [true, false]) {
-    outer: for (const gap of [2, 3]) {
+    outer: for (const gap of [2 + seamExtra, 3 + seamExtra]) {
       const m = materialize(gap, use2D);
       report("place", (use2D ? 0.2 : 0.5) + (gap === 2 ? 0.05 : 0.15));
       if (m.rows * m.cols <= 300) {

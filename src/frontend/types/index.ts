@@ -26,6 +26,13 @@ export interface ComponentDef {
   footprintPresets?: string[]; // alternative footprint def IDs the user can choose from
   flexible?: boolean; // 2-pin components with draggable pin positions
   hasValue?: boolean; // shows an editable value field (e.g. resistance) — passives/discretes only
+  // Pin-to-pin span range for flexible parts, in hole pitches. Not part of a
+  // stored def: stamped on at solve time from the project's spanOverrides.
+  spanOverride?: { min: number; max: number };
+  // Clearance halo around the body in hole pitches (absent = 0.5 default;
+  // 0 allows adjacent placement). Not part of a stored def: stamped on at
+  // solve time from the project's clearanceOverrides.
+  clearance?: number;
 }
 
 // ── Component Instance (single object for both editors) ──
@@ -143,4 +150,11 @@ export interface Project {
   board: Board;
   showValuesOnBoard?: boolean;
   autoSave?: boolean; // per-project preference: continuously save on every change
+  // Auto-layout config: per component type (def id), the allowed pin-to-pin
+  // span range for flexible parts, replacing the built-in default.
+  spanOverrides?: Record<string, { min: number; max: number }>;
+  // Auto-layout config: per component type (def id), the body clearance
+  // halo in hole pitches, replacing the 0.5 default (flexible parts only;
+  // 0 allows adjacent placement).
+  clearanceOverrides?: Record<string, number>;
 }

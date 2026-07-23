@@ -98,6 +98,11 @@ interface ProjectActions {
   // Board wires
   setBoardSize: (rows: number, cols: number) => void;
   setBoardDimLock: (dim: "rows" | "cols", locked: boolean) => void;
+  // Set (or clear with null) the auto-layout span range for a flexible def
+  setSpanOverride: (defId: string, range: { min: number; max: number } | null) => void;
+  // Set (or reset to default with null) the auto-layout clearance halo for a
+  // flexible def; an explicit 0 allows adjacent placement
+  setClearanceOverride: (defId: string, clearance: number | null) => void;
   addWire: (from: BoardPosition, to: BoardPosition) => void;
   removeWire: (wireId: string) => void;
   // Derive and apply the cuts/wires needed to complete the current placement
@@ -292,6 +297,8 @@ function prepareProjectState(data: Project) {
     },
     showValuesOnBoard: data.showValuesOnBoard ?? false,
     autoSave: data.autoSave ?? false,
+    spanOverrides: data.spanOverrides,
+    clearanceOverrides: data.clearanceOverrides,
     wirePlacementMode: false,
     wirePlacementFrom: null,
     schematicWireDrawMode: false,
@@ -926,6 +933,28 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }));
   },
 
+  setSpanOverride: (defId, range) => {
+    set((s) => {
+      const next = { ...(s.spanOverrides ?? {}) };
+      if (range) {
+        const min = Math.max(1, Math.min(30, Math.round(range.min)));
+        next[defId] = { min, max: Math.max(min, Math.min(30, Math.round(range.max))) };
+      } else {
+        delete next[defId];
+      }
+      return { spanOverrides: next, isDirty: true };
+    });
+  },
+
+  setClearanceOverride: (defId, clearance) => {
+    set((s) => {
+      const next = { ...(s.clearanceOverrides ?? {}) };
+      if (clearance === null) delete next[defId];
+      else next[defId] = Math.max(0, Math.min(5, Math.round(clearance * 4) / 4));
+      return { clearanceOverrides: next, isDirty: true };
+    });
+  },
+
   placeCut: (cut) => {
     get().pushSnapshot();
     set((s) => ({
@@ -1126,6 +1155,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       board: s.board,
       showValuesOnBoard: s.showValuesOnBoard,
       autoSave: s.autoSave,
+      spanOverrides: s.spanOverrides,
+      clearanceOverrides: s.clearanceOverrides,
     };
   },
 
@@ -1155,6 +1186,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     board: { rows: 20, cols: 20, cuts: [], wires: [] },
     showValuesOnBoard: false,
     autoSave: false,
+    spanOverrides: undefined,
+    clearanceOverrides: undefined,
     wirePlacementMode: false,
     wirePlacementFrom: null,
     schematicWireDrawMode: false,

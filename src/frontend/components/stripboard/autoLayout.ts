@@ -30,6 +30,7 @@ import {
   bodiesTooClose,
   segmentsIntersect,
   spanLimits,
+  clearanceOf,
 } from "./flexGeometry";
 
 export interface LayoutPlacement {
@@ -127,6 +128,7 @@ interface Movable {
 interface Placement {
   p1: BoardPosition;
   p2: BoardPosition;
+  clr?: number; // the part's extra body clearance (fixed obstacles only)
 }
 
 /** Map that counts its mutations, so derived caches know when to refresh */
@@ -220,7 +222,7 @@ function optimizeFlexibles(
     if (def.flexible) {
       const [p1, p2] = getFlexiblePinPositions(comp, def);
       if (p1 && p2) {
-        fixedBodies.push({ p1: { row: p1.row, col: p1.col }, p2: { row: p2.row, col: p2.col } });
+        fixedBodies.push({ p1: { row: p1.row, col: p1.col }, p2: { row: p2.row, col: p2.col }, clr: clearanceOf(def) });
         for (const h of corridorHoles(p1, p2)) blocked.add(holeKey(h.row, h.col));
       }
     } else {
@@ -392,18 +394,21 @@ function optimizeFlexibles(
   };
 
   // ── Geometric validity of a candidate against everything else ──
+  const clrById = new Map<string, number>();
+  for (const m of movables) clrById.set(m.comp.id, clearanceOf(m.def));
   const isValid = (selfId: string, p1: BoardPosition, p2: BoardPosition): boolean => {
+    const selfClr = clrById.get(selfId) ?? 0;
     for (const rect of rigidRects) {
-      if (bodyIntersectsRect(p1, p2, rect)) return false;
+      if (bodyIntersectsRect(p1, p2, rect, selfClr)) return false;
     }
     for (const h of corridorHoles(p1, p2)) {
       if (h.row === p1.row && h.col === p1.col) continue;
       if (h.row === p2.row && h.col === p2.col) continue;
       if (hard.has(holeKey(h.row, h.col))) return false;
     }
-    const clashes = (other: Placement): boolean =>
+    const clashes = (other: Placement, otherClr: number): boolean =>
       segmentsIntersect(p1, p2, other.p1, other.p2) ||
-      bodiesTooClose(p1, p2, other.p1, other.p2) ||
+      bodiesTooClose(p1, p2, other.p1, other.p2, selfClr + otherClr) ||
       // endpoints inside the other's corridor and vice versa
       pointSegmentDistance(p1, other.p1, other.p2) <= FLEXIBLE_CORRIDOR_RADIUS + 1e-6 ||
       pointSegmentDistance(p2, other.p1, other.p2) <= FLEXIBLE_CORRIDOR_RADIUS + 1e-6 ||
@@ -411,10 +416,10 @@ function optimizeFlexibles(
       pointSegmentDistance(other.p2, p1, p2) <= FLEXIBLE_CORRIDOR_RADIUS + 1e-6;
 
     for (const body of fixedBodies) {
-      if (clashes(body)) return false;
+      if (clashes(body, body.clr ?? 0)) return false;
     }
     for (const [id, p] of pos) {
-      if (id !== selfId && clashes(p)) return false;
+      if (id !== selfId && clashes(p, clrById.get(id) ?? 0)) return false;
     }
     return true;
   };
@@ -1040,7 +1045,7 @@ function arrangeRigids(
 
   const movables: MovableRigid[] = [];
   const fixedRects: RectI[] = [];
-  const fixedFlexBodies: { p1: BoardPosition; p2: BoardPosition }[] = [];
+  const fixedFlexBodies: { p1: BoardPosition; p2: BoardPosition; clr: number }[] = [];
   const fixedPinHoles: BoardPosition[] = [];
   const fixedTerminals: { row: number; col: number; netId: string }[] = [];
 
@@ -1098,7 +1103,7 @@ function arrangeRigids(
     }
     if (def.flexible) {
       const [p1, p2] = getFlexiblePinPositions(comp, def);
-      if (p1 && p2) fixedFlexBodies.push({ p1, p2 });
+      if (p1 && p2) fixedFlexBodies.push({ p1, p2, clr: clearanceOf(def) });
     } else {
       fixedRects.push(getComponentBounds(def, comp.boardPos, comp.rotation));
     }
@@ -1180,7 +1185,7 @@ function arrangeRigids(
       }
     }
     for (const f of fixedFlexBodies) {
-      if (bodyIntersectsRect(f.p1, f.p2, rect)) return false;
+      if (bodyIntersectsRect(f.p1, f.p2, rect, f.clr)) return false;
     }
     for (const other of movables) {
       if (other.comp.id === m.comp.id) continue;

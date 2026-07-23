@@ -12,6 +12,12 @@ export const metadata: Metadata = {
 
 const updates: { date: string; items: string[]; link?: { href: string; lead: string; text: string } }[] = [
   {
+    date: "2026-07-24",
+    items: [
+      "Big changes to the auto layouter. Much more user settings and it also performs much better overall. Thats why I also removed the 'alpha' tag as I think its quite capable at this point."
+    ],
+  },
+  {
     date: "2026-07-23",
     items: [
       "Netlist export. Export a design to an EDA tool as a KiCad-compatible netlist (.net): components, values, pin numbers and nets all are included, so you can turn a stripboard prototype into a PCB without redesigning the Schematic in another tool.",

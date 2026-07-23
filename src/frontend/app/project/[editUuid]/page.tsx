@@ -12,7 +12,6 @@ import ProjectToolbar from "@/components/ProjectToolbar";
 import SplitPane from "@/components/SplitPane";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import ShortcutOverlay from "@/components/ShortcutOverlay";
-import AlphaAnnouncement from "@/components/AlphaAnnouncement";
 
 export default function ProjectEditorPage() {
   const params = useParams();
@@ -193,7 +192,6 @@ export default function ProjectEditorPage() {
         right={<StripboardEditor />}
       />
       <ShortcutOverlay />
-      <AlphaAnnouncement />
     </div>
   );
 }

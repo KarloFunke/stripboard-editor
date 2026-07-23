@@ -3,7 +3,7 @@
 // or everywhere. All access is SSR-safe and swallows storage errors.
 
 // Bump when the router changes meaningfully, so ratings bucket by version.
-export const SOLVER_VERSION = "alpha 2.0";
+export const SOLVER_VERSION = "2.1";
 
 const DISABLED_EVER_KEY = "rate-auto-layout-disabled";
 const DISMISSED_PROJECTS_KEY = "rate-auto-layout-dismissed-projects";

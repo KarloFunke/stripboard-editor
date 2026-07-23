@@ -1,0 +1,48 @@
+# Stripboard Editor
+
+> A free online editor for designing circuits on stripboard (also called
+> Veroboard). It pairs a schematic editor with a stripboard layout editor,
+> and includes a router that can lay out the whole board automatically.
+
+Stripboard is prototyping board made of a grid of holes over parallel
+copper strips, where every hole on a strip is already electrically
+connected. Building a circuit on it means placing components, cutting
+strips to separate nets, and adding link wires to bridge connections a
+strip cannot carry. Stripboard Editor supports doing this by hand or
+handing it to an automatic router.
+
+## Core features
+
+- Schematic editor with a standard symbol library, wiring, and nets.
+- Stripboard editor with live strip colouring that shows nets and conflicts
+  in real time.
+- Automatic layout router: places every component, sizes the board, and
+  generates the strip cuts and link wires needed to complete it. It is
+  deterministic, so the same circuit always produces the same layout.
+- Per-component-type layout settings: the allowed pin-to-pin span for
+  flexible parts (e.g. how many holes a resistor may stretch across), and
+  the clearance kept around a part's body, down to 0 for placing parts
+  directly side by side.
+- Board size can be locked (fix rows and/or columns to fit a board you
+  already own) and individual components can be locked in place before
+  running the router, which will then design the rest of the layout
+  around them.
+- Editable component footprints, and a custom component editor for parts
+  outside the built-in library.
+- Printable 1:1 build template: a component-side placement sheet, a
+  mirrored copper-side cut sheet, and a bill of materials (BOM).
+- KiCad-compatible netlist export, so a circuit prototyped here can move
+  into a PCB tool. Most built-in parts map to real KiCad symbols and
+  footprints.
+- No account required to use or save a project; accounts add a project
+  dashboard and shareable edit/view-only links.
+
+## Pages
+
+- [Quick guide](https://stripboard-editor.com/guide): keyboard shortcuts,
+  workflow, and an overview of every feature above.
+- [How auto-layout works](https://stripboard-editor.com/guide/auto-layout):
+  a plain-language explanation of the router's stages and what you can
+  configure.
+- [What's new](https://stripboard-editor.com/updates): changelog and
+  planned work.

@@ -22,6 +22,7 @@ import {
   bodiesTooClose,
   segmentsIntersect,
   spanLimits,
+  clearanceOf,
 } from "./flexGeometry";
 
 export interface FlexPlacement {
@@ -86,7 +87,7 @@ export function computeAutoPlace(
   //          may land there, but a new corridor may pass over.
   const hard = new Set<string>();
   const blocked = new Set<string>();
-  const flexBodies: { p1: BoardPosition; p2: BoardPosition }[] = [];
+  const flexBodies: { p1: BoardPosition; p2: BoardPosition; clr: number }[] = [];
   const rigidRects: FootprintRect[] = [];
 
   for (const comp of components) {
@@ -99,7 +100,7 @@ export function computeAutoPlace(
     if (def.flexible) {
       const [p1, p2] = getFlexiblePinPositions(comp, def);
       if (p1 && p2) {
-        flexBodies.push({ p1: { row: p1.row, col: p1.col }, p2: { row: p2.row, col: p2.col } });
+        flexBodies.push({ p1: { row: p1.row, col: p1.col }, p2: { row: p2.row, col: p2.col }, clr: clearanceOf(def) });
         for (const h of corridorHoles(p1, p2)) blocked.add(holeKey(h.row, h.col));
       }
     } else {
@@ -147,9 +148,9 @@ export function computeAutoPlace(
 
   // ── Validation of a concrete placement ───────────────
 
-  const isValidPlacement = (p1: BoardPosition, p2: BoardPosition): boolean => {
+  const isValidPlacement = (p1: BoardPosition, p2: BoardPosition, clr = 0): boolean => {
     for (const rect of rigidRects) {
-      if (bodyIntersectsRect(p1, p2, rect)) return false;
+      if (bodyIntersectsRect(p1, p2, rect, clr)) return false;
     }
     for (const h of corridorHoles(p1, p2)) {
       if (h.row === p1.row && h.col === p1.col) continue;
@@ -159,7 +160,7 @@ export function computeAutoPlace(
     }
     for (const body of flexBodies) {
       if (segmentsIntersect(p1, p2, body.p1, body.p2)) return false;
-      if (bodiesTooClose(p1, p2, body.p1, body.p2)) return false;
+      if (bodiesTooClose(p1, p2, body.p1, body.p2, clr + body.clr)) return false;
     }
     return true;
   };
@@ -198,7 +199,7 @@ export function computeAutoPlace(
     }
     pairs.sort((a, b) => a.score - b.score);
     for (const pair of pairs) {
-      if (isValidPlacement(pair.p1, pair.p2)) return pair;
+      if (isValidPlacement(pair.p1, pair.p2, clearanceOf(def))) return pair;
     }
     return null;
   };
@@ -262,7 +263,7 @@ export function computeAutoPlace(
     hard.add(holeKey(cand.p1.row, cand.p1.col));
     hard.add(holeKey(cand.p2.row, cand.p2.col));
     for (const h of corridorHoles(cand.p1, cand.p2)) blocked.add(holeKey(h.row, h.col));
-    flexBodies.push({ p1: cand.p1, p2: cand.p2 });
+    flexBodies.push({ p1: cand.p1, p2: cand.p2, clr: clearanceOf(item.def) });
     const claim = (pos: BoardPosition, netId: string) => {
       const si = segments.findIndex(
         (s) => s.row === pos.row && pos.col >= s.startCol && pos.col <= s.endCol

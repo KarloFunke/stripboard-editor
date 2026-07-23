@@ -1,7 +1,7 @@
 import { Component, ComponentDef, NetAssignment } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { getRotatedPinPositions, getComponentBounds } from "../boardLayout";
-import { spanLimits, FootprintRect } from "../flexGeometry";
+import { spanLimits, clearanceOf, FootprintRect } from "../flexGeometry";
 
 const PLAN_NODE_BUDGET = 300000;
 
@@ -581,10 +581,16 @@ function packTile(analysis: ClusterAnalysis, plan: TilePlan, limits: DimLimits):
   const regionsOfKey = (key: string) => info(key)?.regions ?? allRegions;
 
   // ── Column packing (diagonals take their extra columns outward) ──
-  interface Usage { colLo: number; colHi: number; top: number; bot: number }
+  // Margin per pair = both parts' clearance halos, rounded up to the grid:
+  // two default halos (0.5 + 0.5) give the classic one free column between
+  // parallel bodies; a pair of 0-halo parts may sit in adjacent columns.
+  interface Usage { colLo: number; colHi: number; top: number; bot: number; clr: number }
   const colUsage: Usage[] = [];
-  const overlaps = (cLo: number, cHi: number, top: number, bot: number) =>
-    colUsage.some((u) => cLo <= u.colHi + 1 && cHi >= u.colLo - 1 && !(top > u.bot || bot < u.top));
+  const overlaps = (cLo: number, cHi: number, top: number, bot: number, clr = 0) =>
+    colUsage.some((u) => {
+      const m = Math.ceil(clr + u.clr - 1e-6);
+      return cLo <= u.colHi + m && cHi >= u.colLo - m && !(top > u.bot || bot < u.top);
+    });
 
   // Claims keep left-to-right segment order on shared rows: a hole may not
   // land left of a lower-ranked segment's holes (no cut could separate them).
@@ -721,8 +727,8 @@ function packTile(analysis: ClusterAnalysis, plan: TilePlan, limits: DimLimits):
     const lo = c + rr.box.minCol - 1;
     const hi = c + rr.box.maxCol + 1;
     rigidCol[i] = c;
-    colUsage.push({ colLo: lo, colHi: hi, top, bot });
-    reservations.push({ colLo: lo - resL, colHi: hi + resR, top, bot });
+    colUsage.push({ colLo: lo, colHi: hi, top, bot, clr: 0 });
+    reservations.push({ colLo: lo - resL, colHi: hi + resR, top, bot, clr: 0 });
     for (const cl of rr.pinClaims) {
       const key = plan.keyOfEntry.get(`${i}:${cl.net}`);
       if (key) addClaim(o + cl.row, c + cl.col, key);
@@ -788,6 +794,7 @@ function packTile(analysis: ClusterAnalysis, plan: TilePlan, limits: DimLimits):
     const { f, a, b, rA, rB } = fd;
     const top = Math.min(rA, rB);
     const bot = Math.max(rA, rB);
+    const clr = clearanceOf(f.def);
     const dcNeeded = allowedDrows(f.def).get(Math.abs(rA - rB)) ?? 0;
     for (let j = 0; j <= maxSteps; j++) {
       const c1 = startCol + dir * j;
@@ -795,7 +802,7 @@ function packTile(analysis: ClusterAnalysis, plan: TilePlan, limits: DimLimits):
       const cLo = Math.min(c1, c2);
       const cHi = Math.max(c1, c2);
       if (cLo < colMin || cHi > colMax) continue;
-      if (overlaps(cLo, cHi, top, bot)) continue;
+      if (overlaps(cLo, cHi, top, bot, clr)) continue;
       if (!claimOk(rA, c1, a) || !claimOk(rB, c2, b)) continue;
       if (rA === rB && a !== b && !rankInfo(a) && !rankInfo(b)) {
         // this part fixes the segment order of its shared row
@@ -804,7 +811,7 @@ function packTile(analysis: ClusterAnalysis, plan: TilePlan, limits: DimLimits):
         dynInfo.set(rk, { rankLo: dynBase + 2, rankHi: dynBase + 2 });
         dynBase += 4;
       }
-      colUsage.push({ colLo: cLo, colHi: cHi, top, bot });
+      colUsage.push({ colLo: cLo, colHi: cHi, top, bot, clr });
       addClaim(rA, c1, a);
       addClaim(rB, c2, b);
       placements.push({ comp: f.comp, row1: rA, col1: c1, row2: rB, col2: c2 });
@@ -905,7 +912,7 @@ function packTile(analysis: ClusterAnalysis, plan: TilePlan, limits: DimLimits):
         if (c < colMin || c > colMax) continue;
         if (colUsage.some((u) => c >= u.colLo && c <= u.colHi && atRow >= u.top && atRow <= u.bot)) continue;
         if (!claimOk(atRow, c, key)) continue;
-        colUsage.push({ colLo: c, colHi: c, top: atRow, bot: atRow });
+        colUsage.push({ colLo: c, colHi: c, top: atRow, bot: atRow, clr: 0 });
         addClaim(atRow, c, key);
         placements.push({ comp: t.comp, row1: atRow, col1: c });
         return true;
@@ -965,9 +972,9 @@ function packTile(analysis: ClusterAnalysis, plan: TilePlan, limits: DimLimits):
             if (usedRows.has(r2)) continue;
             const top = Math.min(row, r2);
             const bot = Math.max(row, r2);
-            if (overlaps(c, c, top, bot)) continue;
+            if (overlaps(c, c, top, bot, clearanceOf(ft.def))) continue;
             if (!claimOk(row, c, key)) continue;
-            colUsage.push({ colLo: c, colHi: c, top, bot });
+            colUsage.push({ colLo: c, colHi: c, top, bot, clr: clearanceOf(ft.def) });
             addClaim(row, c, key);
             placements.push(ft.firstAssigned
               ? { comp: ft.comp, row1: row, col1: c, row2: r2, col2: c }

@@ -3,6 +3,7 @@ import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { getComponentBounds, getRotatedPinPositions } from "../boardLayout";
 import {
   spanLimits,
+  clearanceOf,
   FootprintRect,
   bodiesTooClose,
   segmentsIntersect,
@@ -125,13 +126,14 @@ export function compactPlacements(
     const out = new Set<string>();
     for (let i = 0; i < s.flexPts.length; i++) {
       const a = s.flexPts[i];
+      const aClr = clearanceOf(occ.flexes[i].def);
       for (let j = i + 1; j < s.flexPts.length; j++) {
         const b = s.flexPts[j];
         if (segmentsIntersect(a.p1, a.p2, b.p1, b.p2)) out.add(`ffx:${i}:${j}`);
-        if (bodiesTooClose(a.p1, a.p2, b.p1, b.p2)) out.add(`ffc:${i}:${j}`);
+        if (bodiesTooClose(a.p1, a.p2, b.p1, b.p2, aClr + clearanceOf(occ.flexes[j].def))) out.add(`ffc:${i}:${j}`);
       }
       s.rects.forEach((rect, ri) => {
-        if (bodyIntersectsRect(a.p1, a.p2, rect)) out.add(`fr:${i}:${ri}`);
+        if (bodyIntersectsRect(a.p1, a.p2, rect, aClr)) out.add(`fr:${i}:${ri}`);
       });
     }
     const holeOwner = new Map<string, string>();

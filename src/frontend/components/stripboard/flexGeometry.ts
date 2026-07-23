@@ -5,11 +5,15 @@ import { BoardPosition, ComponentDef } from "@/types";
 export const FLEXIBLE_CORRIDOR_RADIUS = 0.5;
 
 // Fat-body clearance between two flexible components: near the pins the part
-// is only a thin lead, so the body segment is shrunk at each end; two parts'
-// shrunk segments must stay MIN_BODY_SEPARATION apart (this forces one free
-// row/col between parallel bodies, but allows end-to-end stacking).
+// is only a thin lead, so the body segment is shrunk at each end. Each part
+// carries a clearance halo around its shrunk segment; a pair's required
+// distance is the contact minimum plus both halos. The default halo
+// reproduces the classic rule (one free row/col between parallel bodies:
+// 1 + 0.5 + 0.5 = 2) while a type set to 0 in the project config may sit
+// adjacent. End-to-end stacking stays legal either way.
 export const BODY_END_SHRINK = 0.5;
-export const MIN_BODY_SEPARATION = 2;
+export const BODY_CONTACT_SEPARATION = 1;
+export const DEFAULT_CLEARANCE = 0.5;
 
 // Pin-to-pin span limits in hole pitches (Euclidean). Axial parts with a fat
 // body (resistors, inductors) can't sit closer than 4 (5 holes end to end);
@@ -22,8 +26,20 @@ const FUSE_SPAN = { min: 3, max: 8 };
 const AXIAL_DEF_IDS = new Set(["def-resistor", "def-inductor"]);
 
 export function spanLimits(def: ComponentDef): { min: number; max: number } {
+  if (def.spanOverride) return def.spanOverride;
   if (def.id === "def-fuse") return FUSE_SPAN;
   return AXIAL_DEF_IDS.has(def.id) ? AXIAL_SPAN : COMPACT_SPAN;
+}
+
+/**
+ * The clearance halo (hole pitches) around this part's body, from the
+ * project's per-type config, defaulting to the classic half-hole halo.
+ * Rigid parts always use 0: their footprint is their true body. Halos are
+ * additive per pair, so a padded part keeps its extra air from an unpadded
+ * neighbour too.
+ */
+export function clearanceOf(def: ComponentDef): number {
+  return def.flexible ? def.clearance ?? DEFAULT_CLEARANCE : 0;
 }
 
 // Extra cost for placing a 2-pin part diagonally: roughly one strip cut
@@ -143,11 +159,13 @@ export function shrinkSegment(p1: Pt, p2: Pt, amount: number): [Pt, Pt] {
   ];
 }
 
-/** Fat-body clearance check between two flexible parts */
-export function bodiesTooClose(a1: Pt, a2: Pt, b1: Pt, b2: Pt): boolean {
+/** Fat-body clearance check between two flexible parts. `clrSum` is the sum
+ * of both parts' clearance halos on top of the contact minimum; the default
+ * is two standard halos, i.e. the classic 2-pitch separation. */
+export function bodiesTooClose(a1: Pt, a2: Pt, b1: Pt, b2: Pt, clrSum = 2 * DEFAULT_CLEARANCE): boolean {
   const [sa1, sa2] = shrinkSegment(a1, a2, BODY_END_SHRINK);
   const [sb1, sb2] = shrinkSegment(b1, b2, BODY_END_SHRINK);
-  return segmentSegmentDistance(sa1, sa2, sb1, sb2) < MIN_BODY_SEPARATION - 1e-6;
+  return segmentSegmentDistance(sa1, sa2, sb1, sb2) < BODY_CONTACT_SEPARATION + clrSum - 1e-6;
 }
 
 export interface FootprintRect {
@@ -221,12 +239,15 @@ export function wireExtraLength(from: Pt, to: Pt, obstacles: WireObstacles): num
  * geometric test: hole-based corridor checks miss diagonals that thread
  * between grid points.
  */
-export function bodyIntersectsRect(p1: Pt, p2: Pt, rect: FootprintRect): boolean {
+export function bodyIntersectsRect(p1: Pt, p2: Pt, rect: FootprintRect, clr = DEFAULT_CLEARANCE): boolean {
   const [s1, s2] = shrinkSegment(p1, p2, BODY_END_SHRINK);
-  const minRow = rect.minRow - RIGID_BODY_CLEARANCE;
-  const maxRow = rect.maxRow + RIGID_BODY_CLEARANCE;
-  const minCol = rect.minCol - RIGID_BODY_CLEARANCE;
-  const maxCol = rect.maxCol + RIGID_BODY_CLEARANCE;
+  // Anchored so the default halo gives exactly RIGID_BODY_CLEARANCE; a halo
+  // of 0 lets the body touch the footprint edge (never enter it).
+  const clearance = Math.max(0, RIGID_BODY_CLEARANCE + clr - DEFAULT_CLEARANCE);
+  const minRow = rect.minRow - clearance;
+  const maxRow = rect.maxRow + clearance;
+  const minCol = rect.minCol - clearance;
+  const maxCol = rect.maxCol + clearance;
   const inside = (p: Pt) =>
     p.row >= minRow && p.row <= maxRow && p.col >= minCol && p.col <= maxCol;
   if (inside(s1) || inside(s2)) return true;

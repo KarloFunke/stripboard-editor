@@ -101,7 +101,7 @@ export default function HomeClient({
             operatingSystem: "Any",
             featureList: [
               "Schematic editor with a standard symbol library",
-              "Automatic stripboard layout router",
+              "Automatic stripboard layout router with per-component-type pin spacing and clearance settings",
               "Live strip colouring with real-time conflict detection",
               "Editable component footprints and custom components",
               "Printable 1:1 build template with mirrored cut guide and BOM",
@@ -224,7 +224,7 @@ export default function HomeClient({
               <div className="rounded-lg border border-dashed border-[var(--copper)] bg-[var(--copper)]/[0.06] px-4 py-3">
                 <div className="flex items-baseline gap-2 mb-1 flex-wrap">
                   <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-[var(--copper)]">optional</span>
-                  <p className="text-sm font-medium text-neutral-800 dark:text-neutral-200">Auto-layout (alpha)</p>
+                  <p className="text-sm font-medium text-neutral-800 dark:text-neutral-200">Auto-layout</p>
                 </div>
                 <p className="text-xs text-neutral-500 dark:text-neutral-400">
                   Skip steps 2 and 3: the router places every part, picks a board size, and works out the cuts and link wires for you.
