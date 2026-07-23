@@ -311,6 +311,64 @@ function deriveCuts(
 }
 
 /**
+ * Builders usually sever a strip by drilling out a hole, not by cutting the
+ * copper between holes. Upgrade each derived between-cut to a drilled hole
+ * on one of the two holes flanking its gap, keeping the between-cut only
+ * when neither flank can be sacrificed. A flank qualifies if it carries no
+ * pin, wire endpoint, or existing drill. Holes under rigid bodies and
+ * flexible-part corridors are the preferred sacrifice (drilled before the
+ * part is mounted, they give up nothing usable — the classic under-IC cut,
+ * just off-center); free holes come second, except the last free hole of a
+ * segment whose net still awaits unplaced parts. This runs after routing,
+ * so the sacrificed holes are provably surplus and the derived wires stay
+ * exactly as they were.
+ */
+function upgradeCutsToDrills(
+  cuts: Cut[],
+  segments: StripSegment[],
+  occupied: Set<string>,
+  noDrill: Set<string>,
+  reserveNets: Set<string>
+): Cut[] {
+  const segsByRow = new Map<number, StripSegment[]>();
+  for (const s of segments) {
+    if (!segsByRow.has(s.row)) segsByRow.set(s.row, []);
+    segsByRow.get(s.row)!.push(s);
+  }
+  const freeCount = new Map<StripSegment, number>();
+  const freeOf = (s: StripSegment): number => {
+    let n = freeCount.get(s);
+    if (n === undefined) {
+      n = 0;
+      for (let c = s.startCol; c <= s.endCol; c++) if (!occupied.has(holeKey(s.row, c))) n++;
+      freeCount.set(s, n);
+    }
+    return n;
+  };
+  const drilled = new Set<string>();
+  return cuts.map((cut) => {
+    if (cut.kind === "hole") return cut;
+    let best: { col: number; seg: StripSegment; free: boolean; left: number } | null = null;
+    for (const col of [cut.col, cut.col + 1]) {
+      const key = holeKey(cut.row, col);
+      if (noDrill.has(key) || drilled.has(key)) continue;
+      const seg = segsByRow.get(cut.row)?.find((s) => s.startCol <= col && col <= s.endCol);
+      if (!seg) continue;
+      const free = !occupied.has(key);
+      const left = freeOf(seg) - (free ? 1 : 0);
+      if (free && left < 1 && seg.netIds.some((n) => reserveNets.has(n))) continue;
+      if (!best || (best.free && !free) || (best.free === free && left > best.left)) {
+        best = { col, seg, free, left };
+      }
+    }
+    if (!best) return cut;
+    if (best.free) freeCount.set(best.seg, best.left);
+    drilled.add(holeKey(cut.row, best.col));
+    return { row: cut.row, col: best.col, kind: "hole" as const };
+  });
+}
+
+/**
  * Connect each net's disconnected strip groups with jumper wires (Prim-style
  * MST: always join the nearest pair of free holes). Wires may share endpoint
  * holes but must not run collinearly on top of another wire — unless that is
@@ -658,8 +716,18 @@ export function deriveCompletion(
     opts?.allowSharedJoints ?? false
   );
 
+  const noDrill = new Set<string>();
+  for (const p of pins) noDrill.add(holeKey(p.row, p.col));
+  for (const c of board.cuts) if (c.kind === "hole") noDrill.add(holeKey(c.row, c.col));
+  for (const w of [...board.wires, ...wires]) {
+    noDrill.add(holeKey(w.from.row, w.from.col));
+    noDrill.add(holeKey(w.to.row, w.to.col));
+  }
+  const finalCuts = upgradeCutsToDrills(cuts, segments, occupied, noDrill, reserveNets);
+
   const finalBoard: Board = {
-    ...boardWithCuts,
+    ...board,
+    cuts: [...board.cuts, ...finalCuts],
     wires: [...board.wires, ...wires.map((w, i) => ({ id: `af-${i}`, ...w }))],
   };
   const finalSegments = computeStripSegments(finalBoard, components, componentDefs, netAssignments);
@@ -667,7 +735,7 @@ export function deriveCompletion(
   const unresolvedConflicts = finalConnectivity.filter((g) => g.hasConflict).length;
 
   return {
-    cuts,
+    cuts: finalCuts,
     wires,
     issues: [...cutIssues, ...wireIssues],
     unresolvedConflicts,
