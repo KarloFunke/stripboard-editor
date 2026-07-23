@@ -229,6 +229,16 @@ export const COMPONENT_GROUPS: ComponentGroup[] = [
         flexible: true,
       },
       {
+        id: "def-fuse",
+        name: "Fuse",
+        category: "passive",
+        hasValue: true,
+        symbol: "fuse",
+        defaultLabelPrefix: "F",
+        ...create2Pin(4),
+        flexible: true,
+      },
+      {
         id: "def-transformer",
         name: "Transformer",
         category: "passive",

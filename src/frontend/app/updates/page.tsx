@@ -18,6 +18,7 @@ const updates: { date: string; items: string[]; link?: { href: string; lead: str
       "Auto-align polarity. Drop or move a 2-legged part like a resistor onto the board with its legs reversed and it flips itself 180 degrees automatically, so each pin lands on its correct net.",
       "Fixed rotating 2-legged components: parts spanning an even number of holes now rotate in place instead of slowly wandering across the board, and four rotations return to the exact starting position.",
       "Floating menu for schematic wires. Select a wire to delete just that segment or the whole wire in one go (or press Alt+Del for the whole wire). A whole wire is everything connected up to the component pins it runs between.",
+      "New built-in component: a fuse.",
     ]
   },
   {

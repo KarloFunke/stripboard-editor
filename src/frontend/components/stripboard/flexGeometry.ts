@@ -17,9 +17,12 @@ export const MIN_BODY_SEPARATION = 2;
 // but shouldn't stretch.
 const AXIAL_SPAN = { min: 4, max: 10 };
 const COMPACT_SPAN = { min: 1, max: 6 };
+// Fuse: never tighter than its default 3-hole reach, up to that plus 5.
+const FUSE_SPAN = { min: 3, max: 8 };
 const AXIAL_DEF_IDS = new Set(["def-resistor", "def-inductor"]);
 
 export function spanLimits(def: ComponentDef): { min: number; max: number } {
+  if (def.id === "def-fuse") return FUSE_SPAN;
   return AXIAL_DEF_IDS.has(def.id) ? AXIAL_SPAN : COMPACT_SPAN;
 }
 

@@ -31,6 +31,7 @@ const PART_MAP: Record<string, KicadPart> = {
   "def-led": { lib: "Device", part: "LED", footprint: "LED_THT:LED_D5.0mm" },
   "def-zener": { lib: "Device", part: "D_Zener", footprint: "Diode_THT:D_DO-35_SOD27_P7.62mm_Horizontal" },
   "def-inductor": { lib: "Device", part: "L", footprint: "Inductor_THT:L_Axial_L5.3mm_D2.2mm_P7.62mm_Horizontal_Vishay_IM-1" },
+  "def-fuse": { lib: "Device", part: "Fuse", footprint: "Fuse:Fuse_Littelfuse_395Series" },
   "def-transformer": { lib: "Device", part: "Transformer_1P_1S", footprint: "Transformer_THT:Transformer_CHK_EI30-2VA_2xSec" },
   "def-switch": { lib: "Switch", part: "SW_SPST", footprint: "Button_Switch_THT:SW_PUSH_6mm" },
   "def-potentiometer": { lib: "Device", part: "R_Potentiometer", footprint: "Potentiometer_THT:Potentiometer_Alps_RK163_Single_Horizontal" },

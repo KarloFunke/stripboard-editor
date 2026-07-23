@@ -8,21 +8,26 @@ import { getSymbolDef } from "@/data/symbolDefs";
 import { getSymbolBounds } from "./SymbolRenderer";
 import CustomComponentEditor from "./CustomComponentEditor";
 
+// Fixed thumbnail box so every tray tile is the same size regardless of the
+// symbol's own dimensions.
+const THUMB_BOX = 56;
+
 function SymbolThumbnail({ def }: { def: ComponentDef }) {
   const symbolDef = getSymbolDef(def.symbol);
   if (!symbolDef) return null;
 
   const bounds = getSymbolBounds(def.symbol, 0);
-  const pad = 6;
-  const scale = 0.4;
-  const w = bounds.width * scale + pad * 2;
-  const h = bounds.height * scale + pad * 2;
+  const pad = 5;
   const cx = (bounds.minX + bounds.maxX) / 2;
   const cy = (bounds.minY + bounds.maxY) / 2;
+  // Shrink large symbols to fit the box, but never enlarge small ones past the
+  // base scale, so a tiny capacitor and a big IC stay visually comparable.
+  const fit = (THUMB_BOX - pad * 2) / Math.max(bounds.width, bounds.height, 1);
+  const scale = Math.min(0.4, fit);
 
   return (
-    <svg width={Math.max(w, 24)} height={Math.max(h, 24)} className="flex-shrink-0">
-      <g transform={`translate(${Math.max(w, 24) / 2}, ${Math.max(h, 24) / 2}) scale(${scale}) translate(${-cx}, ${-cy})`}>
+    <svg width={THUMB_BOX} height={THUMB_BOX} className="flex-shrink-0">
+      <g transform={`translate(${THUMB_BOX / 2}, ${THUMB_BOX / 2}) scale(${scale}) translate(${-cx}, ${-cy})`}>
         {symbolDef.bodyPaths.map((path, i) => (
           <path
             key={`b-${i}`}
@@ -131,18 +136,18 @@ export default function ComponentLibrary() {
                 <span className="text-neutral-400 dark:text-neutral-500 ml-auto text-xs">{group.components.length}</span>
               </button>
               {isOpen && (
-                <div className="flex flex-wrap gap-1.5 px-2.5 pb-2.5">
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(80px,1fr))] gap-1.5 px-2.5 pb-2.5">
                   {group.components.map((def) => (
                     <button
                       key={def.id}
                       draggable
                       onDragStart={(e) => handleDragStart(e, def.id)}
                       onClick={() => handleAdd(def.id)}
-                      className="flex flex-col items-center gap-1 px-2 py-1.5 rounded border border-transparent hover:border-neutral-300 dark:hover:border-neutral-600 hover:bg-neutral-50 dark:hover:bg-neutral-800 active:bg-neutral-100 dark:active:bg-neutral-700 transition-colors cursor-grab active:cursor-grabbing"
+                      className="w-full flex flex-col items-center gap-1 px-1 py-1.5 rounded border border-transparent hover:border-neutral-300 dark:hover:border-neutral-600 hover:bg-neutral-50 dark:hover:bg-neutral-800 active:bg-neutral-100 dark:active:bg-neutral-700 transition-colors cursor-grab active:cursor-grabbing"
                       title={def.name}
                     >
                       <SymbolThumbnail def={def} />
-                      <span className="text-xs text-neutral-500 dark:text-neutral-400 leading-tight text-center max-w-[72px]">
+                      <span className="text-xs text-neutral-500 dark:text-neutral-400 leading-tight text-center max-w-full">
                         {def.name}
                       </span>
                     </button>
@@ -172,11 +177,11 @@ export default function ComponentLibrary() {
                       draggable
                       onDragStart={(e) => handleDragStart(e, def.id)}
                       onClick={() => handleAdd(def.id)}
-                      className="flex flex-col items-center gap-1 px-2 py-1.5 rounded border border-transparent hover:border-neutral-300 dark:hover:border-neutral-600 hover:bg-neutral-50 dark:hover:bg-neutral-800 active:bg-neutral-100 dark:active:bg-neutral-700 transition-colors cursor-grab active:cursor-grabbing"
+                      className="w-full flex flex-col items-center gap-1 px-1 py-1.5 rounded border border-transparent hover:border-neutral-300 dark:hover:border-neutral-600 hover:bg-neutral-50 dark:hover:bg-neutral-800 active:bg-neutral-100 dark:active:bg-neutral-700 transition-colors cursor-grab active:cursor-grabbing"
                       title={def.name}
                     >
                       <SymbolThumbnail def={def} />
-                      <span className="text-xs text-neutral-500 dark:text-neutral-400 leading-tight text-center max-w-[72px]">
+                      <span className="text-xs text-neutral-500 dark:text-neutral-400 leading-tight text-center max-w-full">
                         {def.name}
                       </span>
                     </button>

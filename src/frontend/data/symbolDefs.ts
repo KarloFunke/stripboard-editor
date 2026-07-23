@@ -158,6 +158,22 @@ const zener: SymbolDef = {
   ],
 };
 
+const fuse: SymbolDef = {
+  symbolId: "fuse",
+  label: "Fuse",
+  labelYOffset: 12,
+  hidePinLabels: true,
+  category: "passive",
+  bodyPaths: [
+    { d: "M -6 -18 L 6 -18 L 6 18 L -6 18 Z", fill: "none" }, // body rectangle
+    { d: "M 0 -40 L 0 40", fill: "none" },                     // element line + leads
+  ],
+  pins: [
+    { pinId: "1", defaultName: "1", stubStart: { x: 0, y: -18 }, stubEnd: { x: 0, y: -2 * G }, side: "top" },
+    { pinId: "2", defaultName: "2", stubStart: { x: 0, y: 18 }, stubEnd: { x: 0, y: 2 * G }, side: "bottom" },
+  ],
+};
+
 // ── Semiconductor Symbols ─────────────────────────────
 // 3-pin: B at (-2G, 0), C at (G, -2G), E at (G, 2G)
 
@@ -510,7 +526,7 @@ const pushbutton: SymbolDef = {
 // ── Static symbol registry ────────────────────────────
 
 const STATIC_SYMBOLS: SymbolDef[] = [
-  resistor, capacitor, capPolarized, diode, led, zener, inductor, transformer, switchSPST,
+  resistor, capacitor, capPolarized, diode, led, zener, inductor, fuse, transformer, switchSPST,
   potentiometer, pushbutton,
   npn, pnp, nmos, pmos, vreg,
   timer555, optocoupler, opamp,
