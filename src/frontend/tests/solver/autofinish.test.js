@@ -158,12 +158,14 @@ const {
 {
   const { wireExtraLength, segmentIntersectsRect } = require("./helpers.js").flexGeometry;
   const none = { rects: [], bodies: [] };
-  assert(wireExtraLength({ row: 0, col: 0 }, { row: 0, col: 8 }, none) === 0,
-    "T11: axis-aligned wire pays nothing");
-  assert(wireExtraLength({ row: 0, col: 0 }, { row: 2, col: 2 }, none) === 0,
-    "T11: short diagonal pays nothing");
+  assert(wireExtraLength({ row: 0, col: 0 }, { row: 8, col: 0 }, none) === 0,
+    "T11: vertical wire pays nothing");
+  const diag = wireExtraLength({ row: 0, col: 0 }, { row: 1, col: 1 }, none);
+  assert(diag > 0 && diag < 1, `T11: one-hole diagonal hop is near-free (${diag.toFixed(2)})`);
+  const horiz = wireExtraLength({ row: 0, col: 0 }, { row: 0, col: 8 }, none);
+  assert(horiz > 10, `T11: horizontal travel pays double beyond the free hole (${horiz.toFixed(2)})`);
   const longOff = wireExtraLength({ row: 0, col: 0 }, { row: 1, col: 10 }, none);
-  assert(longOff > 3 && longOff < 4, `T11: long slightly-off wire pays (${longOff.toFixed(2)})`);
+  assert(longOff > 15, `T11: long slanted wire pays heavily (${longOff.toFixed(2)})`);
   const rect = { minRow: 2, minCol: 2, maxRow: 5, maxCol: 5 };
   assert(segmentIntersectsRect({ row: 0, col: 3 }, { row: 7, col: 3 }, rect),
     "T11: vertical wire through a footprint detected");

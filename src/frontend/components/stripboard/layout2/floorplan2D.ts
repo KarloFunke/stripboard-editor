@@ -44,7 +44,15 @@ interface NetNode {
   xHi: number;
 }
 
-const W_WIRE = 4; // matches composeTiles: an inter-tile wire ≈ 4 cells of board
+// Corpus-tuned against human layouts (matches composeTiles): an inter-tile
+// wire ≈ 8 cells of board, a hole of estimated wire length ≈ 3 cells.
+// Only on free boards — under a user-locked dimension the conservative
+// density-first weights stay, or greedy construction drifts wide from the
+// first placement and never finds a plan inside the cap.
+const W_WIRE = 8;
+const W_LEN = 3;
+const W_WIRE_CAPPED = 4;
+const W_LEN_CAPPED = 1;
 // Beyond maxDim = 2·minDim a board reads as a ribbon; each extra length
 // unit pays about a row of cells so squarer floorplans win at equal area.
 const ASPECT_SLACK = 2;
@@ -56,6 +64,9 @@ export function floorplan2D(
   limits: DimLimits
 ): Floorplan2D | null {
   if (tiles.length === 0) return null;
+  const capped = limits.maxRows !== undefined || limits.maxCols !== undefined;
+  const wWire = capped ? W_WIRE_CAPPED : W_WIRE;
+  const wLen = capped ? W_LEN_CAPPED : W_LEN;
   // Anchored content pins the coordinate frame to the board origin; with
   // nothing fixed the frame floats and is normalized at the end.
   const hasFixed = fixed.rects.length > 0;
@@ -165,16 +176,63 @@ export function floorplan2D(
       const roots = new Set<number>();
       for (let i = 0; i < nodes.length; i++) roots.add(find(i));
       wiresEst += roots.size - 1;
-      if (nodes.length > 1) {
-        let rLo = Infinity, rHi = -Infinity, xLo = Infinity, xHi = -Infinity;
-        for (const n of nodes) {
-          const x = (n.xLo + n.xHi) / 2;
-          rLo = Math.min(rLo, n.row);
-          rHi = Math.max(rHi, n.row);
-          xLo = Math.min(xLo, x);
-          xHi = Math.max(xHi, x);
+      // Wire length as the MST over the copper fragments, each edge the
+      // closest node pair (row distance + x-interval gap). A net bounding
+      // box would leave interior fragments gradient-free: moving a tile
+      // strictly inside the box changes nothing, so refinement stalls on
+      // exactly the many-fragment nets that need it most.
+      if (capped) {
+        // Locked dimension: the classic bounding-box estimate, whose
+        // area-first gradient is what keeps greedy construction inside the
+        // cap (the MST gradient drifts wide from the first placement).
+        if (nodes.length > 1) {
+          let rLo = Infinity, rHi = -Infinity, xLo = Infinity, xHi = -Infinity;
+          for (const n of nodes) {
+            const x = (n.xLo + n.xHi) / 2;
+            rLo = Math.min(rLo, n.row);
+            rHi = Math.max(rHi, n.row);
+            xLo = Math.min(xLo, x);
+            xHi = Math.max(xHi, x);
+          }
+          wireLen += rHi - rLo + xHi - xLo;
         }
-        wireLen += rHi - rLo + xHi - xLo;
+      } else if (roots.size > 1) {
+        const rootList = [...roots];
+        const rootIdx = new Map<number, number>();
+        rootList.forEach((r, i) => rootIdx.set(r, i));
+        const k = rootList.length;
+        const dist: number[][] = Array.from({ length: k }, () => new Array(k).fill(Infinity));
+        for (let i = 0; i < nodes.length; i++) {
+          for (let j = i + 1; j < nodes.length; j++) {
+            const ri = rootIdx.get(find(i))!;
+            const rj = rootIdx.get(find(j))!;
+            if (ri === rj) continue;
+            const a = nodes[i];
+            const b = nodes[j];
+            const d =
+              Math.abs(a.row - b.row) +
+              Math.max(0, Math.max(a.xLo, b.xLo) - Math.min(a.xHi, b.xHi));
+            if (d < dist[ri][rj]) {
+              dist[ri][rj] = d;
+              dist[rj][ri] = d;
+            }
+          }
+        }
+        const inTree = new Array<boolean>(k).fill(false);
+        const best = new Array<number>(k).fill(Infinity);
+        inTree[0] = true;
+        for (let i = 1; i < k; i++) best[i] = dist[0][i];
+        for (let step = 1; step < k; step++) {
+          let pick = -1;
+          for (let i = 0; i < k; i++) {
+            if (!inTree[i] && (pick < 0 || best[i] < best[pick])) pick = i;
+          }
+          wireLen += best[pick];
+          inTree[pick] = true;
+          for (let i = 0; i < k; i++) {
+            if (!inTree[i] && dist[pick][i] < best[i]) best[i] = dist[pick][i];
+          }
+        }
       }
     }
 
@@ -190,7 +248,7 @@ export function floorplan2D(
       aspPen = Math.max(0, mx - ASPECT_SLACK * mn) * mn;
     }
     return {
-      score: effRows * effCols + W_WIRE * wiresEst + wireLen + 200 * overCap + aspPen,
+      score: effRows * effCols + wWire * wiresEst + wLen * wireLen + 200 * overCap + aspPen,
       rows, cols, wiresEst, wireLen, minR, minC,
     };
   };

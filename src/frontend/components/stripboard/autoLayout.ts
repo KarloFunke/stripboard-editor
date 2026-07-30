@@ -393,6 +393,69 @@ function optimizeFlexibles(
     };
   };
 
+  // ── Cheap ranking evaluator for candidate placements ──
+  // Routing the whole board per candidate is what made the anneal slow:
+  // a candidate only moves ONE part, so only its two nets can route
+  // differently. Route just those (deriveCompletion evalNets mode) and
+  // price the other nets from a baseline captured once per part. The
+  // baseline ignores the candidate's exact pins, so this ranks rather
+  // than measures — the chosen winner is re-measured with fullCost().
+  interface EvalBase {
+    wireCost: number; // other nets: wires, mess, lengths
+    starved: number;
+    ext: { minR: number; maxR: number; minC: number; maxC: number };
+  }
+  const captureEvalBase = (partNets: Set<string>): EvalBase => {
+    const others = new Set(nets.filter((n) => !partNets.has(n.id)).map((n) => n.id));
+    const plan = deriveCompletion(board, virtualComponents(), componentDefs, nets, netAssignments, { evalNets: others });
+    let wireCost = plan.wires.length * COST_WIRE + plan.wireMess * COST_WIRE_LEN;
+    const ext = { ...staticExtent };
+    for (const w of plan.wires) {
+      wireCost += COST_WIRE_LEN * Math.hypot(w.from.row - w.to.row, w.from.col - w.to.col);
+      for (const p of [w.from, w.to]) {
+        ext.minR = Math.min(ext.minR, p.row);
+        ext.maxR = Math.max(ext.maxR, p.row);
+        ext.minC = Math.min(ext.minC, p.col);
+        ext.maxC = Math.max(ext.maxC, p.col);
+      }
+    }
+    return { wireCost, starved: plan.starvedNetIds.length, ext };
+  };
+  const evalCost = (partNets: Set<string>, base: EvalBase): { cost: number; bad: boolean; problems: number } => {
+    const plan = deriveCompletion(board, virtualComponents(), componentDefs, nets, netAssignments, { evalNets: partNets });
+    // cuts and cut issues are derived globally even in eval mode, so they
+    // come from this call; the baseline contributes only wire terms
+    let cost =
+      base.wireCost +
+      plan.cuts.length * COST_CUT +
+      plan.wires.length * COST_WIRE +
+      plan.wireMess * COST_WIRE_LEN +
+      (plan.unresolvedConflicts + plan.issues.length + base.starved) * COST_UNRESOLVED;
+    const ext = { ...base.ext };
+    const extend = (p: BoardPosition) => {
+      ext.minR = Math.min(ext.minR, p.row);
+      ext.maxR = Math.max(ext.maxR, p.row);
+      ext.minC = Math.min(ext.minC, p.col);
+      ext.maxC = Math.max(ext.maxC, p.col);
+    };
+    for (const w of plan.wires) {
+      cost += COST_WIRE_LEN * Math.hypot(w.from.row - w.to.row, w.from.col - w.to.col);
+      extend(w.from);
+      extend(w.to);
+    }
+    for (const p of pos.values()) {
+      cost += COST_SPAN * manhattan(p.p1, p.p2);
+      if (p.p1.row !== p.p2.row && p.p1.col !== p.p2.col) cost += DIAGONAL_PENALTY;
+      extend(p.p1);
+      extend(p.p2);
+    }
+    if (ext.minR !== Infinity) {
+      cost += COST_BBOX * (ext.maxR - ext.minR + (ext.maxC - ext.minC));
+    }
+    const problems = plan.unresolvedConflicts + plan.issues.length + base.starved;
+    return { cost, bad: problems > 0, problems };
+  };
+
   // ── Geometric validity of a candidate against everything else ──
   const clrById = new Map<string, number>();
   for (const m of movables) clrById.set(m.comp.id, clearanceOf(m.def));
@@ -560,6 +623,15 @@ function optimizeFlexibles(
     digTarget = 0
   ): { cand: Placement; cost: number; bad: boolean; problems: number } | null => {
     const strips = netStripsFor();
+    // Candidates are ranked with the cheap evaluator against a baseline of
+    // the other nets; the winner is re-measured exactly below. When the
+    // exact measure exposes a problem the ranking could not see (this
+    // part's pins starving another net on a tight board), the search
+    // reruns with the full evaluator.
+    const partNets = new Set([m.netA, m.netB]);
+    const evalBase = captureEvalBase(partNets);
+    let useCheap = true;
+    const evaluate = () => (useCheap ? evalCost(partNets, evalBase) : fullCost());
 
     // Pin-1 pool: free holes near either net's copper (whole board if none)
     const anchors = [...(strips.get(m.netA) ?? []), ...(strips.get(m.netB) ?? [])];
@@ -651,7 +723,7 @@ function optimizeFlexibles(
           if (violatesGuard(m.comp.id, m.netA, m.netB, p1, p2)) continue;
           perRowPair.set(rowPair, same + 1);
           pos.set(m.comp.id, { p1, p2 });
-          const r = fullCost();
+          const r = evaluate();
           pos.delete(m.comp.id);
           evals++;
           if (!best || r.cost < best.cost) {
@@ -698,7 +770,7 @@ function optimizeFlexibles(
       let best: { cand: Placement; cost: number; bad: boolean; problems: number } | null = null;
       for (const v of valid.slice(0, 16)) {
         pos.set(m.comp.id, { p1: v.p1, p2: v.p2 });
-        const r = fullCost();
+        const r = evaluate();
         pos.delete(m.comp.id);
         if (!best || r.cost < best.cost) {
           best = { cand: { p1: v.p1, p2: v.p2 }, cost: r.cost, bad: r.bad, problems: r.problems };
@@ -712,15 +784,36 @@ function optimizeFlexibles(
     // resort take anything geometrically valid anywhere on the board —
     // first respecting the pin guards, then (rather than leaving the part
     // unplaced) even a guard-violating spot the evaluator will price.
-    let best = search(true, evalCap);
-    if (!best || best.problems > digTarget) {
-      const alt = search(false, evalCap);
-      if (alt && (!best || (best.bad && !alt.bad) || (best.bad === alt.bad && alt.cost < best.cost))) {
-        best = alt;
+    const runSearches = (): { cand: Placement; cost: number; bad: boolean; problems: number } | null => {
+      let best = search(true, evalCap);
+      if (!best || best.problems > digTarget) {
+        const alt = search(false, evalCap);
+        if (alt && (!best || (best.bad && !alt.bad) || (best.bad === alt.bad && alt.cost < best.cost))) {
+          best = alt;
+        }
+      }
+      if (!best) best = searchAnyValid(true);
+      if (!best) best = searchAnyValid(false);
+      return best;
+    };
+    let best = runSearches();
+    // Exact re-measure of the winner: the caller compares against
+    // fullCost-scale numbers, and the ranking evaluator only approximates
+    // the other nets' reaction to this part's pins. If the exact measure
+    // finds problems the ranking missed, redo the search with the full
+    // evaluator — that is the tight-board case where the interaction IS
+    // the signal.
+    if (best) {
+      pos.set(m.comp.id, best.cand);
+      const exact = fullCost();
+      pos.delete(m.comp.id);
+      if (exact.problems > digTarget && best.problems <= digTarget) {
+        useCheap = false;
+        best = runSearches();
+      } else {
+        best = { cand: best.cand, cost: exact.cost, bad: exact.bad, problems: exact.problems };
       }
     }
-    if (!best) best = searchAnyValid(true);
-    if (!best) best = searchAnyValid(false);
     return best;
   };
 

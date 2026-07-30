@@ -14,11 +14,13 @@ import { computeConnectivity } from "./connectivity";
 import { checkNetCompleteness } from "./netCompleteness";
 import {
   FootprintRect,
+  WireObstacles,
   bodiesTooClose,
   segmentsIntersect,
   bodyIntersectsRect,
   corridorHoles,
   clearanceOf,
+  wireExtraLength,
 } from "./flexGeometry";
 import { AutoLayoutProgress, AutoLayoutResult, LayoutPlacement, computeAutoLayout } from "./autoLayout";
 import { clusterCapFor, buildComponentGraph, agglomerate } from "./layout2/clustering";
@@ -576,8 +578,11 @@ export function computeAutoLayout2(
     bad: number;
   }
   let chosen: Candidate | null = null;
-  // Among clean candidates, a cell of board and a hole of wire mess (length
-  // over parts / off axis) weigh the same — density must not buy ugly wires.
+  // Among clean candidates, a cell of board, a hole of wire, and a hole of
+  // wire mess (length over parts / off axis) weigh the same — density must
+  // not buy ugly OR long wires. Humans spend board area freely to keep link
+  // wires short; without the length term the densest candidate always won
+  // and tidier floorplans were discarded.
   // Locked dimensions are paid in full either way.
   // Ribbon boards read badly even at equal area: beyond maxDim = 2·minDim,
   // each extra length unit is priced like a row of cells. A user-locked
@@ -588,14 +593,24 @@ export function computeAutoLayout2(
     const mn = Math.min(rows, cols);
     return Math.max(0, mx - 2 * mn) * mn;
   };
+  const wireLenOf = (p: CompletionPlan): number =>
+    p.wires.reduce((s, w) => s + Math.hypot(w.from.row - w.to.row, w.from.col - w.to.col), 0);
+  // A non-vertical wire is worth a whole board line: that is the exchange
+  // rate users reveal when they hand-fix layouts (one inserted blank column
+  // to straighten a single wire), and it is what lets a channel insertion
+  // or repair move pay for itself in this cost.
+  const slantsOf = (p: CompletionPlan): number =>
+    p.wires.reduce((n, w) => n + (w.from.col !== w.to.col ? 1 : 0), 0);
   const cost = (c: Candidate) =>
     (limits.maxRows ? Math.max(limits.maxRows, c.rows) : c.rows) *
     (limits.maxCols ? Math.max(limits.maxCols, c.cols) : c.cols) +
-    c.plan.wireMess + aspectOver(c.rows, c.cols);
-  const route = (virtual: Component[], rows: number, cols: number, movedIds: Set<string>): Candidate => {
+    c.plan.wireMess + wireLenOf(c.plan) + aspectOver(c.rows, c.cols) +
+    Math.max(c.rows, c.cols) * slantsOf(c.plan);
+  const route = (virtual: Component[], rows: number, cols: number, movedIds: Set<string>, repair = false): Candidate => {
     const tryBoard: Board = { ...board, rows, cols, cuts: [], wires: [] };
     const plan = deriveCompletion(tryBoard, virtual, componentDefs, nets, netAssignments, {
       allowSharedJoints: lockedParts.length > 0,
+      ...(repair ? { repairSlants: true } : {}),
     });
     const overCap =
       (limits.maxRows ? Math.max(0, rows - limits.maxRows) : 0) +
@@ -840,6 +855,247 @@ export function computeAutoLayout2(
     if (options?.harvest !== false && cur.bad === 0) {
       const full = compactPlacements(cur.virtual, componentDefs, netOfPin, cur.rows, cur.cols);
       if (full.removals > 0) route(full.comps, full.rows, full.cols, cur.movedIds);
+    }
+  }
+  // ── Wire channels: buy straightness with a blank line ──
+  // When the plan still has slanted wires or wires running over parts,
+  // offer boards with one inserted blank line. A blank column is a
+  // vertical wire channel: every strip crossing it gains a free,
+  // crossing-free hole, so any two of those strips connect vertically
+  // there. A blank row is a relay strip: horizontal travel on copper with
+  // two vertical hops. route() adopts an insertion only when it beats the
+  // current candidate on (bad, cost) — the line's area must pay for the
+  // mess it removes. Runs last so no later compaction can harvest the
+  // channel away; skipped with locked parts (content must not shift).
+  if (lockedParts.length === 0 && chosen!.bad === 0) {
+    const lineStraddled = (comps: Component[], isCol: boolean, at: number): boolean =>
+      comps.some((c) => {
+        if (!c.boardPos || c.boardExcluded) return false;
+        const def = resolveComponentDef(c, componentDefs);
+        if (!def) return false;
+        const r = def.flexible
+          ? (() => {
+              const p2 = c.flexibleEndPos ?? c.boardPos!;
+              return {
+                minRow: Math.min(c.boardPos!.row, p2.row),
+                minCol: Math.min(c.boardPos!.col, p2.col),
+                maxRow: Math.max(c.boardPos!.row, p2.row),
+                maxCol: Math.max(c.boardPos!.col, p2.col),
+              };
+            })()
+          : getComponentBounds(def, c.boardPos, c.rotation);
+        return isCol ? r.minCol < at && at <= r.maxCol : r.minRow < at && at <= r.maxRow;
+      });
+    const insertLine = (comps: Component[], isCol: boolean, at: number): Component[] =>
+      comps.map((c) => {
+        if (!c.boardPos) return c;
+        const shift = (p: BoardPosition): BoardPosition =>
+          isCol
+            ? p.col >= at ? { row: p.row, col: p.col + 1 } : p
+            : p.row >= at ? { row: p.row + 1, col: p.col } : p;
+        return {
+          ...c,
+          boardPos: shift(c.boardPos),
+          ...(c.flexibleEndPos ? { flexibleEndPos: shift(c.flexibleEndPos) } : {}),
+        };
+      });
+    for (let round = 0; round < 3; round++) {
+      const cur: Candidate = chosen!;
+      const obstacles: WireObstacles = { rects: [], bodies: [] };
+      for (const c of cur.virtual) {
+        if (!c.boardPos || c.boardExcluded) continue;
+        const def = resolveComponentDef(c, componentDefs);
+        if (!def) continue;
+        if (def.flexible) obstacles.bodies.push({ p1: c.boardPos, p2: c.flexibleEndPos ?? c.boardPos });
+        else obstacles.rects.push(getComponentBounds(def, c.boardPos, c.rotation));
+      }
+      const offenders = cur.plan.wires.filter(
+        (w) => w.from.col !== w.to.col || wireExtraLength(w.from, w.to, obstacles) > 0
+      );
+      if (offenders.length === 0) break;
+      const colCands = new Set<number>();
+      const rowCands = new Set<number>();
+      for (const w of offenders) {
+        const loC = Math.min(w.from.col, w.to.col);
+        const hiC = Math.max(w.from.col, w.to.col);
+        if (loC !== hiC) {
+          // a channel column anywhere between the endpoints gives both
+          // strips a shared free column; a relay row between them lets two
+          // vertical hops replace the slant
+          colCands.add(loC + 1);
+          colCands.add(hiC);
+          colCands.add((loC + hiC + 1) >> 1);
+          const loR = Math.min(w.from.row, w.to.row);
+          const hiR = Math.max(w.from.row, w.to.row);
+          if (hiR > loR) rowCands.add((loR + hiR + 1) >> 1);
+        } else {
+          // vertical wire over parts: a channel right beside it clears the path
+          colCands.add(loC);
+          colCands.add(loC + 1);
+        }
+      }
+      if (limits.maxCols !== undefined && cur.cols + 1 > limits.maxCols) colCands.clear();
+      if (limits.maxRows !== undefined && cur.rows + 1 > limits.maxRows) rowCands.clear();
+      for (const at of colCands) {
+        if (at < 1 || at > cur.cols - 1) continue; // edge channels are tried above
+        if (lineStraddled(cur.virtual, true, at)) continue;
+        route(insertLine(cur.virtual, true, at), cur.rows, cur.cols + 1, cur.movedIds);
+      }
+      for (const at of rowCands) {
+        if (at < 1 || at > cur.rows - 1) continue;
+        if (lineStraddled(cur.virtual, false, at)) continue;
+        route(insertLine(cur.virtual, false, at), cur.rows + 1, cur.cols, cur.movedIds);
+      }
+      if (chosen === cur) break; // no insertion paid for itself
+    }
+  }
+  // ── Slant repairs on the final candidate ──
+  // First the free move: let deriveCompletion slide its own cuts to open
+  // shared columns (repairSlants). Then tap slides: a one-hole part can
+  // move along its row for free — cuts and wires are re-derived from the
+  // pin positions, so any spot that routes is legal — and route() only
+  // adopts a move that routes strictly better.
+  if (chosen!.bad === 0) {
+    route(chosen!.virtual, chosen!.rows, chosen!.cols, chosen!.movedIds, true);
+    const afterEntryRepair: Candidate = chosen!;
+    const hk = (r: number, c: number) => `${r}:${c}`;
+    for (let round = 0; round < 3; round++) {
+      const cur: Candidate = chosen!;
+      // route() swaps `chosen` on adoption; an opaque check keeps TS from
+      // narrowing the comparison away
+      const stillCur = () => (chosen as Candidate) === cur;
+      const offenders = cur.plan.wires.filter((w) => w.from.col !== w.to.col);
+      if (offenders.length === 0) break;
+      const segBoard: Board = { ...board, rows: cur.rows, cols: cur.cols, cuts: cur.plan.cuts, wires: [] };
+      const segments = computeStripSegments(segBoard, cur.virtual, componentDefs, netAssignments);
+      const segAt = (r: number, c: number) =>
+        segments.find((s) => s.row === r && c >= s.startCol && c <= s.endCol);
+      // Physical blockers only (pins, bodies, corridors): everything else
+      // — cuts, wire endpoints — is re-derived per candidate anyway
+      const phys = new Set<string>();
+      const tapAt = new Map<string, Component>();
+      for (const c of cur.virtual) {
+        if (!c.boardPos || c.boardExcluded) continue;
+        const def = resolveComponentDef(c, componentDefs);
+        if (!def) continue;
+        if (def.flexible) {
+          const p2 = c.flexibleEndPos ?? c.boardPos;
+          for (const h of corridorHoles(c.boardPos, p2)) phys.add(hk(h.row, h.col));
+          phys.add(hk(c.boardPos.row, c.boardPos.col));
+          phys.add(hk(p2.row, p2.col));
+        } else {
+          const b = getComponentBounds(def, c.boardPos, c.rotation);
+          for (let r = b.minRow; r <= b.maxRow; r++) {
+            for (let cc = b.minCol; cc <= b.maxCol; cc++) phys.add(hk(r, cc));
+          }
+          if (def.pins.length === 1 && def.width === 1 && def.height === 1 && !lockedIds.has(c.id)) {
+            tapAt.set(hk(c.boardPos.row, c.boardPos.col), c);
+          }
+        }
+      }
+      let attempts = 0;
+      for (const w of offenders) {
+        if (!stillCur() || attempts >= 8) break;
+        const sA = segAt(w.from.row, w.from.col);
+        const sB = segAt(w.to.row, w.to.col);
+        if (!sA || !sB) continue;
+        const lo = Math.max(sA.startCol, sB.startCol);
+        const hi = Math.min(sA.endCol, sB.endCol);
+        if (hi < lo) {
+          // Disjoint spans: pins between the spans keep the copper from
+          // reaching a shared column. Clear the approach: pick a target
+          // column free on the far row, move every tap between it and this
+          // segment out of the way, and let the re-derived cuts plus the
+          // cut-slide repair extend the copper to it.
+          for (const [seg, other] of [
+            [sA, sB],
+            [sB, sA],
+          ] as const) {
+            if (!stillCur() || attempts >= 8) break;
+            const left = other.endCol < seg.startCol;
+            const cands: number[] = [];
+            for (let c2 = other.startCol; c2 <= other.endCol; c2++) {
+              if (!phys.has(hk(other.row, c2))) cands.push(c2);
+            }
+            if (left) cands.reverse(); // nearest to this segment first
+            for (const c2 of cands.slice(0, 3)) {
+              if (!stillCur() || attempts >= 8) break;
+              const zone: [number, number] = left ? [c2, seg.startCol - 1] : [seg.endCol + 1, c2];
+              const movers: Component[] = [];
+              let clear = true;
+              for (let z = zone[0]; z <= zone[1]; z++) {
+                const k = hk(seg.row, z);
+                const tap = tapAt.get(k);
+                if (tap) movers.push(tap);
+                else if (phys.has(k)) {
+                  clear = false;
+                  break;
+                }
+              }
+              if (!clear || movers.length === 0) continue;
+              // park the movers beyond the target, away from this segment
+              const spots: number[] = [];
+              if (left) {
+                for (let z = c2 - 1; z >= 0 && spots.length < movers.length; z--) {
+                  if (!phys.has(hk(seg.row, z))) spots.push(z);
+                }
+              } else {
+                for (let z = c2 + 1; z < cur.cols && spots.length < movers.length; z++) {
+                  if (!phys.has(hk(seg.row, z))) spots.push(z);
+                }
+              }
+              if (spots.length < movers.length) continue;
+              attempts++;
+              const byTap = new Map(movers.map((tap, i) => [tap.id, spots[i]]));
+              const moved = cur.virtual.map((c) =>
+                byTap.has(c.id) ? { ...c, boardPos: { row: seg.row, col: byTap.get(c.id)! } } : c
+              );
+              route(moved, cur.rows, cur.cols, cur.movedIds, true);
+            }
+          }
+          continue;
+        }
+        for (let col = lo; col <= hi && stillCur(); col++) {
+          for (const [seg, other] of [
+            [sA, sB],
+            [sB, sA],
+          ] as const) {
+            const tap = tapAt.get(hk(seg.row, col));
+            if (!tap) continue;
+            if (phys.has(hk(other.row, col))) continue;
+            // any free hole on the tap's row works; ones outside the shared
+            // window first, since they cannot re-block it
+            const targets: number[] = [];
+            for (let t = 0; t < cur.cols; t++) {
+              if (t === col || phys.has(hk(seg.row, t))) continue;
+              targets.push(t);
+            }
+            targets.sort(
+              (a, b) =>
+                Number(a >= lo && a <= hi) - Number(b >= lo && b <= hi) ||
+                Math.abs(a - col) - Math.abs(b - col)
+            );
+            for (const t of targets) {
+              if (attempts >= 8) break;
+              attempts++;
+              // no repair here: freeing the column enables a direct
+              // vertical on its own, and nesting the cut-slide search into
+              // every candidate would multiply full re-routes
+              const moved = cur.virtual.map((c) =>
+                c.id === tap.id ? { ...c, boardPos: { row: seg.row, col: t } } : c
+              );
+              route(moved, cur.rows, cur.cols, cur.movedIds);
+              if (!stillCur()) break;
+            }
+          }
+        }
+      }
+      if (stillCur()) break; // nothing adopted this round
+    }
+    // tap slides route without the cut-slide search; one repair pass on
+    // whatever they produced picks up the compound cases
+    if (chosen !== afterEntryRepair) {
+      route(chosen!.virtual, chosen!.rows, chosen!.cols, chosen!.movedIds, true);
     }
   }
   report("place", 0.9);

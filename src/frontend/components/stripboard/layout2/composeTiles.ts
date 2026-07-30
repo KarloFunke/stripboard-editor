@@ -28,7 +28,7 @@ export function sharedNetCount(a: Tile, b: Tile): number {
   return n;
 }
 
-function layoutBands(tiles: Tile[], assign: number[], bandCount: number, gap: number): Floorplan | null {
+function layoutBands(tiles: Tile[], assign: number[], bandCount: number, gap: number, capped: boolean): Floorplan | null {
   const bands: Tile[][] = Array.from({ length: bandCount }, () => []);
   tiles.forEach((t, i) => bands[assign[i]].push(t));
   if (bands.some((b) => b.length === 0)) return null;
@@ -128,21 +128,70 @@ function layoutBands(tiles: Tile[], assign: number[], bandCount: number, gap: nu
     rows += bandH + (bi > 0 ? 1 : 0);
   }
   for (const [, keys] of netRowKeys) wiresEst += Math.max(0, keys.size - 1);
+  // Wire length as the MST over the net's row fragments (points on one row
+  // share copper), each edge the closest point pair. A bounding box would
+  // give interior fragments no gradient, so band/offset choices could not
+  // pull a many-fragment net together. Under a locked dimension the classic
+  // bounding box stays: its area-first gradient is what keeps the plan
+  // inside the cap (matches floorplan2D).
   let wireLen = 0;
+  if (capped) {
+    for (const [, pts] of netPts) {
+      if (pts.length < 2) continue;
+      const rs = pts.map((p) => p.r);
+      const xs = pts.map((p) => p.x);
+      wireLen += Math.max(...rs) - Math.min(...rs) + Math.max(...xs) - Math.min(...xs);
+    }
+    return { placedTiles, bandHeights, rows, cols, wiresEst, wireLen, area: rows * cols };
+  }
   for (const [, pts] of netPts) {
     if (pts.length < 2) continue;
-    const rs = pts.map((p) => p.r);
-    const xs = pts.map((p) => p.x);
-    wireLen += Math.max(...rs) - Math.min(...rs) + Math.max(...xs) - Math.min(...xs);
+    const byRow = new Map<number, { r: number; x: number }[]>();
+    for (const p of pts) {
+      if (!byRow.has(p.r)) byRow.set(p.r, []);
+      byRow.get(p.r)!.push(p);
+    }
+    const frags = [...byRow.values()];
+    const k = frags.length;
+    if (k < 2) continue;
+    const fragDist = (a: { r: number; x: number }[], b: { r: number; x: number }[]) => {
+      let d = Infinity;
+      for (const p of a) {
+        for (const q of b) d = Math.min(d, Math.abs(p.r - q.r) + Math.abs(p.x - q.x));
+      }
+      return d;
+    };
+    const inTree = new Array<boolean>(k).fill(false);
+    const best = new Array<number>(k).fill(Infinity);
+    inTree[0] = true;
+    for (let i = 1; i < k; i++) best[i] = fragDist(frags[0], frags[i]);
+    for (let step = 1; step < k; step++) {
+      let pick = -1;
+      for (let i = 0; i < k; i++) {
+        if (!inTree[i] && (pick < 0 || best[i] < best[pick])) pick = i;
+      }
+      wireLen += best[pick];
+      inTree[pick] = true;
+      for (let i = 0; i < k; i++) {
+        if (!inTree[i]) best[i] = Math.min(best[i], fragDist(frags[pick], frags[i]));
+      }
+    }
   }
   return { placedTiles, bandHeights, rows, cols, wiresEst, wireLen, area: rows * cols };
 }
 
 export function composeTiles(tiles: Tile[], gap: number, limits: DimLimits): Floorplan | null {
   if (tiles.length === 0) return null;
-  // Area and inter-tile wire length trade off: a cell of wire is about as
-  // ugly as a cell of board, and each extra wire costs a few cells' worth.
+  // Area and inter-tile wiring trade off: tuned against the human-layout
+  // corpus, a hole of estimated wire is worth ~3 cells of board and each
+  // extra wire ~8 — humans spend area freely to keep link wires few and
+  // short, and the routed results confirm the trade (matches floorplan2D).
+  // Under a user-locked dimension the conservative density-first weights
+  // stay, so the cap always beats wire tidiness.
   // A floorplan beyond a locked dimension is close to useless.
+  const capped = limits.maxRows !== undefined || limits.maxCols !== undefined;
+  const wWire = capped ? 4 : 8;
+  const wLen = capped ? 1 : 3;
   const overCap = (f: Floorplan) =>
     (limits.maxRows ? Math.max(0, f.rows - limits.maxRows) : 0) +
     (limits.maxCols ? Math.max(0, f.cols - limits.maxCols) : 0);
@@ -151,7 +200,7 @@ export function composeTiles(tiles: Tile[], gap: number, limits: DimLimits): Flo
   const effArea = (f: Floorplan) =>
     (limits.maxRows ? Math.max(limits.maxRows, f.rows) : f.rows) *
     (limits.maxCols ? Math.max(limits.maxCols, f.cols) : f.cols);
-  const badness = (f: Floorplan) => effArea(f) + 4 * f.wiresEst + f.wireLen + 200 * overCap(f);
+  const badness = (f: Floorplan) => effArea(f) + wWire * f.wiresEst + wLen * f.wireLen + 200 * overCap(f);
   const better = (a: Floorplan, b: Floorplan) =>
     badness(a) < badness(b) ||
     (badness(a) === badness(b) && Math.max(a.rows, a.cols) < Math.max(b.rows, b.cols));
@@ -168,7 +217,7 @@ export function composeTiles(tiles: Tile[], gap: number, limits: DimLimits): Flo
       const assign = new Array<number>(tiles.length).fill(0);
       const rec = (i: number) => {
         if (i === tiles.length) {
-          consider(layoutBands(tiles, assign, bandCount, gap));
+          consider(layoutBands(tiles, assign, bandCount, gap, capped));
           return;
         }
         for (let b = 0; b < bandCount; b++) {
@@ -201,7 +250,7 @@ export function composeTiles(tiles: Tile[], gap: number, limits: DimLimits): Flo
       assign[tiles.indexOf(t)] = band;
       x += t.width + gap;
     }
-    consider(layoutBands(tiles, assign, band + 1, gap));
+    consider(layoutBands(tiles, assign, band + 1, gap, capped));
   }
   return best;
 }

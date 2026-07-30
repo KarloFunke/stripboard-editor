@@ -176,13 +176,16 @@ export interface FootprintRect {
 }
 
 // ── Wire tidiness (soft costs, expressed as extra effective length) ──
-// Short off-axis jumpers are fine; long ones that are slightly (or very)
-// off 90° look messy, so every hole beyond WIRE_OFFAXIS_FREE of a non-
-// axis-aligned wire counts half again. Wires may still cross components
-// (insulated), but each crossed component costs WIRE_CROSS_EXTRA holes so
-// a clean detour of similar length wins. Crossing other wires stays free.
-export const WIRE_OFFAXIS_FREE = 3;
-export const WIRE_OFFAXIS_RATE = 0.5;
+// Humans wire strip-to-strip: vertical jumpers, copper for the horizontal
+// travel. Any wire with horizontal travel pays every hole beyond
+// WIRE_OFFAXIS_FREE twice over, so a vertical wire — or a pair of vertical
+// hops through a relay strip — wins whenever one exists; one-hole diagonal
+// hops between adjacent strips stay near-free (grid parts need them).
+// Wires may still cross components (insulated), but each crossed component
+// costs WIRE_CROSS_EXTRA holes so a clean detour of similar length wins.
+// Crossing other wires stays free.
+export const WIRE_OFFAXIS_FREE = 1;
+export const WIRE_OFFAXIS_RATE = 2;
 export const WIRE_CROSS_EXTRA = 8;
 
 export interface WireObstacles {
@@ -212,7 +215,7 @@ export function wireExtraLength(from: Pt, to: Pt, obstacles: WireObstacles): num
   const dr = Math.abs(to.row - from.row);
   const dc = Math.abs(to.col - from.col);
   let extra = 0;
-  if (dr > 1e-9 && dc > 1e-9) {
+  if (dc > 1e-9) {
     extra += WIRE_OFFAXIS_RATE * Math.max(0, Math.hypot(dr, dc) - WIRE_OFFAXIS_FREE);
   }
   // Bounding-box prefilter: this runs for thousands of candidate pairs per
