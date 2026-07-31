@@ -237,6 +237,94 @@ export function wireExtraLength(from: Pt, to: Pt, obstacles: WireObstacles): num
 }
 
 /**
+ * wireExtraLength with the obstacle scan bounded to the wire's own column
+ * span, plus a pair memo. Candidate scoring calls it millions of times per
+ * solve and a linear scan of every obstacle per call dominates large
+ * solves; almost all evaluated pairs are short. Endpoints must be integer
+ * board holes (the memo key packs them; boards stay far below 4096).
+ */
+export class WireObstacleIndex {
+  private minRow: number[] = [];
+  private maxRow: number[] = [];
+  private rects: (FootprintRect | null)[] = [];
+  private bodies: ({ p1: Pt; p2: Pt } | null)[] = [];
+  private buckets: number[][] = [];
+  private base = 0;
+  private stamp: Int32Array;
+  private gen = 0;
+  private memo = new Map<number, number>();
+
+  constructor(obstacles: WireObstacles) {
+    let lo = Infinity;
+    let hi = -Infinity;
+    const spans: { minC: number; maxC: number }[] = [];
+    for (const rect of obstacles.rects) {
+      this.minRow.push(rect.minRow);
+      this.maxRow.push(rect.maxRow);
+      this.rects.push(rect);
+      this.bodies.push(null);
+      spans.push({ minC: rect.minCol, maxC: rect.maxCol });
+    }
+    for (const body of obstacles.bodies) {
+      this.minRow.push(Math.min(body.p1.row, body.p2.row));
+      this.maxRow.push(Math.max(body.p1.row, body.p2.row));
+      this.rects.push(null);
+      this.bodies.push(body);
+      spans.push({ minC: Math.min(body.p1.col, body.p2.col), maxC: Math.max(body.p1.col, body.p2.col) });
+    }
+    for (const s of spans) {
+      if (s.minC < lo) lo = Math.floor(s.minC);
+      if (s.maxC > hi) hi = Math.ceil(s.maxC);
+    }
+    this.base = lo;
+    if (spans.length > 0) {
+      this.buckets = Array.from({ length: hi - lo + 1 }, () => []);
+      spans.forEach((s, oi) => {
+        for (let c = Math.floor(s.minC); c <= Math.ceil(s.maxC); c++) this.buckets[c - lo].push(oi);
+      });
+    }
+    this.stamp = new Int32Array(spans.length);
+  }
+
+  extraLength(from: Pt, to: Pt): number {
+    const a = from.row * 4096 + from.col;
+    const b = to.row * 4096 + to.col;
+    const key = a < b ? a * 16777216 + b : b * 16777216 + a;
+    const hit = this.memo.get(key);
+    if (hit !== undefined) return hit;
+    const dr = Math.abs(to.row - from.row);
+    const dc = Math.abs(to.col - from.col);
+    let extra = 0;
+    if (dc > 1e-9) {
+      extra += WIRE_OFFAXIS_RATE * Math.max(0, Math.hypot(dr, dc) - WIRE_OFFAXIS_FREE);
+    }
+    const minR = Math.min(from.row, to.row);
+    const maxR = Math.max(from.row, to.row);
+    const cLo = Math.max(Math.min(from.col, to.col) - this.base, 0);
+    const cHi = Math.min(Math.max(from.col, to.col) - this.base, this.buckets.length - 1);
+    // A slanted wire's span touches several buckets; the stamp keeps each
+    // obstacle counted once, matching wireExtraLength's flat scan exactly.
+    const gen = ++this.gen;
+    for (let c = cLo; c <= cHi; c++) {
+      for (const oi of this.buckets[c]) {
+        if (this.stamp[oi] === gen) continue;
+        this.stamp[oi] = gen;
+        if (this.maxRow[oi] < minR || this.minRow[oi] > maxR) continue;
+        const rect = this.rects[oi];
+        if (rect) {
+          if (segmentIntersectsRect(from, to, rect)) extra += WIRE_CROSS_EXTRA;
+        } else {
+          const body = this.bodies[oi]!;
+          if (segmentsIntersect(from, to, body.p1, body.p2)) extra += WIRE_CROSS_EXTRA;
+        }
+      }
+    }
+    this.memo.set(key, extra);
+    return extra;
+  }
+}
+
+/**
  * Whether a flexible part's body (pin-to-pin segment minus the thin lead
  * ends) enters a rigid component's footprint rectangle. This is a true
  * geometric test: hole-based corridor checks miss diagonals that thread

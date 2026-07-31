@@ -18,10 +18,12 @@ import { computeStripSegments, StripSegment } from "./stripSegments";
 import { computeConnectivity } from "./connectivity";
 import { bodyStyle } from "./componentGlyphs";
 import {
+  WIRE_OFFAXIS_FREE,
+  WIRE_OFFAXIS_RATE,
+  WireObstacleIndex,
   WireObstacles,
   corridorHoles,
   segmentsOverlapCollinear,
-  wireExtraLength,
 } from "./flexGeometry";
 
 export interface AutoFinishResult {
@@ -382,7 +384,7 @@ function deriveWires(
   occupied: Set<string>,
   existingWires: { from: BoardPosition; to: BoardPosition }[],
   reserveNets: Set<string>,
-  obstacles: WireObstacles,
+  obstacleIndex: WireObstacleIndex,
   issues: string[],
   starvedNetIds: string[],
   starvedPinPositions: BoardPosition[],
@@ -580,6 +582,13 @@ function deriveWires(
     sharedJoints: number; // wires soldered into a pin's hole (no free hole left)
   }
 
+  // Cheapest a pair at this offset can possibly cost: bare distance plus,
+  // for slanted pairs, the unavoidable off-axis penalty.
+  const slantLowerBound = (dr: number, dc: number): number => {
+    const dist = Math.hypot(dr, dc);
+    return dc !== 0 ? dist + WIRE_OFFAXIS_RATE * Math.max(0, dist - WIRE_OFFAXIS_FREE) : dist;
+  };
+
   const routeAll = (order: Net[]): RoutePass => {
     const pass: RoutePass = { wires: [], extraCuts: [], issues: [], starved: [], starvedPins: [], overlapped: [], mess: 0, sharedJoints: 0 };
     const allWires = [...existingWires];
@@ -594,6 +603,17 @@ function deriveWires(
     const passEndpoints = (gi: number): BoardPosition[] => {
       const holes = endpointHolesOfGroup(gi);
       return donated.size === 0 ? holes : holes.filter((h) => !donated.has(holeKey(h.row, h.col)));
+    };
+    // Endpoint columns per group, rebuilt only when a donation shrinks the
+    // pass's endpoint sets — the relay search asks for them per wire.
+    const bColsCache = new Map<number, Map<number, number[]>>();
+    const bColsOf = (gi: number): Map<number, number[]> => {
+      let m = bColsCache.get(gi);
+      if (!m) {
+        m = byColOf(passEndpoints(gi));
+        bColsCache.set(gi, m);
+      }
+      return m;
     };
     // A tail cannot be severed once a routed wire already ends inside it
     const wireEnds = new Set<string>();
@@ -657,8 +677,11 @@ function deriveWires(
             // extra length; the bare distance is a lower bound, so most
             // pairs skip the obstacle tests entirely.
             if (best && dist >= best.cost + 1e-9) return null;
+            // A slanted pair's off-axis penalty is known before any obstacle
+            // test — a hard floor on its cost, so most slants prune here.
+            if (best && slantLowerBound(ha.row - hb.row, dc) > best.cost + 1e-9) return null;
             const mess =
-              wireExtraLength(ha, hb, obstacles) +
+              obstacleIndex.extraLength(ha, hb) +
               (sharedPinPen.get(holeKey(ha.row, ha.col)) ?? 0) +
               (sharedPinPen.get(holeKey(hb.row, hb.col)) ?? 0);
             const cost = dist + mess;
@@ -686,14 +709,14 @@ function deriveWires(
                     if (cols[mid] < hb.col) lo = mid + 1;
                     else hi = mid;
                   }
-                  // Expand outward in both column directions; stop once the
-                  // bare distance can no longer beat (or tie) the best.
+                  // Expand outward in both column directions; stop once even
+                  // the pair's cost floor can no longer beat (or tie) the best.
                   for (let k = lo; k < cols.length; k++) {
-                    if (best && Math.hypot(dr, cols[k] - hb.col) > best.cost + 1e-9) break;
+                    if (best && slantLowerBound(dr, cols[k] - hb.col) > best.cost + 1e-9) break;
                     best = consider({ row, col: cols[k] }, hb, gi) ?? best;
                   }
                   for (let k = lo - 1; k >= 0; k--) {
-                    if (best && Math.hypot(dr, hb.col - cols[k]) > best.cost + 1e-9) break;
+                    if (best && slantLowerBound(dr, hb.col - cols[k]) > best.cost + 1e-9) break;
                     best = consider({ row, col: cols[k] }, hb, gi) ?? best;
                   }
                 }
@@ -734,7 +757,7 @@ function deriveWires(
                 const from = { row: ra, col };
                 const to = { row: rb, col };
                 const mess =
-                  wireExtraLength(from, to, obstacles) +
+                  obstacleIndex.extraLength(from, to) +
                   (sharedPinPen.get(holeKey(ra, col)) ?? 0) +
                   (sharedPinPen.get(holeKey(rb, col)) ?? 0);
                 const cost = d + mess;
@@ -747,7 +770,7 @@ function deriveWires(
         const findRelayBest = (allowOverlap: boolean, maxHops: number): RelayChoice | null => {
           let best: RelayChoice | null = null;
           for (const gi of remaining) {
-            const bCols = byColOf(passEndpoints(gi));
+            const bCols = bColsOf(gi);
             if (bCols.size === 0) continue;
             for (let ci = 0; ci < relayCands.length; ci++) {
               const cand = relayCands[ci];
@@ -813,6 +836,7 @@ function deriveWires(
           if (relayOwner.get(relay.relay) === undefined && cand.cut) {
             pass.extraCuts.push(cand.cut);
             for (const k of cand.holeSet) donated.add(k);
+            bColsCache.clear();
           }
           for (const w of [relay.w1, relay.w2]) {
             pass.wires.push({ from: w.from, to: w.to });
@@ -936,6 +960,9 @@ export function deriveCompletion(
       obstacles.rects.push(getComponentBounds(def, comp.boardPos, comp.rotation));
     }
   }
+  // Shared across every routeWith attempt: obstacles don't depend on cuts,
+  // so the pair memo keeps paying through repair re-routes and retries.
+  const obstacleIndex = new WireObstacleIndex(obstacles);
 
   interface RouteAttempt {
     cuts: Cut[];
@@ -957,7 +984,7 @@ export function deriveCompletion(
     const starvedPinPositions: BoardPosition[] = [];
     const routeNets = opts?.evalNets ? nets.filter((n) => opts.evalNets!.has(n.id)) : nets;
     const { wires, extraCuts, wireMess, sharedJoints } = deriveWires(
-      segments, connectivity, routeNets, pins, occupied, board.wires, reserveNets, obstacles, wireIssues, starvedNetIds, starvedPinPositions,
+      segments, connectivity, routeNets, pins, occupied, board.wires, reserveNets, obstacleIndex, wireIssues, starvedNetIds, starvedPinPositions,
       opts?.allowSharedJoints ?? false,
       opts?.evalNets !== undefined
     );
