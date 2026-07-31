@@ -169,6 +169,10 @@ interface HistoryState {
   // operation (e.g. bulk delete) produces a single undo entry.
   _suppressSnapshot: boolean;
   _editSeq: number;
+  // The _editSeq that last counted toward boardEditsSinceAutoLayout — caps
+  // the provenance counter at one bump per undo step (drag gestures and
+  // transact() batches push a single snapshot).
+  _lastBoardEditSeq: number;
   isDirty: boolean;
   markClean: () => void;
   /** Run fn as one undoable step: one snapshot up front, none in between. */
@@ -218,6 +222,14 @@ function restoreProject(snapshot: Project): Partial<ProjectStore> {
     schematicWires: snapshot.schematicWires,
     board: snapshot.board,
   };
+}
+
+// One structural board edit for the layout-provenance counter. Guarded by
+// _editSeq so per-pixel drag updates and batched mutations count once per
+// undo step; undo/redo advance _editSeq, so edits after them count fresh.
+function bumpBoardEdits(s: Pick<ProjectStore, "boardEditsSinceAutoLayout" | "_editSeq" | "_lastBoardEditSeq">) {
+  if (s._lastBoardEditSeq === s._editSeq) return {};
+  return { boardEditsSinceAutoLayout: (s.boardEditsSinceAutoLayout ?? 0) + 1, _lastBoardEditSeq: s._editSeq };
 }
 
 /**
@@ -308,6 +320,9 @@ function prepareProjectState(data: Project) {
     spanOverrides: data.spanOverrides,
     clearanceOverrides: data.clearanceOverrides,
     tidyWires: data.tidyWires,
+    autoLayoutUsed: data.autoLayoutUsed,
+    boardEditsSinceAutoLayout: data.boardEditsSinceAutoLayout,
+    _lastBoardEditSeq: -1,
     wirePlacementMode: false,
     wirePlacementFrom: null,
     schematicWireDrawMode: false,
@@ -332,6 +347,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   _redoStack: [],
   _suppressSnapshot: false,
   _editSeq: 0,
+  _lastBoardEditSeq: -1,
   canUndo: false,
   canRedo: false,
   isDirty: false,
@@ -532,6 +548,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set((s) => ({
       components: s.components.filter((c) => c.id !== id),
       netAssignments: s.netAssignments.filter((a) => a.componentId !== id),
+      // Deleting a part that sat on the board changes the board
+      ...(s.components.find((c) => c.id === id)?.boardPos ? bumpBoardEdits(s) : {}),
     }));
     // Recalculate nets — wires are positional so they stay, but pin assignments change
     const s = get();
@@ -605,6 +623,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         }
         return { ...c, boardPos: pos, flexibleEndPos: flexEnd };
       }),
+      ...bumpBoardEdits(s),
     }));
   },
 
@@ -651,6 +670,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       return {
         components: newComponents,
         board: { ...s.board, wires: newWires, cuts: newCuts },
+        ...bumpBoardEdits(s),
       };
     }),
 
@@ -661,6 +681,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         // Unplacing clears the lock: it refers to a board position
         c.id === id ? { ...c, boardPos: null, flexibleEndPos: undefined, locked: undefined } : c
       ),
+      ...bumpBoardEdits(s),
     }));
   },
 
@@ -679,6 +700,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
             }
           : c
       ),
+      // Only counts as a board change when it takes a placed part off the board
+      ...(excluded && s.components.find((c) => c.id === id)?.boardPos ? bumpBoardEdits(s) : {}),
     }));
   },
 
@@ -709,6 +732,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       components: s.components.map((c) =>
         c.id === id ? { ...c, flexibleEndPos: pos } : c
       ),
+      ...bumpBoardEdits(s),
     })),
 
   rotateComponent: (id) => {
@@ -748,6 +772,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         components: s2.components.map((c) =>
           c.id === id ? { ...c, boardPos: { row: new1Row, col: new1Col }, flexibleEndPos: { row: new2Row, col: new2Col } } : c
         ),
+        ...bumpBoardEdits(s2),
       }));
       return;
     }
@@ -764,6 +789,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       components: s2.components.map((c) =>
         c.id === id ? { ...c, rotation: newRotation } : c
       ),
+      ...bumpBoardEdits(s2),
     }));
   },
 
@@ -828,6 +854,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       components: s2.components.map((c) =>
         updates.has(c.id) ? { ...c, ...updates.get(c.id)! } : c
       ),
+      ...bumpBoardEdits(s2),
     }));
   },
 
@@ -932,6 +959,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     get().pushSnapshot();
     set((s) => ({
       board: { ...s.board, rows, cols },
+      ...bumpBoardEdits(s),
     }));
   },
 
@@ -1006,7 +1034,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         cuts: s.board.cuts.map((cut) => shiftPos(cut)),
         wires: s.board.wires.map((w) => ({ ...w, from: shiftPos(w.from), to: shiftPos(w.to) })),
       };
-      return { components, board, isDirty: true };
+      return { components, board, isDirty: true, ...bumpBoardEdits(s) };
     });
   },
 
@@ -1067,7 +1095,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         cuts: s.board.cuts.filter((c) => !cutGone(c)).map((cut) => shiftPos(cut)),
         wires: s.board.wires.filter((w) => !wireGone(w)).map((w) => ({ ...w, from: shiftPos(w.from), to: shiftPos(w.to) })),
       };
-      return { components, board: newBoard, isDirty: true };
+      return { components, board: newBoard, isDirty: true, ...bumpBoardEdits(s) };
     });
   },
 
@@ -1075,6 +1103,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     get().pushSnapshot();
     set((s) => ({
       board: { ...s.board, cuts: [...s.board.cuts, cut] },
+      ...bumpBoardEdits(s),
     }));
   },
 
@@ -1087,6 +1116,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           (c) => !(c.row === cut.row && c.col === cut.col && (c.kind === "hole") === (cut.kind === "hole"))
         ),
       },
+      ...bumpBoardEdits(s),
     }));
   },
 
@@ -1100,6 +1130,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       },
       wirePlacementMode: false,
       wirePlacementFrom: null,
+      ...bumpBoardEdits(s),
     }));
   },
 
@@ -1110,6 +1141,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         ...s.board,
         wires: s.board.wires.filter((w) => w.id !== wireId),
       },
+      ...bumpBoardEdits(s),
     }));
   },
 
@@ -1154,6 +1186,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         cuts: result.cuts,
         wires: result.wires.map((w) => ({ id: generateId(), from: w.from, to: w.to })),
       },
+      autoLayoutUsed: true,
+      boardEditsSinceAutoLayout: 0,
+      _lastBoardEditSeq: -1,
     }));
   },
 
@@ -1274,6 +1309,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       spanOverrides: s.spanOverrides,
       clearanceOverrides: s.clearanceOverrides,
       tidyWires: s.tidyWires,
+      autoLayoutUsed: s.autoLayoutUsed,
+      boardEditsSinceAutoLayout: s.boardEditsSinceAutoLayout,
     };
   },
 
@@ -1306,6 +1343,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     spanOverrides: undefined,
     clearanceOverrides: undefined,
     tidyWires: undefined,
+    autoLayoutUsed: undefined,
+    boardEditsSinceAutoLayout: undefined,
+    _lastBoardEditSeq: -1,
     wirePlacementMode: false,
     wirePlacementFrom: null,
     schematicWireDrawMode: false,

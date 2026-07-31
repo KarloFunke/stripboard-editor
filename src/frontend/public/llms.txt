@@ -19,6 +19,10 @@ handing it to an automatic router.
 - Automatic layout router: places every component, sizes the board, and
   generates the strip cuts and link wires needed to complete it. It is
   deterministic, so the same circuit always produces the same layout.
+- The router also tidies its own result: a second pass straightens link
+  wires and keeps them from crossing over components, and the strip cuts
+  are placed as drilled holes lined up in shared columns, the way a
+  builder would make them.
 - Per-component-type layout settings: the allowed pin-to-pin span for
   flexible parts (e.g. how many holes a resistor may stretch across), and
   the clearance kept around a part's body, down to 0 for placing parts
@@ -27,6 +31,9 @@ handing it to an automatic router.
   already own) and individual components can be locked in place before
   running the router, which will then design the rest of the layout
   around them.
+- Manual board editing alongside the router: place cuts and link wires by
+  hand, run wires in parallel on the same strip column, and insert or
+  delete a board row or column at any position.
 - Editable component footprints, and a custom component editor for parts
   outside the built-in library.
 - Printable 1:1 build template: a component-side placement sheet, a

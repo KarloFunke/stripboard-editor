@@ -77,12 +77,23 @@ export default function AutoLayoutGuidePage() {
               <li>
                 <span className="font-semibold text-neutral-900 dark:text-neutral-100">4. Cut and wire.</span> Once everything is
                 placed, the router identifies every point where two nets would share a strip and inserts a cut to separate them,
-                then routes link wires to join the pins that ended up on different strips.
+                then routes link wires to join the pins that ended up on different strips. Cuts are placed the way a builder would
+                make them: as a drilled-out hole rather than a scored gap, preferably under an IC body where the hole gives up
+                nothing usable, and lined up in shared columns where possible so a whole run of cuts can be drilled along one
+                straight line.
               </li>
               <li>
-                <span className="font-semibold text-neutral-900 dark:text-neutral-100">5. Refine.</span> Finally it improves the
-                result: reclaiming empty space, removing redundant wires, and where possible keeping wires from crossing over
-                components. Each refinement is verified to still produce a working board before it is accepted.
+                <span className="font-semibold text-neutral-900 dark:text-neutral-100">5. Refine.</span> The router then improves
+                the result: reclaiming empty space, removing redundant wires, and trimming blank rows and columns at the board
+                edges. Each refinement is verified to still produce a working board before it is accepted.
+              </li>
+              <li>
+                <span className="font-semibold text-neutral-900 dark:text-neutral-100">6. Straighten the wires.</span> A finished
+                board that still has slanted or crossing wires gets a second pass. The router solves the same circuit again with
+                the board width it just found held fixed, which frees it to spend space on wire channels instead of shaving area,
+                and on IC-heavy circuits it may insert a spare row or column beside a chip to act as a channel for the wires that
+                would otherwise cross it. The second result replaces the first only when it is strictly tidier and stays close to
+                the original size, so this pass never costs you a messier board.
               </li>
             </ol>
           </section>
@@ -92,8 +103,9 @@ export default function AutoLayoutGuidePage() {
             <h2 className="font-mono text-xs uppercase tracking-[0.2em] text-[var(--copper)] mb-3">Choosing between options</h2>
             <p className="text-sm text-neutral-700 dark:text-neutral-300 leading-relaxed">
               Several of these stages produce multiple candidate layouts, each of which is scored. A layout rates better when it is
-              smaller, uses fewer link wires, and has fewer wires crossing over components; the strongest candidates are carried
-              forward. The scoring is fully deterministic, so a given circuit always yields the same layout.
+              smaller, uses fewer link wires, keeps wires vertical instead of slanted, and has fewer wires crossing over
+              components or running on top of each other; the strongest candidates are carried forward. The scoring is fully
+              deterministic, so a given circuit always yields the same layout.
             </p>
           </section>
 
@@ -104,13 +116,14 @@ export default function AutoLayoutGuidePage() {
               <li><strong>Board size.</strong> Lock the rows or columns using the padlock beside their field and the router holds exactly that dimension, so the result fits a board you already own.</li>
               <li><strong>Locked parts.</strong> Fix a part in a chosen position and the router designs the remaining layout around it rather than moving it.</li>
               <li><strong>Pin spacing and clearance.</strong> Open the settings with the gear beside the <em>Auto-layout</em> button to tune each flexible part type. <em>Pin spacing</em> sets how many holes a part may span from pin to pin, so you can force resistors to stand upright or stretch flat. <em>Clearance</em> is the air the router keeps around a body: the default leaves one free strip beside the part, and lowering it to 0 lets parts of that type sit directly side by side.</li>
+              <li><strong>Straighter wires.</strong> The second pass from step 6 is the <em>Straighter wires</em> checkbox in the same settings panel. It is on by default; turning it off roughly halves the solve time and accepts whatever wiring the first pass produces.</li>
               <li><strong>Physical constraints.</strong> By default the router accounts for the space real parts occupy; it will, for example, leave a strip between two through-hole resistors instead of overlapping their bodies. The clearance setting above is what governs this, so you decide how tightly a given part type packs.</li>
             </ul>
             <p className="text-sm text-neutral-700 dark:text-neutral-300 leading-relaxed mt-3">
-              Locked parts are the hardest case for the router. Everywhere else it is free to choose positions, but a fixed part
-              forces the surrounding layout to conform to a spot it did not pick, which can enlarge the board or add wires compared
-              with an unconstrained run. It usually still reaches a working result, but this is the roughest area of the router
-              today and the one I most expect to improve in future versions.
+              Locked parts remain the hardest case for the router. Everywhere else it is free to choose positions, but a fixed
+              part forces the surrounding layout to conform to a spot it did not pick, so expect a locked run to come out somewhat
+              larger or with a few more wires than an unconstrained one. This has improved a lot over time and keeps improving,
+              but an unconstrained run will usually stay the tidier of the two.
             </p>
             <p className="text-sm text-neutral-700 dark:text-neutral-300 leading-relaxed mt-3">
               Refer to the <Link href="/guide" className="text-[var(--copper)] hover:underline">quick guide</Link> for the exact

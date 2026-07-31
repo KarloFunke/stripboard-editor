@@ -77,12 +77,14 @@ export default function HomeClient({
   ];
 
   const features = [
-    "Standard Schematic editor",
+    "Automatic layout router: places every part, sizes the board, and works out the cuts and link wires",
+    "Schematic editor with a standard symbol library and automatic net detection",
     "Live strip colouring with real-time conflict detection",
-    "Flexible passive footprints, editable IC footprints",
-    "JSON export/import, shareable edit and view links",
-    "Printable 1:1 board template with cut guide and BOM",
-    "Undo/redo with full history",
+    "Lock the board size or individual parts and let the router design around them",
+    "Editable IC footprints, custom components, flexible passive leads",
+    "Printable 1:1 build template with a mirrored cut guide and a BOM",
+    "KiCad-compatible netlist export to turn a prototype into a PCB",
+    "JSON export and import, shareable edit and view-only links, full undo history",
   ];
 
   return (
@@ -102,6 +104,7 @@ export default function HomeClient({
             featureList: [
               "Schematic editor with a standard symbol library",
               "Automatic stripboard layout router with per-component-type pin spacing and clearance settings",
+              "Lockable board dimensions and lockable component positions the router designs around",
               "Live strip colouring with real-time conflict detection",
               "Editable component footprints and custom components",
               "Printable 1:1 build template with mirrored cut guide and BOM",
@@ -161,7 +164,7 @@ export default function HomeClient({
             Stripboard Editor
           </h1>
           <p className="text-neutral-600 dark:text-neutral-400 text-base sm:text-lg max-w-2xl">
-            Draw a schematic, place the parts onto a virtual board. The copper strips will take the color of the nets with live conflict detection and an overview of what still needs to be connected.
+            Draw a schematic, place the parts onto a virtual board. The copper strips will take the color of the nets with live conflict detection and an overview of what still needs to be connected. Or hand the circuit to the auto-layout router: it places every part, picks a board size, and works out the strip cuts and link wires for you.
           </p>
         </div>
 
@@ -260,6 +263,19 @@ export default function HomeClient({
               </div>
             </div>
           </div>
+        </div>
+
+        {/* Features */}
+        <div className="mb-12">
+          <h2 className="font-mono text-sm uppercase tracking-[0.2em] text-[var(--copper)] mb-5">what you get</h2>
+          <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2.5">
+            {features.map((f) => (
+              <li key={f} className="flex gap-2.5 text-sm text-neutral-600 dark:text-neutral-400">
+                <span className="font-mono text-[var(--copper)] leading-5 flex-shrink-0" aria-hidden="true">▸</span>
+                <span>{f}</span>
+              </li>
+            ))}
+          </ul>
         </div>
 
         {/* Print demo */}
