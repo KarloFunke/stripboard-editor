@@ -16,6 +16,8 @@ import {
   FootprintRect,
   WireObstacles,
   bodiesTooClose,
+  segmentIntersectsRect,
+  spanLimits,
   segmentsIntersect,
   bodyIntersectsRect,
   corridorHoles,
@@ -68,29 +70,81 @@ export interface AutoLayout2Options {
   tidyGrowth?: number;
 }
 
-// Columns a result actually needs: the extent of footprints, wires and
-// cuts. The tidy pass's synthetic width lock pads its result to the full
-// cap, and unused trailing columns are real board the user would buy.
-function usedColsOf(result: AutoLayoutResult, components: Component[], componentDefs: ComponentDef[]): number {
+// IC-like rigids (>= 4 physical pins) pin their nets to fixed footprint
+// geometry; a net joining two of them cannot be absorbed by any flexible
+// part. The count of such joins predicts residual wire mess (corpus knee
+// at 0 -> 1, escalation with count), so it gates the IC-channel treatment.
+const IC_MIN_PINS = 4;
+function rigidJoinsOf(components: Component[], componentDefs: ComponentDef[], netAssignments: NetAssignment[]): number {
+  const icIds = new Set(
+    components
+      .filter((c) => {
+        if (c.boardExcluded) return false;
+        const d = resolveComponentDef(c, componentDefs);
+        return !!d && !d.flexible && d.pins.length >= IC_MIN_PINS;
+      })
+      .map((c) => c.id)
+  );
+  const perNet = new Map<string, Set<string>>();
+  for (const a of netAssignments) {
+    if (!icIds.has(a.componentId)) continue;
+    if (!perNet.has(a.netId)) perNet.set(a.netId, new Set());
+    perNet.get(a.netId)!.add(a.componentId);
+  }
+  let joins = 0;
+  for (const s of perNet.values()) joins += s.size - 1;
+  return joins;
+}
+
+// Rows/columns a result actually needs: the extent of footprints, wires
+// and cuts. The tidy pass's synthetic dimension locks pad the result to
+// the full cap, and unused trailing lines are real board the user would
+// buy. A user-locked dimension is never trimmed.
+function usedDimsOf(
+  result: AutoLayoutResult,
+  components: Component[],
+  componentDefs: ComponentDef[]
+): { minRow: number; minCol: number; maxRow: number; maxCol: number } {
   const byId = new Map(result.placements.map((p) => [p.componentId, p]));
-  let hi = -1;
+  let loR = Infinity;
+  let loC = Infinity;
+  let hiR = -1;
+  let hiC = -1;
+  const take = (r1: number, c1: number, r2 = r1, c2 = c1) => {
+    loR = Math.min(loR, r1, r2);
+    loC = Math.min(loC, c1, c2);
+    hiR = Math.max(hiR, r1, r2);
+    hiC = Math.max(hiC, c1, c2);
+  };
   for (const c of components) {
     const p = byId.get(c.id);
     const boardPos = p?.boardPos ?? c.boardPos;
     if (!boardPos || c.boardExcluded) continue;
     const def = resolveComponentDef(c, componentDefs);
     if (!def) continue;
-    if (def.flexible) hi = Math.max(hi, boardPos.col, (p?.flexibleEndPos ?? c.flexibleEndPos ?? boardPos).col);
-    else hi = Math.max(hi, getComponentBounds(def, boardPos, p?.rotation ?? c.rotation).maxCol);
+    if (def.flexible) {
+      const end = p?.flexibleEndPos ?? c.flexibleEndPos ?? boardPos;
+      take(boardPos.row, boardPos.col, end.row, end.col);
+    } else {
+      const b = getComponentBounds(def, boardPos, p?.rotation ?? c.rotation);
+      take(b.minRow, b.minCol, b.maxRow, b.maxCol);
+    }
   }
-  for (const w of result.wires) hi = Math.max(hi, w.from.col, w.to.col);
-  for (const cut of result.cuts) hi = Math.max(hi, cut.kind === "hole" ? cut.col : cut.col + 1);
-  return hi + 1;
+  for (const w of result.wires) take(w.from.row, w.from.col, w.to.row, w.to.col);
+  for (const cut of result.cuts) {
+    take(cut.row, cut.col);
+    if (cut.kind !== "hole") take(cut.row, cut.col + 1);
+  }
+  return { minRow: Math.min(loR, hiR < 0 ? 0 : loR), minCol: Math.min(loC, hiC < 0 ? 0 : loC), maxRow: hiR, maxCol: hiC };
 }
 
 // Visual wire mess of a finished result on its solved positions: off-axis
 // wires plus the priced part crossings. Judges the tidy pass.
-function wireMessScore(result: AutoLayoutResult, components: Component[], componentDefs: ComponentDef[]): number {
+function wireMessScore(
+  result: AutoLayoutResult,
+  components: Component[],
+  componentDefs: ComponentDef[]
+): { mess: number; crossings: number } {
   const byId = new Map(result.placements.map((p) => [p.componentId, p]));
   const obstacles: WireObstacles = { rects: [], bodies: [] };
   for (const c of components) {
@@ -102,11 +156,153 @@ function wireMessScore(result: AutoLayoutResult, components: Component[], compon
     if (def.flexible) obstacles.bodies.push({ p1: boardPos, p2: p?.flexibleEndPos ?? c.flexibleEndPos ?? boardPos });
     else obstacles.rects.push(getComponentBounds(def, boardPos, p?.rotation ?? c.rotation));
   }
-  let score = 0;
+  let mess = 0;
+  let crossings = 0;
   for (const w of result.wires) {
-    score += (w.from.col !== w.to.col ? 1 : 0) + wireExtraLength(w.from, w.to, obstacles);
+    mess += (w.from.col !== w.to.col ? 1 : 0) + wireExtraLength(w.from, w.to, obstacles);
+    for (const rect of obstacles.rects) {
+      if (segmentIntersectsRect(w.from, w.to, rect)) crossings++;
+    }
+    for (const b of obstacles.bodies) {
+      if (segmentsIntersect(w.from, w.to, b.p1, b.p2)) crossings++;
+    }
   }
-  return score;
+  return { mess, crossings };
+}
+
+// Humans line cuts up on shared columns: a straight line of drills is far
+// easier to transfer onto the physical board. Each cut may slide inside its
+// dead zone — the run of holes around it carrying no pin, no wire endpoint
+// and no other cut — without changing which used holes end up on each side
+// of the break, so moving it there has no electrical consequence. Greedy:
+// repeatedly pick the column the most still-unaligned cuts can reach (one
+// per row) and gather them there. Hole cuts sit on their hole, between-cuts
+// half a step past theirs, so the two kinds align in separate groups.
+function alignCuts(
+  result: AutoLayoutResult,
+  board: Board,
+  components: Component[],
+  componentDefs: ComponentDef[]
+): AutoLayoutResult {
+  const cuts = result.cuts;
+  if (cuts.length < 2) return result;
+  const cols = result.boardSize?.cols ?? board.cols;
+  const byId = new Map(result.placements.map((p) => [p.componentId, p]));
+  const usedRows = new Map<number, number[]>();
+  const mark = (r: number, c: number) => {
+    if (!usedRows.has(r)) usedRows.set(r, []);
+    usedRows.get(r)!.push(c);
+  };
+  for (const c of components) {
+    const p = byId.get(c.id);
+    const boardPos = p?.boardPos ?? c.boardPos;
+    if (!boardPos || c.boardExcluded) continue;
+    const def = resolveComponentDef(c, componentDefs);
+    if (!def) continue;
+    if (def.flexible) {
+      const end = p?.flexibleEndPos ?? c.flexibleEndPos ?? boardPos;
+      mark(boardPos.row, boardPos.col);
+      mark(end.row, end.col);
+    } else {
+      for (const pin of getRotatedPinPositions(def, boardPos, p?.rotation ?? c.rotation)) mark(pin.row, pin.col);
+    }
+  }
+  for (const w of result.wires) {
+    mark(w.from.row, w.from.col);
+    mark(w.to.row, w.to.col);
+  }
+
+  const xOf = (col: number, kind: string | undefined) => (kind === "hole" ? col : col + 0.5);
+  const origX = cuts.map((c) => xOf(c.col, c.kind));
+  const posX = [...origX];
+  const cutsByRow = new Map<number, number[]>();
+  cuts.forEach((c, i) => {
+    if (!cutsByRow.has(c.row)) cutsByRow.set(c.row, []);
+    cutsByRow.get(c.row)!.push(i);
+  });
+
+  type Item = { i: number; row: number; kind: "hole" | "between"; cur: number; lo: number; hi: number };
+  const items: Item[] = [];
+  cuts.forEach((cut, i) => {
+    const kind: "hole" | "between" = cut.kind === "hole" ? "hole" : "between";
+    const x = origX[i];
+    let loX = -1;
+    let hiX = cols;
+    for (const u of usedRows.get(cut.row) ?? []) {
+      if (u < x) loX = Math.max(loX, u);
+      else hiX = Math.min(hiX, u);
+    }
+    for (const j of cutsByRow.get(cut.row)!) {
+      if (j === i) continue;
+      if (origX[j] < x) loX = Math.max(loX, origX[j]);
+      else hiX = Math.min(hiX, origX[j]);
+    }
+    let lo = kind === "hole" ? Math.floor(loX) + 1 : Math.floor(loX + 0.5);
+    let hi = kind === "hole" ? Math.ceil(hiX) - 1 : Math.ceil(hiX - 0.5) - 1;
+    lo = Math.max(lo, 0);
+    hi = Math.min(hi, kind === "hole" ? cols - 1 : cols - 2);
+    // A cut on a used hole or sharing a spot (corrupt input) stays put but
+    // can still anchor a group at its own column.
+    if (lo > cut.col || hi < cut.col) {
+      lo = cut.col;
+      hi = cut.col;
+    }
+    items.push({ i, row: cut.row, kind, cur: cut.col, lo, hi });
+  });
+
+  // Moving may not reorder or collide with same-row cuts (their dead zones
+  // can share edge holes, so interval clamping alone is not enough once
+  // neighbours have moved).
+  const validAt = (it: Item, v: number): boolean => {
+    const xv = xOf(v, it.kind === "hole" ? "hole" : undefined);
+    for (const j of cutsByRow.get(it.row)!) {
+      if (j === it.i) continue;
+      if (xv === posX[j]) return false;
+      if (xv < posX[j] !== origX[it.i] < origX[j]) return false;
+    }
+    return true;
+  };
+
+  const assigned = new Array(cuts.length).fill(false);
+  const newCol = cuts.map((c) => c.col);
+  for (;;) {
+    let best: { sel: Item[]; v: number; size: number; already: number; dist: number } | null = null;
+    for (const kind of ["hole", "between"] as const) {
+      const pool = items.filter((it) => it.kind === kind && !assigned[it.i]);
+      if (pool.length === 0) continue;
+      const fixedAt = new Map<number, number>();
+      for (const it of items) {
+        if (it.kind !== kind || !assigned[it.i]) continue;
+        fixedAt.set(newCol[it.i], (fixedAt.get(newCol[it.i]) ?? 0) + 1);
+      }
+      for (let v = 0; v < cols; v++) {
+        const perRow = new Map<number, Item>();
+        for (const it of pool) {
+          if (v < it.lo || v > it.hi || !validAt(it, v)) continue;
+          const prev = perRow.get(it.row);
+          if (!prev || Math.abs(it.cur - v) < Math.abs(prev.cur - v)) perRow.set(it.row, it);
+        }
+        const size = perRow.size + (fixedAt.get(v) ?? 0);
+        if (perRow.size < 1 || size < 2) continue;
+        const sel = [...perRow.values()];
+        const already = sel.filter((it) => it.cur === v).length;
+        const dist = sel.reduce((s, it) => s + Math.abs(it.cur - v), 0);
+        if (!best || size > best.size ||
+            (size === best.size && (already > best.already || (already === best.already && dist < best.dist)))) {
+          best = { sel, v, size, already, dist };
+        }
+      }
+    }
+    if (!best) break;
+    for (const it of best.sel) {
+      assigned[it.i] = true;
+      newCol[it.i] = best.v;
+      posX[it.i] = xOf(best.v, it.kind === "hole" ? "hole" : undefined);
+    }
+  }
+
+  if (!cuts.some((c, i) => newCol[i] !== c.col)) return result;
+  return { ...result, cuts: cuts.map((c, i) => (newCol[i] !== c.col ? { ...c, col: newCol[i] } : c)) };
 }
 
 export function computeAutoLayout2(
@@ -119,32 +315,111 @@ export function computeAutoLayout2(
   options?: AutoLayout2Options
 ): AutoLayoutResult {
   const growCap = options?.tidyGrowth;
-  const scaled = growCap !== undefined && onProgress
+  // A fully locked board has no direction left to grow in; otherwise the
+  // tidy pass runs. With a user-locked width the width itself is untouchable
+  // (physical board) but rows are still free: IC-heavy projects get a
+  // re-solve whose channel pass can insert relay rows.
+  const bothLocked = !!board.lockedRows && !!board.lockedCols;
+  const joins = growCap !== undefined && !bothLocked ? rigidJoinsOf(components, componentDefs, netAssignments) : 0;
+  const nVariants = growCap === undefined || bothLocked ? 0 : joins > 0 ? (!board.lockedCols ? 3 : 2) : 1;
+  const baseSpan = nVariants === 0 ? 1 : nVariants === 1 ? 0.6 : 0.5;
+  const spans: [number, number][] = [[0, baseSpan]];
+  for (let i = 0; i < nVariants; i++) spans.push([baseSpan + (i * (1 - baseSpan)) / nVariants, (1 - baseSpan) / nVariants]);
+  const scaled = nVariants > 0 && onProgress
     ? (f0: number, span: number) => (p: AutoLayoutProgress) => onProgress({ ...p, frac: f0 + p.frac * span })
     : null;
-  const base = layoutOnce(board, components, componentDefs, nets, netAssignments, scaled ? scaled(0, 0.6) : onProgress, options);
-  if (growCap === undefined || base.quality !== 0 || !base.boardSize || board.lockedRows || board.lockedCols) return base;
+  const aligned = (result: AutoLayoutResult): AutoLayoutResult =>
+    result.quality === 0 ? alignCuts(result, board, components, componentDefs) : result;
+  const base = layoutOnce(board, components, componentDefs, nets, netAssignments, scaled ? scaled(...spans[0]) : onProgress, options);
+  if (nVariants === 0 || growCap === undefined || base.quality !== 0 || !base.boardSize) return aligned(base);
+
+  // Unused lines around the content are real board the user would buy:
+  // trailing ones are trimmed off the size, leading ones removed by
+  // shifting the content to the edge (the channel pass runs after the
+  // harvest, so an inserted-then-abandoned line has no other cleaner). A
+  // user-locked dimension keeps its exact size (physical board), and
+  // locked parts pin everything in place.
+  const hasLockedParts = components.some((c) => c.locked && c.boardPos && !c.boardExcluded);
+  const finish = (result: AutoLayoutResult): AutoLayoutResult => {
+    if (!result.boardSize) return result;
+    const used = usedDimsOf(result, components, componentDefs);
+    if (used.maxRow < 0) return result;
+    const shiftR = board.lockedRows || hasLockedParts ? 0 : Math.max(0, used.minRow);
+    const shiftC = board.lockedCols || hasLockedParts ? 0 : Math.max(0, used.minCol);
+    const finalRows = board.lockedRows ? result.boardSize.rows : Math.min(result.boardSize.rows, used.maxRow + 1) - shiftR;
+    const finalCols = board.lockedCols ? result.boardSize.cols : Math.min(result.boardSize.cols, used.maxCol + 1) - shiftC;
+    if (shiftR === 0 && shiftC === 0 && finalRows === result.boardSize.rows && finalCols === result.boardSize.cols) {
+      return result;
+    }
+    const sh = (p: BoardPosition): BoardPosition => ({ row: p.row - shiftR, col: p.col - shiftC });
+    return {
+      ...result,
+      placements: result.placements.map((p) => ({
+        ...p,
+        boardPos: sh(p.boardPos),
+        ...(p.flexibleEndPos ? { flexibleEndPos: sh(p.flexibleEndPos) } : {}),
+      })),
+      wires: result.wires.map((w) => ({ from: sh(w.from), to: sh(w.to) })),
+      cuts: result.cuts.map((c) => ({ ...c, row: c.row - shiftR, col: c.col - shiftC })),
+      boardSize: { rows: finalRows, cols: finalCols },
+    };
+  };
+
+  const finishedBase = finish(base);
   const baseScore = wireMessScore(base, components, componentDefs);
-  if (baseScore <= 0) return base;
+  if (baseScore.mess <= 0) return aligned(finishedBase);
+  const baseArea = finishedBase.boardSize!.rows * finishedBase.boardSize!.cols;
+
   // Locking the found width changes the economics, not the budget: unused
   // columns are pre-paid (effArea covers the cap either way) and the aspect
-  // penalty is lifted, so this pass can spend space on wire channels and
-  // relay strips that the free objective taxes away as area.
-  const cap = base.boardSize.cols;
-  const capped = layoutOnce(
-    { ...board, cols: cap, lockedCols: true, lockedRows: false },
-    components, componentDefs, nets, netAssignments,
-    scaled ? scaled(0.6, 0.4) : undefined, options
-  );
-  if (capped.quality !== 0 || !capped.boardSize || capped.boardSize.cols > cap) return base;
-  const baseArea = base.boardSize.rows * base.boardSize.cols;
-  const trimmedCols = Math.min(capped.boardSize.cols, usedColsOf(capped, components, componentDefs));
-  const cappedArea = capped.boardSize.rows * trimmedCols;
-  if (cappedArea > baseArea * (1 + growCap)) return base;
-  if (wireMessScore(capped, components, componentDefs) >= baseScore) return base;
-  return trimmedCols < capped.boardSize.cols
-    ? { ...capped, boardSize: { rows: capped.boardSize.rows, cols: trimmedCols } }
-    : capped;
+  // penalty is lifted, so a re-solve can spend space on wire channels and
+  // relay strips that the free objective taxes away as area. IC-heavy
+  // projects try a second variant with width headroom — pre-paid channel
+  // columns the channel pass can insert at IC footprint edges. Acceptance:
+  // quality 0, within the growth cap, and strictly tidier — crossings
+  // (wires over parts, the ugliest mess) may never trade up. Among
+  // survivors, fewest crossings wins, then mess.
+  let best: { result: AutoLayoutResult; score: { mess: number; crossings: number } } | null = null;
+  const headroom = joins > 0 ? Math.min(6, 2 + (joins >> 3)) : 0;
+  // With a free width the pass locks the achieved width (plus channel
+  // headroom for IC-heavy projects). With a user-locked width the mirror
+  // applies: a synthetic row lock pre-pays the achieved height so relay
+  // rows come free, with row headroom for the IC channel pass.
+  const variants: { rowCap?: number; colCap: number; icChannels: boolean }[] = !board.lockedCols
+    ? [
+        { colCap: base.boardSize.cols, icChannels: false },
+        // Two IC variants: rows free (may grow tall past any headroom) and
+        // rows pre-paid (a relay row that fixes a single crossing never
+        // pays for itself in real area, but inside the row headroom it is
+        // free). Each wins on different boards; the guard picks.
+        ...(joins > 0
+          ? [
+              { colCap: base.boardSize.cols + headroom, icChannels: true },
+              { rowCap: base.boardSize.rows + headroom, colCap: base.boardSize.cols + headroom, icChannels: true },
+            ]
+          : []),
+      ]
+    : [
+        { rowCap: base.boardSize.rows, colCap: board.cols, icChannels: false },
+        ...(joins > 0 ? [{ rowCap: base.boardSize.rows + headroom, colCap: board.cols, icChannels: true }] : []),
+      ];
+  variants.forEach(({ rowCap, colCap, icChannels }, vi) => {
+    const capped = layoutOnce(
+      { ...board, cols: colCap, lockedCols: true, ...(rowCap !== undefined ? { rows: rowCap, lockedRows: true } : {}) },
+      components, componentDefs, nets, netAssignments,
+      scaled ? scaled(...spans[vi + 1]) : undefined, options, icChannels
+    );
+    if (capped.quality !== 0 || !capped.boardSize || capped.boardSize.cols > colCap) return;
+    if (rowCap !== undefined && capped.boardSize.rows > rowCap) return;
+    const finished = finish(capped);
+    if (finished.boardSize!.rows * finished.boardSize!.cols > baseArea * (1 + growCap)) return;
+    const score = wireMessScore(capped, components, componentDefs);
+    if (score.crossings > baseScore.crossings || score.mess >= baseScore.mess) return;
+    if (best && (best.score.crossings < score.crossings ||
+        (best.score.crossings === score.crossings && best.score.mess <= score.mess))) return;
+    best = { result: finished, score };
+  });
+  return aligned(best ? (best as { result: AutoLayoutResult }).result : finishedBase);
 }
 
 function layoutOnce(
@@ -154,7 +429,8 @@ function layoutOnce(
   nets: Net[],
   netAssignments: NetAssignment[],
   onProgress?: (p: AutoLayoutProgress) => void,
-  options?: AutoLayout2Options
+  options?: AutoLayout2Options,
+  icChannels = false
 ): AutoLayoutResult {
   const report = (phase: AutoLayoutProgress["phase"], frac: number) =>
     onProgress?.({ phase, attempt: 1, maxAttempts: 1, frac });
@@ -956,17 +1232,20 @@ function layoutOnce(
         if (!c.boardPos || c.boardExcluded) return false;
         const def = resolveComponentDef(c, componentDefs);
         if (!def) return false;
-        const r = def.flexible
-          ? (() => {
-              const p2 = c.flexibleEndPos ?? c.boardPos!;
-              return {
-                minRow: Math.min(c.boardPos!.row, p2.row),
-                minCol: Math.min(c.boardPos!.col, p2.col),
-                maxRow: Math.max(c.boardPos!.row, p2.row),
-                maxCol: Math.max(c.boardPos!.col, p2.col),
-              };
-            })()
-          : getComponentBounds(def, c.boardPos, c.rotation);
+        if (def.flexible) {
+          // A straddled flexible part stretches by one hole (insertLine
+          // shifts its far endpoint); it only blocks the line when its
+          // span cannot legally absorb the growth. Dense boards tile
+          // every line position with resistor spans otherwise.
+          const p2 = c.flexibleEndPos ?? c.boardPos!;
+          const lo = isCol ? Math.min(c.boardPos!.col, p2.col) : Math.min(c.boardPos!.row, p2.row);
+          const hi = isCol ? Math.max(c.boardPos!.col, p2.col) : Math.max(c.boardPos!.row, p2.row);
+          if (!(lo < at && at <= hi)) return false;
+          const dr = Math.abs(c.boardPos!.row - p2.row) + (isCol ? 0 : 1);
+          const dc = Math.abs(c.boardPos!.col - p2.col) + (isCol ? 1 : 0);
+          return Math.hypot(dr, dc) > spanLimits(def).max + 1e-6;
+        }
+        const r = getComponentBounds(def, c.boardPos, c.rotation);
         return isCol ? r.minCol < at && at <= r.maxCol : r.minRow < at && at <= r.maxRow;
       });
     const insertLine = (comps: Component[], isCol: boolean, at: number): Component[] =>
@@ -982,15 +1261,20 @@ function layoutOnce(
           ...(c.flexibleEndPos ? { flexibleEndPos: shift(c.flexibleEndPos) } : {}),
         };
       });
-    for (let round = 0; round < 3; round++) {
+    for (let round = 0; round < (icChannels ? 12 : 3); round++) {
       const cur: Candidate = chosen!;
       const obstacles: WireObstacles = { rects: [], bodies: [] };
+      const icRects: FootprintRect[] = [];
       for (const c of cur.virtual) {
         if (!c.boardPos || c.boardExcluded) continue;
         const def = resolveComponentDef(c, componentDefs);
         if (!def) continue;
         if (def.flexible) obstacles.bodies.push({ p1: c.boardPos, p2: c.flexibleEndPos ?? c.boardPos });
-        else obstacles.rects.push(getComponentBounds(def, c.boardPos, c.rotation));
+        else {
+          const r = getComponentBounds(def, c.boardPos, c.rotation);
+          obstacles.rects.push(r);
+          if (icChannels && def.pins.length >= IC_MIN_PINS) icRects.push(r);
+        }
       }
       const offenders = cur.plan.wires.filter(
         (w) => w.from.col !== w.to.col || wireExtraLength(w.from, w.to, obstacles) > 0
@@ -998,6 +1282,24 @@ function layoutOnce(
       if (offenders.length === 0) break;
       const colCands = new Set<number>();
       const rowCands = new Set<number>();
+      // IC-channel treatment: a line at an IC's footprint edge widens the
+      // routing gap beside its pin field (a column doubles as a crossing-
+      // free channel, a row as a relay strip). Only ICs a messy wire
+      // actually touches, so candidate volume tracks the mess, not the size.
+      for (const r of icRects) {
+        const near = offenders.some(
+          (w) =>
+            Math.min(w.from.col, w.to.col) <= r.maxCol + 1 &&
+            Math.max(w.from.col, w.to.col) >= r.minCol - 1 &&
+            Math.min(w.from.row, w.to.row) <= r.maxRow + 1 &&
+            Math.max(w.from.row, w.to.row) >= r.minRow - 1
+        );
+        if (!near) continue;
+        colCands.add(r.minCol);
+        colCands.add(r.maxCol + 1);
+        rowCands.add(r.minRow);
+        rowCands.add(r.maxRow + 1);
+      }
       for (const w of offenders) {
         const loC = Math.min(w.from.col, w.to.col);
         const hiC = Math.max(w.from.col, w.to.col);
@@ -1010,11 +1312,24 @@ function layoutOnce(
           colCands.add((loC + hiC + 1) >> 1);
           const loR = Math.min(w.from.row, w.to.row);
           const hiR = Math.max(w.from.row, w.to.row);
-          if (hiR > loR) rowCands.add((loR + hiR + 1) >> 1);
+          if (hiR > loR) {
+            rowCands.add((loR + hiR + 1) >> 1);
+          } else {
+            // A pure-horizontal run spans no rows, so the midpoint rule
+            // above never offers the one insertion that fixes it: a relay
+            // row directly beside it.
+            rowCands.add(loR);
+            rowCands.add(loR + 1);
+          }
         } else {
-          // vertical wire over parts: a channel right beside it clears the path
+          // vertical wire over parts: a channel right beside it clears the
+          // path, and a relay row at any gap inside its span lets two hops
+          // detour around the crossed body (bus row over cross-part wire)
           colCands.add(loC);
           colCands.add(loC + 1);
+          const loR = Math.min(w.from.row, w.to.row);
+          const hiR = Math.max(w.from.row, w.to.row);
+          for (let r = loR + 1; r <= hiR; r++) rowCands.add(r);
         }
       }
       if (limits.maxCols !== undefined && cur.cols + 1 > limits.maxCols) colCands.clear();
@@ -1030,6 +1345,33 @@ function layoutOnce(
         route(insertLine(cur.virtual, false, at), cur.rows + 1, cur.cols, cur.movedIds);
       }
       if (chosen === cur) break; // no insertion paid for itself
+    }
+    // ── Bus lanes: compound insertion for stacked horizontal runs ──
+    // Several wide horizontal runs may each fail to pay for a private
+    // relay row while jointly they would (each freed run funds the next
+    // lane). One attempt inserts a lane beside every remaining wide run
+    // at once; route() adopts only if the whole bundle pays.
+    if (icChannels && chosen!.bad === 0) {
+      const cur: Candidate = chosen!;
+      const laneRows = [
+        ...new Set(
+          cur.plan.wires
+            .filter((w) => w.from.row === w.to.row && Math.abs(w.from.col - w.to.col) > 3)
+            .map((w) => w.from.row + 1)
+        ),
+      ].sort((a, b) => b - a);
+      if (laneRows.length >= 2 &&
+          !(limits.maxRows !== undefined && cur.rows + laneRows.length > limits.maxRows)) {
+        // Descending order: an insertion never shifts the targets below it
+        let comps = cur.virtual;
+        let rows = cur.rows;
+        for (const at of laneRows) {
+          if (at < 1 || at > rows - 1 || lineStraddled(comps, false, at)) continue;
+          comps = insertLine(comps, false, at);
+          rows++;
+        }
+        if (rows > cur.rows) route(comps, rows, cur.cols, cur.movedIds);
+      }
     }
   }
   // ── Slant repairs on the final candidate ──

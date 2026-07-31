@@ -14,7 +14,8 @@ const updates: { date: string; items: string[]; link?: { href: string; lead: str
   {
     date: "2026-07-31",
     items: [
-      "The auto layouter now produces much straighter wiring: a second solver pass trades a little board space for fewer slanted and crossing wires, and its result is only kept when it actually is tidier. It is on by default and can be turned off in the auto-layout settings. Solving is also several times faster than before, especially on big boards.",
+      "The auto layouter now produces much straighter wiring: a second solver pass trades a little board space for fewer slanted and crossing wires, and its result is only kept when it actually is tidier. It is on by default and can be turned off in the auto-layout settings. Cuts also line up on shared columns where possible, like a human would place them. Solving is also several times faster than before, especially on big boards.",
+      "Board editing: wires can now run in parallel on the same column or row (hold Shift to click through a wire to the holes underneath), and right-clicking a row or column number inserts or deletes a board line.",
     ],
   },
   {

@@ -10,6 +10,7 @@ import {
   getFlexibleBounds,
 } from "@/components/stripboard/boardLayout";
 import { bodyStyle, bellyPath, dipNotch, usbPort, diagonalBody } from "@/components/stripboard/componentGlyphs";
+import { computeWireLaneOffsets } from "@/components/stripboard/wireLanes";
 
 // Standard stripboard pitch is 0.1 in = 2.54 mm. The board SVG is authored in
 // 30-unit cells; sizing the element in mm at this ratio prints it 1:1.
@@ -155,17 +156,27 @@ export default function PrintBoard({ variant, showLabels, showWires, showCuts, s
         );
       })}
 
-      {!mirror && showWires && board.wires.map((w) => {
-        const a = { x: colX(w.from.col), y: rowY(w.from.row) };
-        const b = { x: colX(w.to.col), y: rowY(w.to.row) };
-        return (
-          <g key={w.id}>
-            <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#000" strokeWidth={4} strokeLinecap="round" />
-            <circle cx={a.x} cy={a.y} r={5} fill="#000" />
-            <circle cx={b.x} cy={b.y} r={5} fill="#000" />
-          </g>
-        );
-      })}
+      {!mirror && showWires && (() => {
+        // Parallel wires sharing a column/row are shifted into lanes like on
+        // the canvas. Print wires are thick and all black, so laned wires
+        // additionally get a white casing that keeps touching runs readable.
+        const laneOffsets = computeWireLaneOffsets(board.wires, 5);
+        return board.wires.map((w) => {
+          const off = laneOffsets.get(w.id);
+          const dx = off?.dx ?? 0;
+          const dy = off?.dy ?? 0;
+          const a = { x: colX(w.from.col) + dx, y: rowY(w.from.row) + dy };
+          const b = { x: colX(w.to.col) + dx, y: rowY(w.to.row) + dy };
+          return (
+            <g key={w.id}>
+              {off && <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#fff" strokeWidth={7} strokeLinecap="round" />}
+              <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#000" strokeWidth={4} strokeLinecap="round" />
+              <circle cx={a.x} cy={a.y} r={5} fill="#000" />
+              <circle cx={b.x} cy={b.y} r={5} fill="#000" />
+            </g>
+          );
+        });
+      })()}
 
       {(mirror || showCuts) && board.cuts.map((cut, i) => {
         const cx = cut.kind === "hole"

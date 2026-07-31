@@ -79,6 +79,16 @@ body {
   font-family: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
+/* Sheen sweeping the auto-layout progress fill: the solver's last phases can
+   run long without progress messages, and a frozen bar reads as a hang. */
+@keyframes progress-sheen {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(300%); }
+}
+.progress-sheen {
+  animation: progress-sheen 1.4s linear infinite;
+}
+
 @media print {
   /* margin 0 removes the browser's header/footer (page title, URL, date,
      page numbers); the 10mm content inset comes from each page's padding.

@@ -12,6 +12,7 @@ import {
   getFlexibleBounds,
 } from "./stripboard/boardLayout";
 import { bodyStyle, bellyPath, dipNotch, usbPort, diagonalBody } from "./stripboard/componentGlyphs";
+import { computeWireLaneOffsets } from "./stripboard/wireLanes";
 
 const HOLE_SP = 12; // compact spacing for preview
 const HOLE_R = 2;
@@ -85,10 +86,13 @@ export default function StripboardPreview({ data, maxWidth = 280, maxHeight = 16
       (c) => c.row >= minRow && c.row <= maxRow && c.col >= minCol && c.col <= maxCol
     );
 
+    // Lane shifts for parallel wires, scaled to the compact hole pitch
+    const laneOffsets = computeWireLaneOffsets(wires, 1.5);
+
     return {
       placed, componentDefs, nets, netAssignments,
       minRow, maxRow, minCol, maxCol, rows, cols,
-      svgW, svgH, hx, hy, visibleWires, visibleCuts,
+      svgW, svgH, hx, hy, visibleWires, visibleCuts, laneOffsets,
     };
   }, [data]);
 
@@ -97,7 +101,7 @@ export default function StripboardPreview({ data, maxWidth = 280, maxHeight = 16
   const {
     placed, componentDefs, nets, netAssignments,
     minRow, maxRow, minCol, maxCol, rows, cols,
-    svgW, svgH, hx, hy, visibleWires, visibleCuts,
+    svgW, svgH, hx, hy, visibleWires, visibleCuts, laneOffsets,
   } = preview;
 
   // Scale to fit within maxWidth/maxHeight
@@ -255,18 +259,23 @@ export default function StripboardPreview({ data, maxWidth = 280, maxHeight = 16
       })}
 
       {/* Wires */}
-      {visibleWires.map((wire, i) => (
-        <line
-          key={`w-${i}`}
-          x1={hx(wire.from.col)}
-          y1={hy(wire.from.row)}
-          x2={hx(wire.to.col)}
-          y2={hy(wire.to.row)}
-          stroke="var(--wire-default)"
-          strokeWidth={1.2}
-          strokeLinecap="round"
-        />
-      ))}
+      {visibleWires.map((wire, i) => {
+        const off = laneOffsets.get(wire.id);
+        const dx = off?.dx ?? 0;
+        const dy = off?.dy ?? 0;
+        return (
+          <line
+            key={`w-${i}`}
+            x1={hx(wire.from.col) + dx}
+            y1={hy(wire.from.row) + dy}
+            x2={hx(wire.to.col) + dx}
+            y2={hy(wire.to.row) + dy}
+            stroke="var(--wire-default)"
+            strokeWidth={1.2}
+            strokeLinecap="round"
+          />
+        );
+      })}
     </svg>
   );
 }

@@ -110,31 +110,6 @@ export default function ComponentTray({ readOnly = false }: { readOnly?: boolean
         })}
       </div>
 
-      {/* Placed components */}
-      {placed.length > 0 && (
-        <>
-          <div className="border-t border-neutral-200 dark:border-neutral-700 px-3.5 py-2.5 font-mono text-xs font-semibold text-[var(--copper)] uppercase tracking-[0.15em]">
-            On Board
-          </div>
-          <div className="px-2.5 pb-2.5">
-            {placed.map((comp) => {
-              const def = resolveComponentDef(comp, componentDefs);
-              return (
-                <div
-                  key={comp.id}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 mb-1 rounded text-sm text-neutral-900 dark:text-neutral-100 bg-neutral-50 dark:bg-neutral-800"
-                >
-                  <span className="font-medium">{comp.label}</span>
-                  <span className="text-neutral-500 dark:text-neutral-400 truncate flex-1">
-                    {def?.name}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </>
-      )}
-
       {/* Incomplete nets */}
       {incompleteNets.length > 0 && (
         <>
@@ -169,6 +144,31 @@ export default function ComponentTray({ readOnly = false }: { readOnly?: boolean
                 )}
               </div>
             ))}
+          </div>
+        </>
+      )}
+
+      {/* Placed components */}
+      {placed.length > 0 && (
+        <>
+          <div className="border-t border-neutral-200 dark:border-neutral-700 px-3.5 py-2.5 font-mono text-xs font-semibold text-[var(--copper)] uppercase tracking-[0.15em]">
+            On Board
+          </div>
+          <div className="px-2.5 pb-2.5">
+            {placed.map((comp) => {
+              const def = resolveComponentDef(comp, componentDefs);
+              return (
+                <div
+                  key={comp.id}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 mb-1 rounded text-sm text-neutral-900 dark:text-neutral-100 bg-neutral-50 dark:bg-neutral-800"
+                >
+                  <span className="font-medium">{comp.label}</span>
+                  <span className="text-neutral-500 dark:text-neutral-400 truncate flex-1">
+                    {def?.name}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         </>
       )}

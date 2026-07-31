@@ -69,6 +69,8 @@ export default function GuidePage() {
             <li>Red highlighted strips indicate a conflict where two different nets share the same strip.</li>
             <li>Place a <strong>cut</strong> to isolate the strip into sections: click between two holes, or hold <kbd className="px-1.5 py-0.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded text-xs font-mono">Alt</kbd> and click a hole to cut the strip at the hole itself.</li>
             <li>Click a hole then another hole to place a <strong>wire</strong> connecting them. Click an existing wire to delete it.</li>
+            <li>Wires may run in parallel on the same column or row, as long as they do not share a hole. They shift sideways slightly on screen so each run stays visible. To start a wire on a hole that sits under an existing wire, hold <kbd className="px-1.5 py-0.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded text-xs font-mono">Shift</kbd> while clicking: clicks then pass through wires straight to the holes underneath.</li>
+            <li>Right-click a <strong>row or column number</strong> to insert a blank row or column, or to delete one. Inserting shifts everything past the line and stretches parts and wires spanning it. Deleting removes the wires and cuts on that line and unplaces any component with a pin or body on it; parts and wires merely spanning the line shrink to close the gap.</li>
             <li>A hole holds either a cut or a wire, never both. Click a hole cut to remove it (no <kbd className="px-1.5 py-0.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded text-xs font-mono">Alt</kbd> needed).</li>
             <li>2-pin passive components (resistors, LEDs, etc.) have flexible leads. Drag individual pins to reshape them.</li>
             <li>Non-flexible components (ICs, connectors, etc.) can have their footprint edited. Select a placed component, then click <strong>Edit Footprint</strong> in the floating menu above it. You can resize the grid and move pins around to match your physical component.</li>
@@ -82,7 +84,7 @@ export default function GuidePage() {
             Auto-layout
           </h2>
           <p className="text-sm text-neutral-700 dark:text-neutral-300 mb-3">
-            Click <strong>Auto-layout</strong> in the stripboard toolbar to have the router arrange every part for you. It reads your schematic nets, places the components, picks a board size, and generates the strip cuts and link wires needed to complete the board. The router is deterministic, so the same circuit always produces the same layout, and by default it respects the physical reality of the parts (for example, it leaves a strip between two through-hole resistor bodies rather than overlapping them). A short summary of what it did appears in a pop-up when it finishes.
+            Click <strong>Auto-layout</strong> in the stripboard toolbar to have the router arrange every part for you. It reads your schematic nets, places the components, picks a board size, and generates the strip cuts and link wires needed to complete the board. The router is deterministic, so the same circuit always produces the same layout, and by default it respects the physical reality of the parts (for example, it leaves a strip between two through-hole resistor bodies rather than overlapping them). If anything cannot be completed, a pop-up tells you what and why.
           </p>
           <p className="text-sm text-neutral-700 dark:text-neutral-300 mb-2">You stay in control of a few things:</p>
           <ul className="space-y-2 text-sm text-neutral-700 dark:text-neutral-300">
@@ -139,6 +141,8 @@ export default function GuidePage() {
               ["Ctrl + Y / Ctrl + Shift + Z", "Redo"],
               ["Arrow keys / Drag", "Move selected components, one or many"],
               ["Alt + click hole", "Cut the strip at a hole (stripboard)"],
+              ["Shift", "Hold to click through wires to the holes underneath (stripboard)"],
+              ["Right-click row / column number", "Insert or delete a board row / column (stripboard)"],
               ["Right-click drag", "Pan the canvas"],
               ["Scroll wheel", "Zoom in / out"],
             ].map(([key, desc]) => (

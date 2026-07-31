@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useCallback, useEffect } from "react";
+import { useRef, useState, useCallback, useEffect, useMemo } from "react";
 import { Cut } from "@/types";
 import { useProjectStore } from "@/store/useProjectStore";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
@@ -33,6 +33,7 @@ import { bodyStyle, bellyPath, dipNotch, usbPort } from "./componentGlyphs";
 import PlacedComponent, { suppressNextCanvasClick } from "./PlacedComponent";
 import CutMark from "./CutMark";
 import WireLine from "./WireLine";
+import { computeWireLaneOffsets } from "./wireLanes";
 import { SelectionActionBar, RotateIcon, DeleteIcon, FootprintIcon, LockIcon, UnlockIcon, WandIcon, type CanvasAction } from "@/components/canvas/SelectionActionBar";
 
 export default function StripboardCanvas({
@@ -76,10 +77,37 @@ export default function StripboardCanvas({
   const trayDragComponentId = useProjectStore((s) => s.trayDragComponentId);
   const highlightedNetId = useProjectStore((s) => s.highlightedNetId);
   const setFlexibleEndPos = useProjectStore((s) => s.setFlexibleEndPos);
+  const insertBoardLine = useProjectStore((s) => s.insertBoardLine);
+  const deleteBoardLine = useProjectStore((s) => s.deleteBoardLine);
+  // Right-click on a row/column number: insert a blank line next to it
+  const [lineMenu, setLineMenu] = useState<{ axis: "row" | "col"; index: number; x: number; y: number } | null>(null);
+
+  // Shift held: wires become click-transparent so new wires can start on
+  // the holes underneath instead of deleting what's there. (Alt would place
+  // hole cuts, not start wires.)
+  const [shiftDown, setShiftDown] = useState(false);
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => { if (e.key === "Shift") setShiftDown(true); };
+    const up = (e: KeyboardEvent) => { if (e.key === "Shift") setShiftDown(false); };
+    const clear = () => setShiftDown(false);
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    window.addEventListener("blur", clear);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+      window.removeEventListener("blur", clear);
+    };
+  }, []);
 
   const nets = useProjectStore((s) => s.nets);
 
   const { segments, connectivity } = useStripSegments();
+
+  // Overlapping straight wires on one column (or row) get perpendicular
+  // lane offsets so parallel runs stay individually visible. Wires that
+  // only touch at a shared endpoint keep the same lane.
+  const wireLaneOffset = useMemo(() => computeWireLaneOffsets(board.wires, 3.5), [board.wires]);
 
 
   const {
@@ -897,6 +925,12 @@ export default function StripboardCanvas({
                 textAnchor="end"
                 fontSize={LABEL_FONT_SIZE}
                 fill="var(--label-text)"
+                style={readOnly ? undefined : { cursor: "context-menu" }}
+                onContextMenu={readOnly ? undefined : (e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setLineMenu({ axis: "row", index: row, x: e.clientX, y: e.clientY });
+                }}
               >
                 {row + 1}
               </text>
@@ -914,6 +948,12 @@ export default function StripboardCanvas({
                 textAnchor="middle"
                 fontSize={LABEL_FONT_SIZE}
                 fill="var(--label-text)"
+                style={readOnly ? undefined : { cursor: "context-menu" }}
+                onContextMenu={readOnly ? undefined : (e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setLineMenu({ axis: "col", index: col, x: e.clientX, y: e.clientY });
+                }}
               >
                 {col + 1}
               </text>
@@ -998,6 +1038,8 @@ export default function StripboardCanvas({
                   wire={wire}
                   color={color}
                   isConflict={isConflict}
+                  offset={wireLaneOffset.get(wire.id)}
+                  clickThrough={shiftDown}
                   onClick={() => { if (!readOnly && !wirePlacementFrom) removeWire(wire.id); }}
                 />
               </g>
@@ -1232,6 +1274,54 @@ export default function StripboardCanvas({
           });
           return <SelectionActionBar actions={actions} />;
         })()}
+
+        {/* Insert-line context menu (right-click on a row/column number) */}
+        {lineMenu && (
+          <>
+            <div
+              className="fixed inset-0 z-40"
+              onMouseDown={() => setLineMenu(null)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setLineMenu(null);
+              }}
+            />
+            <div
+              className="fixed z-50 rounded-md border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 shadow-lg dark:shadow-neutral-900/50 py-1"
+              style={{ left: lineMenu.x, top: lineMenu.y }}
+            >
+              {(lineMenu.axis === "row"
+                ? [
+                    { label: `Insert row above ${lineMenu.index + 1}`, at: lineMenu.index },
+                    { label: `Insert row below ${lineMenu.index + 1}`, at: lineMenu.index + 1 },
+                    { label: `Delete row ${lineMenu.index + 1}`, at: lineMenu.index, remove: true },
+                  ]
+                : [
+                    { label: `Insert column left of ${lineMenu.index + 1}`, at: lineMenu.index },
+                    { label: `Insert column right of ${lineMenu.index + 1}`, at: lineMenu.index + 1 },
+                    { label: `Delete column ${lineMenu.index + 1}`, at: lineMenu.index, remove: true },
+                  ]
+              ).map(({ label, at, remove }) => (
+                <button
+                  key={label}
+                  className={`block w-full text-left px-3 py-1.5 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-700 ${
+                    remove
+                      ? "text-red-600 dark:text-red-400 border-t border-neutral-200 dark:border-neutral-700"
+                      : "text-neutral-700 dark:text-neutral-200"
+                  }`}
+                  title={remove ? "Parts on this line are unplaced; parts and wires spanning it shrink to close the gap" : undefined}
+                  onClick={() => {
+                    if (remove) deleteBoardLine(lineMenu.axis, at);
+                    else insertBoardLine(lineMenu.axis, at);
+                    setLineMenu(null);
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
 
         {/* Zoom controls overlay */}
         <div className="absolute bottom-3 right-3 flex items-center gap-1 bg-white/90 dark:bg-neutral-800/90 border border-neutral-200 dark:border-neutral-700 rounded-md px-1.5 py-1 shadow-sm dark:shadow-neutral-900/30 text-xs text-neutral-600 dark:text-neutral-400">

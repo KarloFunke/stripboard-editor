@@ -123,4 +123,75 @@ function metrics(board, components, defs, nets, assignments) {
 }
 
 
-module.exports = { metrics, resolveDef };
+// ── Netlist-only structure metrics (computable pre-solve) ──
+// Classify how IC-heavy a project is: rigid-rigid net joins are connections
+// no flexible part can absorb and predict residual wire mess (corpus study:
+// mess knee at rigidJoins 0 -> 1, escalation with joins and IC pin mass).
+const IC_MIN_PINS = 4;
+
+function netlistMetrics(components, defs, netAssignments) {
+  const comps = components.filter((c) => !c.boardExcluded);
+  const byComp = new Map(comps.map((c) => [c.id, c]));
+  const defOf = (c) => resolveDef(c, defs);
+  const isIc = (c) => {
+    const d = defOf(c);
+    return !!d && !d.flexible && d.pins.length >= IC_MIN_PINS;
+  };
+  const icComps = comps.filter(isIc);
+  const icIds = new Set(icComps.map((c) => c.id));
+  const flexParts = comps.filter((c) => defOf(c)?.flexible).length;
+
+  let totalAsgPins = 0, icAsgPins = 0;
+  const perNet = new Map(); // netId -> { parts:Set, ics:Set }
+  const perIcRowNets = new Map(); // compId -> Map(offsetRow -> Set(netId))
+  for (const a of netAssignments) {
+    const c = byComp.get(a.componentId);
+    if (!c) continue;
+    totalAsgPins++;
+    if (!perNet.has(a.netId)) perNet.set(a.netId, { parts: new Set(), ics: new Set() });
+    const e = perNet.get(a.netId);
+    e.parts.add(c.id);
+    if (icIds.has(c.id)) {
+      icAsgPins++;
+      e.ics.add(c.id);
+      const pin = defOf(c).pins.find((p) => p.id === a.pinId);
+      if (pin) {
+        if (!perIcRowNets.has(c.id)) perIcRowNets.set(c.id, new Map());
+        const rows = perIcRowNets.get(c.id);
+        if (!rows.has(pin.offsetRow)) rows.set(pin.offsetRow, new Set());
+        rows.get(pin.offsetRow).add(a.netId);
+      }
+    }
+  }
+
+  let rigidJoins = 0, totalJoins = 0, hubMax = 0;
+  for (const e of perNet.values()) {
+    totalJoins += Math.max(0, e.parts.size - 1);
+    rigidJoins += Math.max(0, e.ics.size - 1);
+    hubMax = Math.max(hubMax, e.ics.size);
+  }
+  let combMax = 0;
+  for (const rows of perIcRowNets.values()) {
+    for (const netsInRow of rows.values()) combMax = Math.max(combMax, netsInRow.size);
+  }
+  const icPinCounts = icComps.map((c) => defOf(c).pins.length);
+
+  return {
+    icCount: icComps.length,
+    icPinSum: icPinCounts.reduce((a, b) => a + b, 0),
+    maxIcPins: icPinCounts.length ? Math.max(...icPinCounts) : 0,
+    icCells: icComps.reduce((a, c) => {
+      const d = defOf(c);
+      return a + (d.width ?? 1) * (d.height ?? 1);
+    }, 0),
+    rigidJoins,
+    totalJoins,
+    icAsgPins,
+    totalAsgPins,
+    flexParts,
+    combMax,
+    hubMax,
+  };
+}
+
+module.exports = { metrics, resolveDef, netlistMetrics };

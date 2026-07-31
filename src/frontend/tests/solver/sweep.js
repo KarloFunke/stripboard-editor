@@ -14,7 +14,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { Worker, isMainThread, parentPort, workerData } = require("worker_threads");
-const { metrics, resolveDef } = require("./metricsLib.js");
+const { metrics, resolveDef, netlistMetrics } = require("./metricsLib.js");
 const { computeAutoLayout2, DEFAULT_COMPONENTS } = require("./helpers.js");
 
 const aspectOf = (rows, cols) => Math.round((Math.max(rows, cols) / Math.min(rows, cols)) * 100) / 100;
@@ -113,6 +113,7 @@ function sweepOne(entry, dataDir, lockedN) {
     id: entry.id,
     parts: entry.parts,
     nets: nets.length,
+    netlist: netlistMetrics(humanComps, defs, asg),
     human: {
       rows: humanBoard.rows,
       cols: humanBoard.cols,

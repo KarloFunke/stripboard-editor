@@ -105,6 +105,12 @@ interface ProjectActions {
   setClearanceOverride: (defId: string, clearance: number | null) => void;
   // Toggle the tidy-wires second pass (on by default)
   setTidyWires: (value: boolean) => void;
+  // Insert a blank row/column at `at` (0-based): everything at or beyond it
+  // shifts by one line. A rigid part whose footprint straddles the line
+  // cannot be split and stays put — may break its nets; a manual-cleanup
+  // tool, the user fixes fallout.
+  insertBoardLine: (axis: "row" | "col", at: number) => void;
+  deleteBoardLine: (axis: "row" | "col", at: number) => void;
   addWire: (from: BoardPosition, to: BoardPosition) => void;
   removeWire: (wireId: string) => void;
   // Derive and apply the cuts/wires needed to complete the current placement
@@ -960,6 +966,109 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   setTidyWires: (value) => {
     set({ tidyWires: value, isDirty: true });
+  },
+
+  insertBoardLine: (axis, at) => {
+    get().pushSnapshot();
+    set((s) => {
+      const isRow = axis === "row";
+      const shiftPos = <T extends { row: number; col: number }>(p: T): T =>
+        isRow
+          ? p.row >= at ? { ...p, row: p.row + 1 } : p
+          : p.col >= at ? { ...p, col: p.col + 1 } : p;
+      const components = s.components.map((c) => {
+        if (!c.boardPos) return c;
+        const def = resolveComponentDef(c, s.componentDefs);
+        if (!def) return c;
+        if (def.flexible) {
+          return {
+            ...c,
+            boardPos: shiftPos(c.boardPos),
+            ...(c.flexibleEndPos ? { flexibleEndPos: shiftPos(c.flexibleEndPos) } : {}),
+          };
+        }
+        // A rigid moves only when its whole footprint sits at/beyond the
+        // line; a straddler cannot be split and stays put.
+        const bounds = getComponentBounds(def, c.boardPos, c.rotation);
+        const wholly = isRow ? bounds.minRow >= at : bounds.minCol >= at;
+        if (!wholly) return c;
+        return {
+          ...c,
+          boardPos: isRow
+            ? { row: c.boardPos.row + 1, col: c.boardPos.col }
+            : { row: c.boardPos.row, col: c.boardPos.col + 1 },
+        };
+      });
+      const board = {
+        ...s.board,
+        rows: s.board.rows + (isRow ? 1 : 0),
+        cols: s.board.cols + (isRow ? 0 : 1),
+        cuts: s.board.cuts.map((cut) => shiftPos(cut)),
+        wires: s.board.wires.map((w) => ({ ...w, from: shiftPos(w.from), to: shiftPos(w.to) })),
+      };
+      return { components, board, isDirty: true };
+    });
+  },
+
+  deleteBoardLine: (axis, at) => {
+    const isRow = axis === "row";
+    const { board } = get();
+    if ((isRow ? board.rows : board.cols) <= 1) return;
+    get().pushSnapshot();
+    set((s) => {
+      const coord = (p: { row: number; col: number }) => (isRow ? p.row : p.col);
+      const shiftPos = <T extends { row: number; col: number }>(p: T): T =>
+        isRow
+          ? p.row > at ? { ...p, row: p.row - 1 } : p
+          : p.col > at ? { ...p, col: p.col - 1 } : p;
+      const unplace = (c: Component): Component => ({ ...c, boardPos: null, flexibleEndPos: undefined, locked: undefined });
+      const components = s.components.map((c) => {
+        if (!c.boardPos) return c;
+        const def = resolveComponentDef(c, s.componentDefs);
+        if (!def) return c;
+        if (def.flexible) {
+          // An endpoint on the line loses its hole; a part merely spanning
+          // the line shortens with the board (no minimum-span check here).
+          const end = c.flexibleEndPos ?? c.boardPos;
+          if (coord(c.boardPos) === at || coord(end) === at) return unplace(c);
+          return {
+            ...c,
+            boardPos: shiftPos(c.boardPos),
+            ...(c.flexibleEndPos ? { flexibleEndPos: shiftPos(c.flexibleEndPos) } : {}),
+          };
+        }
+        // A rigid footprint cannot shrink: touching the line unplaces it,
+        // wholly beyond shifts, wholly before stays.
+        const bounds = getComponentBounds(def, c.boardPos, c.rotation);
+        const lo = isRow ? bounds.minRow : bounds.minCol;
+        const hi = isRow ? bounds.maxRow : bounds.maxCol;
+        if (lo <= at && at <= hi) return unplace(c);
+        if (lo < at) return c;
+        return {
+          ...c,
+          boardPos: isRow
+            ? { row: c.boardPos.row - 1, col: c.boardPos.col }
+            : { row: c.boardPos.row, col: c.boardPos.col - 1 },
+        };
+      });
+      // A between-cut severs col|col+1, so on the column axis it touches the
+      // deleted hole column from either side.
+      const cutGone = (cut: Cut) =>
+        isRow
+          ? cut.row === at
+          : cut.kind === "hole"
+            ? cut.col === at
+            : cut.col === at || cut.col === at - 1;
+      const wireGone = (w: Wire) => coord(w.from) === at || coord(w.to) === at;
+      const newBoard = {
+        ...s.board,
+        rows: s.board.rows - (isRow ? 1 : 0),
+        cols: s.board.cols - (isRow ? 0 : 1),
+        cuts: s.board.cuts.filter((c) => !cutGone(c)).map((cut) => shiftPos(cut)),
+        wires: s.board.wires.filter((w) => !wireGone(w)).map((w) => ({ ...w, from: shiftPos(w.from), to: shiftPos(w.to) })),
+      };
+      return { components, board: newBoard, isDirty: true };
+    });
   },
 
   placeCut: (cut) => {

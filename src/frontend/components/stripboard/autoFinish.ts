@@ -108,16 +108,14 @@ function collectBoardPins(
  */
 /**
  * Parts whose under-body holes stay reachable for wire endpoints, because
- * they stand on header sockets. Built-in modules classify via bodyStyle;
- * user-built ones are recognized by shape — two edge pin columns far apart
- * and a header-scale pin count. Flat wide parts with few pins (relays)
- * stay fully blocking.
+ * they stand on header sockets. Exactly the defs that render as a board on
+ * headers (bodyStyle "board"): the visual promise and the solder physics
+ * must agree. A former shape fallback (wide pin span, header-scale pin
+ * count) also matched user-built wide DIP-style ICs, which sit flat on the
+ * board — the router soldered wires under them.
  */
 function standsOnHeaders(def: ComponentDef): boolean {
-  if (bodyStyle(def) === "board") return true;
-  if (def.pins.length < 10) return false;
-  const cols = def.pins.map((p) => p.offsetCol);
-  return new Set(cols).size >= 2 && Math.max(...cols) - Math.min(...cols) > 3;
+  return bodyStyle(def) === "board";
 }
 
 function collectOccupiedHoles(
@@ -577,7 +575,6 @@ function deriveWires(
     issues: string[];
     starved: string[];
     starvedPins: BoardPosition[];
-    overlapped: string[]; // nets that had to fall back to overlapping wires
     mess: number; // total extra effective length of the chosen wires
     sharedJoints: number; // wires soldered into a pin's hole (no free hole left)
   }
@@ -590,7 +587,7 @@ function deriveWires(
   };
 
   const routeAll = (order: Net[]): RoutePass => {
-    const pass: RoutePass = { wires: [], extraCuts: [], issues: [], starved: [], starvedPins: [], overlapped: [], mess: 0, sharedJoints: 0 };
+    const pass: RoutePass = { wires: [], extraCuts: [], issues: [], starved: [], starvedPins: [], mess: 0, sharedJoints: 0 };
     const allWires = [...existingWires];
     const relayOwner = new Map<number, string>();
     // Holes given away with a claimed tail: they belong to the claimant's
@@ -621,8 +618,19 @@ function deriveWires(
       wireEnds.add(holeKey(w.from.row, w.from.col));
       wireEnds.add(holeKey(w.to.row, w.to.col));
     }
-    const overlapsAWire = (from: BoardPosition, to: BoardPosition) =>
-      allWires.some((w) => segmentsOverlapCollinear(from, to, w.from, w.to));
+    // Wires running on top of each other are physically fine (insulation)
+    // and a standard human technique for parallel runs sharing a column;
+    // the editor renders them in separate lanes. Price each overlapped
+    // wire below a slant's cost so a free column still wins, a pile-up
+    // stays unattractive, and overlap beats going diagonal.
+    const WIRE_OVERLAP_RATE = 2;
+    const overlapPenalty = (from: BoardPosition, to: BoardPosition) => {
+      let n = 0;
+      for (const w of allWires) {
+        if (segmentsOverlapCollinear(from, to, w.from, w.to)) n++;
+      }
+      return n * WIRE_OVERLAP_RATE;
+    };
 
     for (const net of order) {
       const groupIdxs = netGroupIdxs.get(net.id)!;
@@ -658,7 +666,6 @@ function deriveWires(
       if (remaining.size > 0) {
         for (const h of passEndpoints(first)) addConnected(h);
       }
-      let usedOverlap = false;
 
       interface WireChoice {
         from: BoardPosition;
@@ -668,7 +675,7 @@ function deriveWires(
         mess: number;
       }
       while (remaining.size > 0) {
-        const findBest = (allowOverlap: boolean): WireChoice | null => {
+        const findBest = (): WireChoice | null => {
           let best: WireChoice | null = null;
           const consider = (ha: BoardPosition, hb: BoardPosition, gi: number): WireChoice | null => {
             const dc = ha.col - hb.col;
@@ -680,10 +687,14 @@ function deriveWires(
             // A slanted pair's off-axis penalty is known before any obstacle
             // test — a hard floor on its cost, so most slants prune here.
             if (best && slantLowerBound(ha.row - hb.row, dc) > best.cost + 1e-9) return null;
-            const mess =
+            let mess =
               obstacleIndex.extraLength(ha, hb) +
               (sharedPinPen.get(holeKey(ha.row, ha.col)) ?? 0) +
               (sharedPinPen.get(holeKey(hb.row, hb.col)) ?? 0);
+            // Overlap pricing only for pairs still in the running: the scan
+            // over routed wires is the priciest term here.
+            if (best && dist + mess > best.cost + 1e-9) return null;
+            mess += overlapPenalty(ha, hb);
             const cost = dist + mess;
             // Tiebreak: prefer straight vertical jumpers
             const better =
@@ -692,7 +703,6 @@ function deriveWires(
               (cost < best.cost + 1e-9 &&
                 Math.abs(dc) < Math.abs(best.from.col - best.to.col));
             if (!better) return null;
-            if (!allowOverlap && overlapsAWire(ha, hb)) return null;
             return { from: ha, to: hb, group: gi, cost, mess };
           };
           for (const gi of remaining) {
@@ -759,7 +769,8 @@ function deriveWires(
                 const mess =
                   obstacleIndex.extraLength(from, to) +
                   (sharedPinPen.get(holeKey(ra, col)) ?? 0) +
-                  (sharedPinPen.get(holeKey(rb, col)) ?? 0);
+                  (sharedPinPen.get(holeKey(rb, col)) ?? 0) +
+                  overlapPenalty(from, to);
                 const cost = d + mess;
                 if (!best || cost < best.cost - 1e-9) best = { from, to, cost, mess };
               }
@@ -767,7 +778,7 @@ function deriveWires(
           }
           return best;
         };
-        const findRelayBest = (allowOverlap: boolean, maxHops: number): RelayChoice | null => {
+        const findRelayBest = (maxHops: number): RelayChoice | null => {
           let best: RelayChoice | null = null;
           for (const gi of remaining) {
             const bCols = bColsOf(gi);
@@ -802,7 +813,6 @@ function deriveWires(
               if (w1.cost + w2.cost > maxHops) continue;
               const cost = w1.cost + w2.cost + RELAY_WIRE_TAX + (cand.cut && owner === undefined ? 0.5 : 0);
               if (best && cost >= best.cost - 1e-9) continue;
-              if (!allowOverlap && (overlapsAWire(w1.from, w1.to) || overlapsAWire(w2.from, w2.to))) continue;
               best = { w1, w2, group: gi, relay: ci, cost, mess: w1.mess + w2.mess };
             }
           }
@@ -812,19 +822,14 @@ function deriveWires(
         // Relays exist to avoid messy wires, not to shorten clean ones:
         // when the direct choice is a clean vertical, skip the (expensive)
         // relay search entirely.
-        let best = findBest(false);
+        const best = findBest();
         // A relay may only replace a messy direct wire when its two hops
         // stay comparable in length — a huge detour to save a slant is a
         // worse build than the slant (with no direct option, anything goes).
         const maxHops = best
           ? Math.hypot(best.from.row - best.to.row, best.from.col - best.to.col) * 1.5 + 4
           : Infinity;
-        let relay = !best || best.mess > 0.25 ? findRelayBest(false, maxHops) : null;
-        if (!best && !relay) {
-          best = findBest(true);
-          relay = findRelayBest(true, Infinity);
-          if (best || relay) usedOverlap = true;
-        }
+        const relay = !best || best.mess > 0.25 ? findRelayBest(maxHops) : null;
         if (!best && !relay) {
           pass.issues.push(`Net "${net.name}": no free hole to attach a link wire`);
           pass.starved.push(net.id);
@@ -867,7 +872,6 @@ function deriveWires(
         // Endpoints stay available: further wires of this net may chain there
         for (const h of passEndpoints(best!.group)) addConnected(h);
       }
-      if (usedOverlap) pass.overlapped.push(net.id);
 
       // Nets that still await unplaced components must keep a free hole, or
       // the future part/wire will have nowhere to attach (e.g. a pin boxed in
@@ -884,24 +888,7 @@ function deriveWires(
     return pass;
   };
 
-  let result = routeAll(baseOrder);
-  // A net forced into an overlap got there because earlier nets took the
-  // clean paths — one retry with the overlapped nets routed first often
-  // clears it. Keep the retry only if it is strictly better.
-  if (result.overlapped.length > 0) {
-    const promoted = new Set(result.overlapped);
-    const retryOrder = [
-      ...baseOrder.filter((n) => promoted.has(n.id)),
-      ...baseOrder.filter((n) => !promoted.has(n.id)),
-    ];
-    const retry = routeAll(retryOrder);
-    if (
-      retry.starved.length <= result.starved.length &&
-      retry.overlapped.length < result.overlapped.length
-    ) {
-      result = retry;
-    }
-  }
+  const result = routeAll(baseOrder);
 
   issues.push(...result.issues);
   starvedNetIds.push(...result.starved);
@@ -1020,7 +1007,9 @@ export function deriveCompletion(
     };
     // Every candidate is a full re-route: keep the search on a budget —
     // nearest slide positions first, a few per cut, a hard total cap.
-    let budget = 24;
+    // (Sized when a re-route was ~10x dearer; on crowded boards the first
+    // offender cluster exhausted 24 before later wires got a turn.)
+    let budget = 60;
     outer: while (budget > 0) {
       const bad = slantsOf(attempt);
       if (bad.length === 0) break;
@@ -1031,7 +1020,7 @@ export function deriveCompletion(
           const gs: number[] = [];
           for (let g = gLo; g <= gHi; g++) if (g !== cut.col) gs.push(g);
           gs.sort((a, b) => Math.abs(a - cut.col) - Math.abs(b - cut.col));
-          for (const g of gs.slice(0, 5)) {
+          for (const g of gs.slice(0, 7)) {
             if (budget-- <= 0) break outer;
             const cutsTry = attempt.cuts.map((c) => (c === cut ? { ...c, col: g } : c));
             const t = routeWith(cutsTry);

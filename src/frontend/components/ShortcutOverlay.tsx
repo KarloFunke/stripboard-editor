@@ -27,6 +27,8 @@ const SHORTCUTS = [
     ["Escape", "Clear selection"],
     ["Arrow keys / Drag", "Move selected components, one or many"],
     ["Alt + click hole", "Cut the strip at a hole"],
+    ["Shift", "Hold to click through wires, e.g. to start a parallel wire on a covered hole"],
+    ["Right-click row / column number", "Insert or delete a board row / column"],
     ["Right-click drag", "Pan canvas"],
     ["Scroll wheel", "Zoom"],
   ]},

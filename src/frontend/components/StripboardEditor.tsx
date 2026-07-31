@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useMemo, useRef, useEffect } from "react";
-import { usePathname } from "next/navigation";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useStripSegments } from "@/hooks/useStripSegments";
 import { checkNetCompleteness } from "./stripboard/netCompleteness";
@@ -11,8 +10,6 @@ import StripboardCanvas from "./stripboard/StripboardCanvas";
 import StripboardFootprintEditor from "./stripboard/StripboardFootprintEditor";
 import AutoLayoutSettings from "./stripboard/AutoLayoutSettings";
 import ResizableSidebar from "./ResizableSidebar";
-import LayoutRatingPrompt from "./LayoutRatingPrompt";
-import { isLayoutRatingEnabled, projectKeyFromPath } from "@/lib/layoutRating";
 import { track } from "@/lib/track";
 import { LockIcon, UnlockIcon } from "./canvas/SelectionActionBar";
 
@@ -46,10 +43,6 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
   const fadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [autoProgress, setAutoProgress] = useState<{ label: string; frac: number } | null>(null);
   const [showLayoutSettings, setShowLayoutSettings] = useState(false);
-  // Snapshot + metrics of a finished v2 layout, shown as a rating prompt in the
-  // result popup (only when the user hasn't opted out).
-  const [rateData, setRateData] = useState<{ snapshot: Record<string, unknown>; metrics: Record<string, unknown>; runId: number } | null>(null);
-  const pathname = usePathname();
   const autoWorkersRef = useRef<Worker[]>([]);
   const autoRunIdRef = useRef(0);
   useEffect(() => () => {
@@ -64,16 +57,14 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
     if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current);
   };
 
-  // Fade the popup (and any attached rating prompt) out after 10s. Hovering the
-  // popup cancels this and it reschedules on mouse-out, so a user weighing a
-  // rating is never rushed.
+  // Fade the popup out after 10s. Hovering the popup cancels this and it
+  // reschedules on mouse-out.
   const scheduleAutoMsgDismiss = () => {
     clearMsgTimers();
     autoFinishMsgTimer.current = setTimeout(() => {
       setMsgLeaving(true);
       fadeTimerRef.current = setTimeout(() => {
         setAutoFinishMsg(null);
-        setRateData(null);
         setMsgLeaving(false);
       }, 500);
     }, 10000);
@@ -89,7 +80,6 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
   const closeAutoMsg = () => {
     clearMsgTimers();
     setAutoFinishMsg(null);
-    setRateData(null);
     setMsgLeaving(false);
   };
 
@@ -107,12 +97,9 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
     if (autoWorkersRef.current.length > 0) {
       stopAutoWorkers();
       showAutoMsg("Auto-layout cancelled", []);
-      setRateData(null);
       return;
     }
-    setRateData(null);
     track("auto-layout-run", { engine: onlyIds ? "selection" : "full" });
-    const startedAt = performance.now();
     const runId = ++autoRunIdRef.current;
     const inputs = { board, components, componentDefs, nets, netAssignments, spanOverrides, clearanceOverrides, tidyWires };
 
@@ -146,48 +133,14 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
       applyAutoLayout(result);
       // Point the user at the first uncompletable net (or clear a stale one)
       setHighlightedNetId(result.starvedNetIds[0] ?? null);
-      const parts: string[] = [];
-      if (result.placements.length > 0) parts.push(`arranged ${result.placements.length} part${result.placements.length > 1 ? "s" : ""}`);
-      if (result.boardSize && (result.boardSize.rows !== inputs.board.rows || result.boardSize.cols !== inputs.board.cols)) {
-        parts.push(`board sized to ${result.boardSize.rows}×${result.boardSize.cols}`);
-      }
-      if (result.cuts.length > 0) parts.push(`${result.cuts.length} cut${result.cuts.length > 1 ? "s" : ""}`);
-      if (result.wires.length > 0) parts.push(`${result.wires.length} wire${result.wires.length > 1 ? "s" : ""}`);
-      const summary = parts.length > 0
-        ? parts.join(", ").replace(/^./, (c) => c.toUpperCase())
-        : "Nothing to do";
-
-      // Offer a rating only for full (v2) runs the user hasn't opted out of.
-      const rate = !onlyIds && result.placements.length > 0 && isLayoutRatingEnabled(projectKeyFromPath(pathname));
-      if (rate) {
-        const st = useProjectStore.getState();
-        setRateData({
-          snapshot: st.exportProject() as unknown as Record<string, unknown>,
-          metrics: {
-            rows: st.board.rows,
-            cols: st.board.cols,
-            parts: result.placements.length,
-            unplaced: (result.unplaceIds ?? []).length,
-            wires: result.wires.length,
-            cuts: result.cuts.length,
-            quality: result.quality,
-            lockedRows: !!st.board.lockedRows,
-            lockedCols: !!st.board.lockedCols,
-            lockedParts: st.components.filter((c) => c.locked && c.boardPos).length,
-            solveMs: Math.round(performance.now() - startedAt),
-            issues: result.issues,
-          },
-          runId,
-        });
-      }
-      showAutoMsg(summary, result.issues);
+      // A clean run speaks for itself on the board; only problems get a popup.
+      if (result.issues.length > 0) showAutoMsg("Auto-layout finished with issues", result.issues);
     };
     worker.onerror = (err) => {
       if (runId !== autoRunIdRef.current) return;
       console.error("Auto-layout worker failed", err);
       stopAutoWorkers();
       showAutoMsg("Auto-layout failed", []);
-      setRateData(null);
     };
     const request: AutoLayoutRequest = {
       ...inputs,
@@ -245,9 +198,11 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
                 <span className="whitespace-nowrap">{autoProgress.label}</span>
                 <span className="w-24 h-1.5 rounded bg-neutral-200 dark:bg-neutral-700 overflow-hidden">
                   <span
-                    className="block h-full bg-[#113768] dark:bg-[#5b9bd5] transition-[width] duration-200"
+                    className="relative block h-full overflow-hidden bg-[#113768] dark:bg-[#5b9bd5] transition-[width] duration-200"
                     style={{ width: `${Math.round(autoProgress.frac * 100)}%` }}
-                  />
+                  >
+                    <span className="progress-sheen absolute inset-y-0 left-0 w-1/2 bg-gradient-to-r from-transparent via-white/50 to-transparent" />
+                  </span>
                 </span>
               </span>
             )}
@@ -366,25 +321,6 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
               <p className="text-sm text-neutral-700 dark:text-neutral-200 leading-snug">
                 {autoFinishMsg}
               </p>
-              <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1.5">
-                Interested in how it works?{" "}
-                <a
-                  href="/guide/auto-layout"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[var(--copper)] hover:underline"
-                >
-                  See here
-                </a>
-              </p>
-              {rateData && (
-                <LayoutRatingPrompt
-                  key={rateData.runId}
-                  snapshot={rateData.snapshot}
-                  metrics={rateData.metrics}
-                  onDone={closeAutoMsg}
-                />
-              )}
             </div>
             <button
               onClick={closeAutoMsg}
