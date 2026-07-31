@@ -62,9 +62,92 @@ export interface AutoLayout2Options {
   harvest?: boolean;
   // Cluster size cap override (cap study / future size-adaptive cap)
   maxCluster?: number;
+  // Tidy second pass: when the clean result still has messy wires, re-solve
+  // with the achieved width locked and accept the result if it is strictly
+  // tidier and its area stays within this growth fraction (Infinity = any).
+  tidyGrowth?: number;
+}
+
+// Columns a result actually needs: the extent of footprints, wires and
+// cuts. The tidy pass's synthetic width lock pads its result to the full
+// cap, and unused trailing columns are real board the user would buy.
+function usedColsOf(result: AutoLayoutResult, components: Component[], componentDefs: ComponentDef[]): number {
+  const byId = new Map(result.placements.map((p) => [p.componentId, p]));
+  let hi = -1;
+  for (const c of components) {
+    const p = byId.get(c.id);
+    const boardPos = p?.boardPos ?? c.boardPos;
+    if (!boardPos || c.boardExcluded) continue;
+    const def = resolveComponentDef(c, componentDefs);
+    if (!def) continue;
+    if (def.flexible) hi = Math.max(hi, boardPos.col, (p?.flexibleEndPos ?? c.flexibleEndPos ?? boardPos).col);
+    else hi = Math.max(hi, getComponentBounds(def, boardPos, p?.rotation ?? c.rotation).maxCol);
+  }
+  for (const w of result.wires) hi = Math.max(hi, w.from.col, w.to.col);
+  for (const cut of result.cuts) hi = Math.max(hi, cut.kind === "hole" ? cut.col : cut.col + 1);
+  return hi + 1;
+}
+
+// Visual wire mess of a finished result on its solved positions: off-axis
+// wires plus the priced part crossings. Judges the tidy pass.
+function wireMessScore(result: AutoLayoutResult, components: Component[], componentDefs: ComponentDef[]): number {
+  const byId = new Map(result.placements.map((p) => [p.componentId, p]));
+  const obstacles: WireObstacles = { rects: [], bodies: [] };
+  for (const c of components) {
+    const p = byId.get(c.id);
+    const boardPos = p?.boardPos ?? c.boardPos;
+    if (!boardPos || c.boardExcluded) continue;
+    const def = resolveComponentDef(c, componentDefs);
+    if (!def) continue;
+    if (def.flexible) obstacles.bodies.push({ p1: boardPos, p2: p?.flexibleEndPos ?? c.flexibleEndPos ?? boardPos });
+    else obstacles.rects.push(getComponentBounds(def, boardPos, p?.rotation ?? c.rotation));
+  }
+  let score = 0;
+  for (const w of result.wires) {
+    score += (w.from.col !== w.to.col ? 1 : 0) + wireExtraLength(w.from, w.to, obstacles);
+  }
+  return score;
 }
 
 export function computeAutoLayout2(
+  board: Board,
+  components: Component[],
+  componentDefs: ComponentDef[],
+  nets: Net[],
+  netAssignments: NetAssignment[],
+  onProgress?: (p: AutoLayoutProgress) => void,
+  options?: AutoLayout2Options
+): AutoLayoutResult {
+  const growCap = options?.tidyGrowth;
+  const scaled = growCap !== undefined && onProgress
+    ? (f0: number, span: number) => (p: AutoLayoutProgress) => onProgress({ ...p, frac: f0 + p.frac * span })
+    : null;
+  const base = layoutOnce(board, components, componentDefs, nets, netAssignments, scaled ? scaled(0, 0.6) : onProgress, options);
+  if (growCap === undefined || base.quality !== 0 || !base.boardSize || board.lockedRows || board.lockedCols) return base;
+  const baseScore = wireMessScore(base, components, componentDefs);
+  if (baseScore <= 0) return base;
+  // Locking the found width changes the economics, not the budget: unused
+  // columns are pre-paid (effArea covers the cap either way) and the aspect
+  // penalty is lifted, so this pass can spend space on wire channels and
+  // relay strips that the free objective taxes away as area.
+  const cap = base.boardSize.cols;
+  const capped = layoutOnce(
+    { ...board, cols: cap, lockedCols: true, lockedRows: false },
+    components, componentDefs, nets, netAssignments,
+    scaled ? scaled(0.6, 0.4) : undefined, options
+  );
+  if (capped.quality !== 0 || !capped.boardSize || capped.boardSize.cols > cap) return base;
+  const baseArea = base.boardSize.rows * base.boardSize.cols;
+  const trimmedCols = Math.min(capped.boardSize.cols, usedColsOf(capped, components, componentDefs));
+  const cappedArea = capped.boardSize.rows * trimmedCols;
+  if (cappedArea > baseArea * (1 + growCap)) return base;
+  if (wireMessScore(capped, components, componentDefs) >= baseScore) return base;
+  return trimmedCols < capped.boardSize.cols
+    ? { ...capped, boardSize: { rows: capped.boardSize.rows, cols: trimmedCols } }
+    : capped;
+}
+
+function layoutOnce(
   board: Board,
   components: Component[],
   componentDefs: ComponentDef[],

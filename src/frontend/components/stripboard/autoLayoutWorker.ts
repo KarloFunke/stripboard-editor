@@ -17,6 +17,8 @@ export interface AutoLayoutRequest {
   spanOverrides?: Record<string, { min: number; max: number }>;
   // Per-def-id body clearance halo in hole pitches (project auto-layout config)
   clearanceOverrides?: Record<string, number>;
+  // Tidy second pass: allowed board area growth as a fraction (Infinity = any)
+  tidyGrowth?: number;
 }
 
 export type AutoLayoutWorkerMessage =
@@ -29,7 +31,7 @@ const ctx = self as unknown as {
 };
 
 ctx.onmessage = (e) => {
-  const { board, components, componentDefs, nets, netAssignments, engine, options, spanOverrides, clearanceOverrides } = e.data;
+  const { board, components, componentDefs, nets, netAssignments, engine, options, spanOverrides, clearanceOverrides, tidyGrowth } = e.data;
   const onProgress = (progress: AutoLayoutProgress) => {
     ctx.postMessage({ type: "progress", progress });
   };
@@ -48,6 +50,6 @@ ctx.onmessage = (e) => {
     : componentDefs;
   const result = engine === "v1"
     ? computeAutoLayout(board, components, defs, nets, netAssignments, onProgress, options)
-    : computeAutoLayout2(board, components, defs, nets, netAssignments, onProgress);
+    : computeAutoLayout2(board, components, defs, nets, netAssignments, onProgress, tidyGrowth !== undefined ? { tidyGrowth } : undefined);
   ctx.postMessage({ type: "done", result });
 };

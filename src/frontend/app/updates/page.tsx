@@ -12,6 +12,12 @@ export const metadata: Metadata = {
 
 const updates: { date: string; items: string[]; link?: { href: string; lead: string; text: string } }[] = [
   {
+    date: "2026-07-31",
+    items: [
+      "The auto layouter now produces much straighter wiring: a second solver pass trades a little board space for fewer slanted and crossing wires, and its result is only kept when it actually is tidier. It is on by default and can be turned off in the auto-layout settings. Solving is also several times faster than before, especially on big boards.",
+    ],
+  },
+  {
     date: "2026-07-24",
     items: [
       "Big changes to the auto layouter. Much more user settings and it also performs much better overall. Thats why I also removed the 'alpha' tag as I think its quite capable at this point."

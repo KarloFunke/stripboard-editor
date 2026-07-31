@@ -103,6 +103,8 @@ interface ProjectActions {
   // Set (or reset to default with null) the auto-layout clearance halo for a
   // flexible def; an explicit 0 allows adjacent placement
   setClearanceOverride: (defId: string, clearance: number | null) => void;
+  // Toggle the tidy-wires second pass (on by default)
+  setTidyWires: (value: boolean) => void;
   addWire: (from: BoardPosition, to: BoardPosition) => void;
   removeWire: (wireId: string) => void;
   // Derive and apply the cuts/wires needed to complete the current placement
@@ -299,6 +301,7 @@ function prepareProjectState(data: Project) {
     autoSave: data.autoSave ?? false,
     spanOverrides: data.spanOverrides,
     clearanceOverrides: data.clearanceOverrides,
+    tidyWires: data.tidyWires,
     wirePlacementMode: false,
     wirePlacementFrom: null,
     schematicWireDrawMode: false,
@@ -955,6 +958,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     });
   },
 
+  setTidyWires: (value) => {
+    set({ tidyWires: value, isDirty: true });
+  },
+
   placeCut: (cut) => {
     get().pushSnapshot();
     set((s) => ({
@@ -1157,6 +1164,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       autoSave: s.autoSave,
       spanOverrides: s.spanOverrides,
       clearanceOverrides: s.clearanceOverrides,
+      tidyWires: s.tidyWires,
     };
   },
 
@@ -1188,6 +1196,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     autoSave: false,
     spanOverrides: undefined,
     clearanceOverrides: undefined,
+    tidyWires: undefined,
     wirePlacementMode: false,
     wirePlacementFrom: null,
     schematicWireDrawMode: false,

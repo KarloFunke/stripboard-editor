@@ -17,6 +17,8 @@ export default function AutoLayoutSettings({ onClose }: { onClose: () => void })
   const setSpanOverride = useProjectStore((s) => s.setSpanOverride);
   const clearanceOverrides = useProjectStore((s) => s.clearanceOverrides);
   const setClearanceOverride = useProjectStore((s) => s.setClearanceOverride);
+  const tidyWires = useProjectStore((s) => s.tidyWires);
+  const setTidyWires = useProjectStore((s) => s.setTidyWires);
 
   const flexDefs = useMemo(() => {
     const used = new Set<string>();
@@ -118,6 +120,22 @@ export default function AutoLayoutSettings({ onClose }: { onClose: () => void })
             })}
           </div>
         )}
+        <div className="mt-3 border-t border-neutral-200 dark:border-neutral-700 pt-3">
+          <label className="flex items-center justify-between gap-2 cursor-pointer">
+            <span className="text-sm text-neutral-700 dark:text-neutral-200">Straighter wires</span>
+            <input
+              type="checkbox"
+              checked={tidyWires !== false}
+              onChange={(e) => setTidyWires(e.target.checked)}
+              className="h-4 w-4 accent-blue-500"
+            />
+          </label>
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 leading-snug">
+            Runs a second solver pass that trades some board space for fewer slanted
+            and crossing wires, kept only when it actually is tidier. Turning it off
+            roughly halves the solve time. Applies on the next run.
+          </p>
+        </div>
       </div>
     </>
   );

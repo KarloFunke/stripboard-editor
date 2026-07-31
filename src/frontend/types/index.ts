@@ -157,4 +157,8 @@ export interface Project {
   // halo in hole pitches, replacing the 0.5 default (flexible parts only;
   // 0 allows adjacent placement).
   clearanceOverrides?: Record<string, number>;
+  // Auto-layout config: tidy second pass that trades board area for
+  // straighter wires, kept only when it actually is tidier. On by default;
+  // false turns it off (halves solve time, may leave messier wires).
+  tidyWires?: boolean;
 }

@@ -32,6 +32,7 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
   const netAssignments = useProjectStore((s) => s.netAssignments);
   const spanOverrides = useProjectStore((s) => s.spanOverrides);
   const clearanceOverrides = useProjectStore((s) => s.clearanceOverrides);
+  const tidyWires = useProjectStore((s) => s.tidyWires);
   const isActive = useProjectStore((s) => s.activeEditor === "stripboard");
   const setActiveEditor = useProjectStore((s) => s.setActiveEditor);
   const showValuesOnBoard = useProjectStore((s) => s.showValuesOnBoard);
@@ -113,7 +114,7 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
     track("auto-layout-run", { engine: onlyIds ? "selection" : "full" });
     const startedAt = performance.now();
     const runId = ++autoRunIdRef.current;
-    const inputs = { board, components, componentDefs, nets, netAssignments, spanOverrides, clearanceOverrides };
+    const inputs = { board, components, componentDefs, nets, netAssignments, spanOverrides, clearanceOverrides, tidyWires };
 
     const worker = new Worker(new URL("./stripboard/autoLayoutWorker.ts", import.meta.url));
     autoWorkersRef.current = [worker];
@@ -137,7 +138,7 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
         s.board !== inputs.board || s.components !== inputs.components ||
         s.componentDefs !== inputs.componentDefs || s.nets !== inputs.nets ||
         s.netAssignments !== inputs.netAssignments || s.spanOverrides !== inputs.spanOverrides ||
-        s.clearanceOverrides !== inputs.clearanceOverrides
+        s.clearanceOverrides !== inputs.clearanceOverrides || s.tidyWires !== inputs.tidyWires
       ) {
         showAutoMsg("Board changed while solving — result discarded, run again", []);
         return;
@@ -192,6 +193,7 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
       ...inputs,
       engine: onlyIds ? "v1" : "v2",
       options: onlyIds ? { onlyIds } : undefined,
+      tidyGrowth: tidyWires === false ? undefined : Infinity,
     };
     worker.postMessage(request);
   };
