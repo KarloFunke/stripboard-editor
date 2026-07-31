@@ -7,3 +7,4 @@ node_modules/
 .next/
 *.sqlite3
 auto-layouter-data/
+CLAUDE.md
