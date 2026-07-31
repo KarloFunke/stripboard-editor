@@ -1,5 +1,5 @@
 import { Wire } from "@/types";
-import { StripSegment } from "./stripSegments";
+import { StripSegment, findSegmentIndex } from "./stripSegments";
 
 // ── Union-Find ─────────────────────────────────────────
 
@@ -45,17 +45,6 @@ export interface ConnectedGroup {
   wireIds: string[];
   netIds: string[];
   hasConflict: boolean;
-}
-
-/** Find which segment a hole belongs to, or -1 if none */
-function findSegmentIndex(
-  segments: StripSegment[],
-  row: number,
-  col: number
-): number {
-  return segments.findIndex(
-    (s) => s.row === row && col >= s.startCol && col <= s.endCol
-  );
 }
 
 /** Compute connected groups of strip segments bridged by wires */

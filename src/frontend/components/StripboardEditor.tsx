@@ -5,6 +5,7 @@ import { useProjectStore } from "@/store/useProjectStore";
 import { useStripSegments } from "@/hooks/useStripSegments";
 import { checkNetCompleteness } from "./stripboard/netCompleteness";
 import type { AutoLayoutRequest, AutoLayoutWorkerMessage } from "./stripboard/autoLayoutWorker";
+import type { AutoLayoutResult } from "./stripboard/layoutTypes";
 import ComponentTray from "./stripboard/ComponentTray";
 import StripboardCanvas from "./stripboard/StripboardCanvas";
 import StripboardFootprintEditor from "./stripboard/StripboardFootprintEditor";
@@ -30,6 +31,8 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
   const spanOverrides = useProjectStore((s) => s.spanOverrides);
   const clearanceOverrides = useProjectStore((s) => s.clearanceOverrides);
   const tidyWires = useProjectStore((s) => s.tidyWires);
+  const permTimeBudget = useProjectStore((s) => s.permTimeBudget);
+  const permWorkers = useProjectStore((s) => s.permWorkers);
   const isActive = useProjectStore((s) => s.activeEditor === "stripboard");
   const setActiveEditor = useProjectStore((s) => s.setActiveEditor);
   const showValuesOnBoard = useProjectStore((s) => s.showValuesOnBoard);
@@ -90,9 +93,11 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
     setAutoProgress(null);
   };
 
-  // Full runs use the v2 strip-first layouter (deterministic, one worker,
-  // picks its own board size). Scoped re-layouts of a selection stay on the
-  // v1 optimizer, which can keep everything else fixed.
+  // Full runs use the v2 strip-first layouter (deterministic, picks its own
+  // board size). Scoped re-layouts of a selection stay on the v1 optimizer,
+  // which can keep everything else fixed. With a time budget set, several
+  // workers solve deterministic input orderings of the same circuit until
+  // the time is up and the best finished board (quality, then score) wins.
   const handleAutoLayout = (onlyIds?: string[]) => {
     if (autoWorkersRef.current.length > 0) {
       stopAutoWorkers();
@@ -102,6 +107,106 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
     track("auto-layout-run", { engine: onlyIds ? "selection" : "full" });
     const runId = ++autoRunIdRef.current;
     const inputs = { board, components, componentDefs, nets, netAssignments, spanOverrides, clearanceOverrides, tidyWires };
+
+    const isStale = () => {
+      const s = useProjectStore.getState();
+      return (
+        s.board !== inputs.board || s.components !== inputs.components ||
+        s.componentDefs !== inputs.componentDefs || s.nets !== inputs.nets ||
+        s.netAssignments !== inputs.netAssignments || s.spanOverrides !== inputs.spanOverrides ||
+        s.clearanceOverrides !== inputs.clearanceOverrides || s.tidyWires !== inputs.tidyWires
+      );
+    };
+    const applyBest = (result: AutoLayoutResult) => {
+      // The user kept editing while we solved: applying a result computed
+      // from stale state would clobber their changes — discard instead.
+      if (isStale()) {
+        showAutoMsg("Board changed while solving — result discarded, run again", []);
+        return;
+      }
+      applyAutoLayout(result);
+      // Point the user at the first uncompletable net (or clear a stale one)
+      setHighlightedNetId(result.starvedNetIds[0] ?? null);
+      // A clean run speaks for itself on the board; only problems get a popup.
+      if (result.issues.length > 0) showAutoMsg("Auto-layout finished with issues", result.issues);
+    };
+    const request: AutoLayoutRequest = {
+      ...inputs,
+      engine: onlyIds ? "v1" : "v2",
+      options: onlyIds ? { onlyIds } : undefined,
+      tidyGrowth: tidyWires === false ? undefined : Infinity,
+    };
+
+    const budget = !onlyIds ? permTimeBudget ?? 0 : 0;
+    if (budget > 0) {
+      const cores = typeof navigator !== "undefined" ? navigator.hardwareConcurrency || 4 : 4;
+      const nWorkers = Math.max(1, Math.min(permWorkers ?? Math.min(4, cores - 1), cores - 1));
+      const deadline = Date.now() + budget * 1000;
+      let nextIdx = 0;
+      let inFlight = 0;
+      let solved = 0;
+      let best: { result: AutoLayoutResult; score: number; index: number } | null = null;
+
+      const progressTimer = setInterval(() => {
+        if (runId !== autoRunIdRef.current) {
+          clearInterval(progressTimer);
+          return;
+        }
+        setAutoProgress({
+          label: `Solving layouts (${solved} done)`,
+          frac: Math.min(1, (Date.now() - (deadline - budget * 1000)) / (budget * 1000)),
+        });
+      }, 200);
+
+      const finalize = () => {
+        clearInterval(progressTimer);
+        stopAutoWorkers();
+        if (best) applyBest(best.result);
+        else showAutoMsg("Auto-layout failed", []);
+      };
+      // Every worker gets a first ordering regardless of the clock; after
+      // that, new orderings are handed out only while time remains.
+      const dispatch = (worker: Worker & { _idx?: number }): boolean => {
+        if (nextIdx >= nWorkers && Date.now() >= deadline) return false;
+        worker._idx = nextIdx++;
+        inFlight++;
+        worker.postMessage({ ...request, permutationIndex: worker._idx });
+        return true;
+      };
+      const workers = Array.from({ length: nWorkers }, () => {
+        const worker: Worker & { _idx?: number } = new Worker(new URL("./stripboard/autoLayoutWorker.ts", import.meta.url));
+        worker.onmessage = (e: MessageEvent<AutoLayoutWorkerMessage>) => {
+          if (runId !== autoRunIdRef.current) return;
+          if (e.data.type === "progress") return; // the bar tracks the clock
+          inFlight--;
+          solved++;
+          const { result } = e.data;
+          const score = e.data.score ?? Infinity;
+          const idx = worker._idx!;
+          // Deterministic winner for a given set of finished orderings:
+          // quality, then score, then the earliest ordering.
+          if (!best || result.quality < best.result.quality ||
+              (result.quality === best.result.quality &&
+                (score < best.score || (score === best.score && idx < best.index)))) {
+            best = { result, score, index: idx };
+          }
+          if (!dispatch(worker) && inFlight === 0) finalize();
+        };
+        worker.onerror = (err) => {
+          if (runId !== autoRunIdRef.current) return;
+          console.error("Auto-layout worker failed", err);
+          inFlight--;
+          worker.terminate();
+          autoWorkersRef.current = autoWorkersRef.current.filter((w) => w !== worker);
+          if (inFlight === 0) finalize();
+        };
+        return worker;
+      });
+      autoWorkersRef.current = workers;
+      setAutoProgress({ label: "Solving layouts", frac: 0 });
+      for (const w of workers) dispatch(w);
+      return;
+    }
 
     const worker = new Worker(new URL("./stripboard/autoLayoutWorker.ts", import.meta.url));
     autoWorkersRef.current = [worker];
@@ -117,36 +222,13 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
         return;
       }
       stopAutoWorkers();
-      const result = e.data.result;
-      // The user kept editing while we solved: applying a result computed
-      // from stale state would clobber their changes — discard instead.
-      const s = useProjectStore.getState();
-      if (
-        s.board !== inputs.board || s.components !== inputs.components ||
-        s.componentDefs !== inputs.componentDefs || s.nets !== inputs.nets ||
-        s.netAssignments !== inputs.netAssignments || s.spanOverrides !== inputs.spanOverrides ||
-        s.clearanceOverrides !== inputs.clearanceOverrides || s.tidyWires !== inputs.tidyWires
-      ) {
-        showAutoMsg("Board changed while solving — result discarded, run again", []);
-        return;
-      }
-      applyAutoLayout(result);
-      // Point the user at the first uncompletable net (or clear a stale one)
-      setHighlightedNetId(result.starvedNetIds[0] ?? null);
-      // A clean run speaks for itself on the board; only problems get a popup.
-      if (result.issues.length > 0) showAutoMsg("Auto-layout finished with issues", result.issues);
+      applyBest(e.data.result);
     };
     worker.onerror = (err) => {
       if (runId !== autoRunIdRef.current) return;
       console.error("Auto-layout worker failed", err);
       stopAutoWorkers();
       showAutoMsg("Auto-layout failed", []);
-    };
-    const request: AutoLayoutRequest = {
-      ...inputs,
-      engine: onlyIds ? "v1" : "v2",
-      options: onlyIds ? { onlyIds } : undefined,
-      tidyGrowth: tidyWires === false ? undefined : Infinity,
     };
     worker.postMessage(request);
   };

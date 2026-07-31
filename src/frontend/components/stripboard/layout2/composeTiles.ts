@@ -1,4 +1,4 @@
-import { Tile, DimLimits } from "./tilePlanning";
+import { Tile, DimLimits, sharedNetCount } from "./tileModel";
 
 // Exhaustive band search is 3^T..4^T; beyond this many tiles use greedy shelves
 const MAX_EXHAUSTIVE_TILES = 9;
@@ -22,12 +22,6 @@ export interface Floorplan {
   area: number;
 }
 
-export function sharedNetCount(a: Tile, b: Tile): number {
-  let n = 0;
-  for (const net of a.rowsOfNet.keys()) if (b.rowsOfNet.has(net)) n++;
-  return n;
-}
-
 function layoutBands(tiles: Tile[], assign: number[], bandCount: number, gap: number, capped: boolean): Floorplan | null {
   const bands: Tile[][] = Array.from({ length: bandCount }, () => []);
   tiles.forEach((t, i) => bands[assign[i]].push(t));
@@ -38,7 +32,7 @@ function layoutBands(tiles: Tile[], assign: number[], bandCount: number, gap: nu
   let rows = 0;
   let cols = 0;
   let wiresEst = 0;
-  const netRowKeys = new Map<string, Set<string>>();
+  const netRowKeys = new Map<string, Set<number>>();
   // net -> placed pin-row midpoints (final coordinates), for wire length
   const netPts = new Map<string, { r: number; x: number }[]>();
 
@@ -99,7 +93,7 @@ function layoutBands(tiles: Tile[], assign: number[], bandCount: number, gap: nu
             const keys = netRowKeys.get(net);
             if (!keys) continue;
             for (const row of netRows) {
-              if (keys.has(`${bi}:${row + dy}`)) score++;
+              if (keys.has(bi * 100000 + row + dy)) score++;
             }
           }
           if (score > bestScore) {
@@ -112,7 +106,7 @@ function layoutBands(tiles: Tile[], assign: number[], bandCount: number, gap: nu
       for (const [net, netRows] of pick.rowsOfNet) {
         if (!netRowKeys.has(net)) netRowKeys.set(net, new Set());
         for (const row of netRows) {
-          netRowKeys.get(net)!.add(`${bi}:${row + bestDy}`);
+          netRowKeys.get(net)!.add(bi * 100000 + row + bestDy);
           const pt = { r: oy + bestDy + row, x: x + pick.width / 2 };
           if (!netPts.has(net)) netPts.set(net, []);
           netPts.get(net)!.push(pt);

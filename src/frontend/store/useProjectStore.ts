@@ -21,7 +21,7 @@ import { getRotatedPinPositions } from "@/components/schematic/SymbolRenderer";
 import { pointKey } from "@/utils/schematicConstants";
 import { createFootprintSymbol, registerCustomSymbol } from "@/data/symbolDefs";
 import { computeAutoFinish, AutoFinishResult } from "@/components/stripboard/autoFinish";
-import { AutoLayoutResult } from "@/components/stripboard/autoLayout";
+import { AutoLayoutResult } from "@/components/stripboard/layoutTypes";
 
 function generateId(): string {
   return crypto.randomUUID();
@@ -105,6 +105,8 @@ interface ProjectActions {
   setClearanceOverride: (defId: string, clearance: number | null) => void;
   // Toggle the tidy-wires second pass (on by default)
   setTidyWires: (value: boolean) => void;
+  setPermTimeBudget: (seconds: number) => void;
+  setPermWorkers: (n: number) => void;
   // Insert a blank row/column at `at` (0-based): everything at or beyond it
   // shifts by one line. A rigid part whose footprint straddles the line
   // cannot be split and stays put — may break its nets; a manual-cleanup
@@ -320,6 +322,8 @@ function prepareProjectState(data: Project) {
     spanOverrides: data.spanOverrides,
     clearanceOverrides: data.clearanceOverrides,
     tidyWires: data.tidyWires,
+    permTimeBudget: data.permTimeBudget,
+    permWorkers: data.permWorkers,
     autoLayoutUsed: data.autoLayoutUsed,
     boardEditsSinceAutoLayout: data.boardEditsSinceAutoLayout,
     _lastBoardEditSeq: -1,
@@ -996,6 +1000,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set({ tidyWires: value, isDirty: true });
   },
 
+  setPermTimeBudget: (seconds) => {
+    set({ permTimeBudget: seconds > 0 ? seconds : undefined, isDirty: true });
+  },
+
+  setPermWorkers: (n) => {
+    set({ permWorkers: Math.max(1, Math.round(n)), isDirty: true });
+  },
+
   insertBoardLine: (axis, at) => {
     get().pushSnapshot();
     set((s) => {
@@ -1309,6 +1321,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       spanOverrides: s.spanOverrides,
       clearanceOverrides: s.clearanceOverrides,
       tidyWires: s.tidyWires,
+      permTimeBudget: s.permTimeBudget,
+      permWorkers: s.permWorkers,
       autoLayoutUsed: s.autoLayoutUsed,
       boardEditsSinceAutoLayout: s.boardEditsSinceAutoLayout,
     };
@@ -1343,6 +1357,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     spanOverrides: undefined,
     clearanceOverrides: undefined,
     tidyWires: undefined,
+    permTimeBudget: undefined,
+    permWorkers: undefined,
     autoLayoutUsed: undefined,
     boardEditsSinceAutoLayout: undefined,
     _lastBoardEditSeq: -1,

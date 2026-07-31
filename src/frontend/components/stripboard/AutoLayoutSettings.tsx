@@ -19,6 +19,15 @@ export default function AutoLayoutSettings({ onClose }: { onClose: () => void })
   const setClearanceOverride = useProjectStore((s) => s.setClearanceOverride);
   const tidyWires = useProjectStore((s) => s.tidyWires);
   const setTidyWires = useProjectStore((s) => s.setTidyWires);
+  const permTimeBudget = useProjectStore((s) => s.permTimeBudget);
+  const setPermTimeBudget = useProjectStore((s) => s.setPermTimeBudget);
+  const permWorkers = useProjectStore((s) => s.permWorkers);
+  const setPermWorkers = useProjectStore((s) => s.setPermWorkers);
+  const maxWorkers = Math.max(1, (typeof navigator !== "undefined" ? navigator.hardwareConcurrency : 4) - 1);
+  const workers = Math.min(permWorkers ?? Math.min(4, maxWorkers), maxWorkers);
+  // Slider stops for the time budget; 0 = off (single solve)
+  const BUDGET_STOPS = [0, 2, 5, 10, 20, 30, 60, 120];
+  const budgetIdx = BUDGET_STOPS.findIndex((s) => s >= (permTimeBudget ?? 0));
 
   const flexDefs = useMemo(() => {
     const used = new Set<string>();
@@ -135,6 +144,45 @@ export default function AutoLayoutSettings({ onClose }: { onClose: () => void })
             and crossing wires, kept only when it actually is tidier. Turning it off
             roughly halves the solve time. Applies on the next run.
           </p>
+        </div>
+        <div className="mt-3 border-t border-neutral-200 dark:border-neutral-700 pt-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-sm text-neutral-700 dark:text-neutral-200">Extra solving time</span>
+            <span className="text-sm text-neutral-500 dark:text-neutral-400 w-14 text-right">
+              {permTimeBudget ? `${permTimeBudget}s` : "off"}
+            </span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={BUDGET_STOPS.length - 1}
+            step={1}
+            value={budgetIdx < 0 ? BUDGET_STOPS.length - 1 : budgetIdx}
+            onChange={(e) => setPermTimeBudget(BUDGET_STOPS[parseInt(e.target.value)])}
+            className="w-full mt-1 accent-blue-500"
+          />
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 leading-snug">
+            Keeps solving alternative layouts of the same circuit until the time is
+            up and applies the best one found. Each alternative is deterministic, so
+            rerunning with the same budget on the same machine gives the same board.
+          </p>
+          {(permTimeBudget ?? 0) > 0 && (
+            <label className="mt-2 flex items-center justify-between gap-2">
+              <span className="text-sm text-neutral-700 dark:text-neutral-200">Parallel solvers</span>
+              <input
+                type="number"
+                min={1}
+                max={maxWorkers}
+                value={workers}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value);
+                  if (!Number.isNaN(v)) setPermWorkers(Math.max(1, Math.min(maxWorkers, v)));
+                }}
+                className="w-14 border border-neutral-300 dark:border-neutral-600 rounded px-1.5 py-0.5 text-sm text-neutral-900 dark:text-neutral-100 dark:bg-neutral-900 outline-none focus:border-blue-400 text-center"
+                title={`How many layouts to solve at once (this machine reports ${maxWorkers + 1} cores)`}
+              />
+            </label>
+          )}
         </div>
       </div>
     </>

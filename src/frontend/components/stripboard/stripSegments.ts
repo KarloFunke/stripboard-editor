@@ -1,3 +1,4 @@
+import { pinKey } from "./keys";
 import { Board, Component, ComponentDef, NetAssignment } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { getComponentPinPositions } from "./boardLayout";
@@ -7,6 +8,17 @@ export interface StripSegment {
   startCol: number;
   endCol: number; // inclusive
   netIds: string[];
+}
+
+/** Find which segment a hole belongs to, or -1 if none */
+export function findSegmentIndex(
+  segments: StripSegment[],
+  row: number,
+  col: number
+): number {
+  return segments.findIndex(
+    (s) => s.row === row && col >= s.startCol && col <= s.endCol
+  );
 }
 
 /** Compute all strip segments for the board, split by cuts, with net assignments */
@@ -20,7 +32,7 @@ export function computeStripSegments(
   // so the per-segment work below stays linear.
   const netOfPin = new Map<string, string>();
   for (const a of netAssignments) {
-    netOfPin.set(`${a.componentId}:${a.pinId}`, a.netId);
+    netOfPin.set(pinKey(a.componentId, a.pinId), a.netId);
   }
   const pinsByRow = new Map<number, { col: number; netId: string | undefined }[]>();
   for (const comp of components) {
@@ -30,7 +42,7 @@ export function computeStripSegments(
     const pins = getComponentPinPositions(comp, def);
     for (const pin of pins) {
       if (!pinsByRow.has(pin.row)) pinsByRow.set(pin.row, []);
-      pinsByRow.get(pin.row)!.push({ col: pin.col, netId: netOfPin.get(`${comp.id}:${pin.pinId}`) });
+      pinsByRow.get(pin.row)!.push({ col: pin.col, netId: netOfPin.get(pinKey(comp.id, pin.pinId)) });
     }
   }
   const cutsByRow = new Map<number, Board["cuts"]>();

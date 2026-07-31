@@ -1,6 +1,7 @@
 import { Board, Component, ComponentDef, Net, NetAssignment } from "@/types";
-import { AutoLayoutOptions, AutoLayoutProgress, AutoLayoutResult, computeAutoLayout } from "./autoLayout";
-import { computeAutoLayout2 } from "./autoLayout2";
+import { AutoLayoutOptions, computeAutoLayout } from "./autoLayout";
+import { AutoLayoutProgress, AutoLayoutResult } from "./layoutTypes";
+import { computeAutoLayout2, rateResult } from "./autoLayout2";
 
 export interface AutoLayoutRequest {
   board: Board;
@@ -19,11 +20,17 @@ export interface AutoLayoutRequest {
   clearanceOverrides?: Record<string, number>;
   // Tidy second pass: allowed board area growth as a fraction (Infinity = any)
   tidyGrowth?: number;
+  // Solve exactly this input ordering (parallel permutation search): the
+  // editor spreads indices over several workers and compares the returned
+  // scores. Undefined = plain single solve of the caller's own ordering.
+  permutationIndex?: number;
 }
 
 export type AutoLayoutWorkerMessage =
   | { type: "progress"; progress: AutoLayoutProgress }
-  | { type: "done"; result: AutoLayoutResult };
+  // score: rateResult of the finished board (v2 only) — lower is better,
+  // compare on (quality, score); lets the editor pick across workers.
+  | { type: "done"; result: AutoLayoutResult; score?: number };
 
 const ctx = self as unknown as {
   postMessage(msg: AutoLayoutWorkerMessage): void;
@@ -31,7 +38,7 @@ const ctx = self as unknown as {
 };
 
 ctx.onmessage = (e) => {
-  const { board, components, componentDefs, nets, netAssignments, engine, options, spanOverrides, clearanceOverrides, tidyGrowth } = e.data;
+  const { board, components, componentDefs, nets, netAssignments, engine, options, spanOverrides, clearanceOverrides, tidyGrowth, permutationIndex } = e.data;
   const onProgress = (progress: AutoLayoutProgress) => {
     ctx.postMessage({ type: "progress", progress });
   };
@@ -48,8 +55,14 @@ ctx.onmessage = (e) => {
         };
       })
     : componentDefs;
-  const result = engine === "v1"
-    ? computeAutoLayout(board, components, defs, nets, netAssignments, onProgress, options)
-    : computeAutoLayout2(board, components, defs, nets, netAssignments, onProgress, tidyGrowth !== undefined ? { tidyGrowth } : undefined);
-  ctx.postMessage({ type: "done", result });
+  if (engine === "v1") {
+    const result = computeAutoLayout(board, components, defs, nets, netAssignments, onProgress, options);
+    ctx.postMessage({ type: "done", result });
+    return;
+  }
+  const result = computeAutoLayout2(board, components, defs, nets, netAssignments, onProgress, {
+    ...(tidyGrowth !== undefined ? { tidyGrowth } : {}),
+    ...(permutationIndex !== undefined ? { permutationIndex } : {}),
+  });
+  ctx.postMessage({ type: "done", result, score: rateResult(result, board, components, defs) });
 };

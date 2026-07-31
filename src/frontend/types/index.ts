@@ -161,6 +161,12 @@ export interface Project {
   // straighter wires, kept only when it actually is tidier. On by default;
   // false turns it off (halves solve time, may leave messier wires).
   tidyWires?: boolean;
+  // Auto-layout config: permutation search budget. The solver tries as many
+  // deterministic input orderings as fit the time budget (seconds, 0/absent
+  // = single solve) across this many parallel workers, and applies the best
+  // finished board.
+  permTimeBudget?: number;
+  permWorkers?: number;
   // Layout provenance, for telling human layouts from solver output when
   // benchmarking: whether the auto-layouter was ever applied to this project
   // (sticky, survives undo), and how many structural board edits (one per

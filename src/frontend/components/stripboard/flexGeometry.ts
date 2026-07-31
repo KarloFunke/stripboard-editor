@@ -11,8 +11,8 @@ export const FLEXIBLE_CORRIDOR_RADIUS = 0.5;
 // reproduces the classic rule (one free row/col between parallel bodies:
 // 1 + 0.5 + 0.5 = 2) while a type set to 0 in the project config may sit
 // adjacent. End-to-end stacking stays legal either way.
-export const BODY_END_SHRINK = 0.5;
-export const BODY_CONTACT_SEPARATION = 1;
+const BODY_END_SHRINK = 0.5;
+const BODY_CONTACT_SEPARATION = 1;
 export const DEFAULT_CLEARANCE = 0.5;
 
 // Pin-to-pin span limits in hole pitches (Euclidean). Axial parts with a fat
@@ -49,7 +49,7 @@ export const DIAGONAL_PENALTY = 3;
 // Clearance between a flexible part's body and a rigid component's footprint
 // rectangle. Below 0.5 so a part running parallel one column beside a DIP's
 // pin column stays legal, while anything over the footprint is rejected.
-export const RIGID_BODY_CLEARANCE = 0.4;
+const RIGID_BODY_CLEARANCE = 0.4;
 
 interface Pt {
   row: number;
@@ -132,7 +132,7 @@ export function segmentsOverlapCollinear(a1: Pt, a2: Pt, b1: Pt, b2: Pt): boolea
 }
 
 /** Minimum distance between segments a1-a2 and b1-b2, 0 if they intersect */
-export function segmentSegmentDistance(a1: Pt, a2: Pt, b1: Pt, b2: Pt): number {
+function segmentSegmentDistance(a1: Pt, a2: Pt, b1: Pt, b2: Pt): number {
   if (segmentsIntersect(a1, a2, b1, b2)) return 0;
   return Math.min(
     pointSegmentDistance(b1, a1, a2),
@@ -143,7 +143,7 @@ export function segmentSegmentDistance(a1: Pt, a2: Pt, b1: Pt, b2: Pt): number {
 }
 
 /** Segment shrunk by `amount` at each end; collapses to its midpoint if too short */
-export function shrinkSegment(p1: Pt, p2: Pt, amount: number): [Pt, Pt] {
+function shrinkSegment(p1: Pt, p2: Pt, amount: number): [Pt, Pt] {
   const dr = p2.row - p1.row;
   const dc = p2.col - p1.col;
   const len = Math.sqrt(dr * dr + dc * dc);
@@ -166,6 +166,14 @@ export function bodiesTooClose(a1: Pt, a2: Pt, b1: Pt, b2: Pt, clrSum = 2 * DEFA
   const [sa1, sa2] = shrinkSegment(a1, a2, BODY_END_SHRINK);
   const [sb1, sb2] = shrinkSegment(b1, b2, BODY_END_SHRINK);
   return segmentSegmentDistance(sa1, sa2, sb1, sb2) < BODY_CONTACT_SEPARATION + clrSum - 1e-6;
+}
+
+/** Closed-interval rectangle overlap, with optional slack per axis. */
+export function rectsOverlap(a: FootprintRect, b: FootprintRect, rowSlack = 0, colSlack = 0): boolean {
+  return (
+    a.minRow - rowSlack <= b.maxRow && a.maxRow + rowSlack >= b.minRow &&
+    a.minCol - colSlack <= b.maxCol && a.maxCol + colSlack >= b.minCol
+  );
 }
 
 export interface FootprintRect {

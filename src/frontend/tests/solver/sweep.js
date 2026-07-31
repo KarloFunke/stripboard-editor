@@ -1,7 +1,7 @@
 // Sweep the extracted benchmark corpus (see extract.js) through the v2
 // solver and record per-project results for baseline tracking.
 //
-//   node tests/solver/sweep.js --data <dir> [--locked N] [--tag name] [--ids 1,2,3] [--jobs N] [--tidy 15|30|unlimited]
+//   node tests/solver/sweep.js --data <dir> [--locked N] [--tag name] [--ids 1,2,3] [--jobs N] [--tidy 15|30|unlimited] [--perms K]
 //
 // Each project runs from a blank board. With --locked N, a second run locks
 // N parts at their human positions (connectors first, then big rigids — the
@@ -23,6 +23,8 @@ let noHarvest = false;
 let maxClusterOpt = 0;
 // Tidy second pass: allowed area growth fraction (Infinity = unlimited), 0 = off
 let tidyGrowthOpt = 0;
+// Input-order jitter: number of deterministic orderings to solve (0/1 = off)
+let permsOpt = 0;
 
 function solve(board, comps, defs, nets, asg) {
   const t0 = Date.now();
@@ -32,6 +34,7 @@ function solve(board, comps, defs, nets, asg) {
       harvest: !noHarvest,
       ...(maxClusterOpt > 0 ? { maxCluster: maxClusterOpt } : {}),
       ...(tidyGrowthOpt > 0 ? { tidyGrowth: tidyGrowthOpt } : {}),
+      ...(permsOpt > 1 ? { permutations: permsOpt } : {}),
     });
   } catch (err) {
     return { error: String(err && err.message ? err.message : err), ms: Date.now() - t0 };
@@ -151,6 +154,7 @@ if (!isMainThread) {
   noHarvest = !!workerData.noHarvest;
   maxClusterOpt = workerData.maxClusterOpt ?? 0;
   tidyGrowthOpt = workerData.tidyGrowthOpt ?? 0;
+  permsOpt = workerData.permsOpt ?? 0;
   parentPort.on("message", (msg) => {
     parentPort.postMessage({ i: msg.i, row: sweepOne(msg.entry, workerData.dataDir, workerData.lockedN) });
   });
@@ -173,6 +177,7 @@ maxClusterOpt = Number(argVal("max-cluster") ?? 0);
 // --tidy 15|30|unlimited enables the tidy second pass at that growth cap
 const tidyArg = argVal("tidy");
 tidyGrowthOpt = tidyArg === "unlimited" ? Infinity : tidyArg ? Number(tidyArg) / 100 : 0;
+permsOpt = Number(argVal("perms") ?? 0);
 const tag = argVal("tag") ?? new Date().toISOString().slice(0, 10);
 const onlyIds = argVal("ids") ? new Set(argVal("ids").split(",").map(Number)) : null;
 
@@ -230,7 +235,7 @@ if (jobs <= 1) {
   let next = 0;
   let done = 0;
   for (let w = 0; w < jobs; w++) {
-    const worker = new Worker(__filename, { workerData: { dataDir, lockedN, noHarvest, maxClusterOpt, tidyGrowthOpt } });
+    const worker = new Worker(__filename, { workerData: { dataDir, lockedN, noHarvest, maxClusterOpt, tidyGrowthOpt, permsOpt } });
     worker.on("message", ({ i, row }) => {
       results[i] = row;
       done++;

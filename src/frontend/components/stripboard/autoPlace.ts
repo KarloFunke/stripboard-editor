@@ -1,3 +1,4 @@
+import { holeKey, pinKey } from "./keys";
 import {
   Board,
   BoardPosition,
@@ -36,13 +37,64 @@ export interface AutoPlaceResult {
   issues: string[];
 }
 
+export interface StaticObstacles {
+  // pins, rigid body cells, wire endpoints: a new corridor may not cover
+  // these and no endpoint may land on them
+  hard: Set<string>;
+  // additionally drilled holes and existing corridors: no endpoint may land
+  // there, but a new corridor may pass over
+  blocked: Set<string>;
+  // placed flexible bodies with their clearance halos
+  flexBodies: { p1: BoardPosition; p2: BoardPosition; clr: number }[];
+  // rigid footprints: no flexible body may cross
+  rigidRects: FootprintRect[];
+}
+
+/** Occupancy from everything already placed on the board (nothing moves). */
+export function collectStaticObstacles(
+  board: Board,
+  components: Component[],
+  componentDefs: ComponentDef[]
+): StaticObstacles {
+  const hard = new Set<string>();
+  const blocked = new Set<string>();
+  const flexBodies: StaticObstacles["flexBodies"] = [];
+  const rigidRects: FootprintRect[] = [];
+
+  for (const comp of components) {
+    if (!comp.boardPos || comp.boardExcluded) continue;
+    const def = resolveComponentDef(comp, componentDefs);
+    if (!def) continue;
+    for (const pin of getComponentPinPositions(comp, def)) {
+      hard.add(holeKey(pin.row, pin.col));
+    }
+    if (def.flexible) {
+      const [p1, p2] = getFlexiblePinPositions(comp, def);
+      if (p1 && p2) {
+        flexBodies.push({ p1: { row: p1.row, col: p1.col }, p2: { row: p2.row, col: p2.col }, clr: clearanceOf(def) });
+        for (const h of corridorHoles(p1, p2)) blocked.add(holeKey(h.row, h.col));
+      }
+    } else {
+      for (const cell of getRotatedBodyCells(def, comp.boardPos, comp.rotation)) {
+        hard.add(holeKey(cell.row, cell.col));
+      }
+      rigidRects.push(getComponentBounds(def, comp.boardPos, comp.rotation));
+    }
+  }
+  for (const wire of board.wires) {
+    hard.add(holeKey(wire.from.row, wire.from.col));
+    hard.add(holeKey(wire.to.row, wire.to.col));
+  }
+  for (const cut of board.cuts) {
+    if (cut.kind === "hole") blocked.add(holeKey(cut.row, cut.col));
+  }
+
+  return { hard, blocked, flexBodies, rigidRects };
+}
+
 // Soft cost for landing a pin on an empty strip instead of one already
 // carrying the net: the connection then needs a jumper wire from auto-finish.
 const EMPTY_GROUP_PENALTY = 8;
-
-function holeKey(row: number, col: number): string {
-  return `${row},${col}`;
-}
 
 interface Candidate {
   p1: BoardPosition;
@@ -81,42 +133,7 @@ export function computeAutoPlace(
   const groupNets = connectivity.map((g) => new Set(g.netIds));
 
   // ── Occupancy ────────────────────────────────────────
-  // hard: pins, rigid body cells, wire endpoints — a new corridor may not
-  //       cover these and no endpoint may land on them.
-  // blocked: additionally drilled holes and existing corridors — no endpoint
-  //          may land there, but a new corridor may pass over.
-  const hard = new Set<string>();
-  const blocked = new Set<string>();
-  const flexBodies: { p1: BoardPosition; p2: BoardPosition; clr: number }[] = [];
-  const rigidRects: FootprintRect[] = [];
-
-  for (const comp of components) {
-    if (!comp.boardPos || comp.boardExcluded) continue;
-    const def = resolveComponentDef(comp, componentDefs);
-    if (!def) continue;
-    for (const pin of getComponentPinPositions(comp, def)) {
-      hard.add(holeKey(pin.row, pin.col));
-    }
-    if (def.flexible) {
-      const [p1, p2] = getFlexiblePinPositions(comp, def);
-      if (p1 && p2) {
-        flexBodies.push({ p1: { row: p1.row, col: p1.col }, p2: { row: p2.row, col: p2.col }, clr: clearanceOf(def) });
-        for (const h of corridorHoles(p1, p2)) blocked.add(holeKey(h.row, h.col));
-      }
-    } else {
-      for (const cell of getRotatedBodyCells(def, comp.boardPos, comp.rotation)) {
-        hard.add(holeKey(cell.row, cell.col));
-      }
-      rigidRects.push(getComponentBounds(def, comp.boardPos, comp.rotation));
-    }
-  }
-  for (const wire of board.wires) {
-    hard.add(holeKey(wire.from.row, wire.from.col));
-    hard.add(holeKey(wire.to.row, wire.to.col));
-  }
-  for (const cut of board.cuts) {
-    if (cut.kind === "hole") blocked.add(holeKey(cut.row, cut.col));
-  }
+  const { hard, blocked, flexBodies, rigidRects } = collectStaticObstacles(board, components, componentDefs);
 
   const isFree = (row: number, col: number) =>
     !hard.has(holeKey(row, col)) && !blocked.has(holeKey(row, col));

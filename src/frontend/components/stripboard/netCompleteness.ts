@@ -7,7 +7,7 @@ import {
 } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { getComponentPinPositions } from "./boardLayout";
-import { StripSegment } from "./stripSegments";
+import { StripSegment, findSegmentIndex } from "./stripSegments";
 import { ConnectedGroup } from "./connectivity";
 
 export interface PinInfo {
@@ -23,17 +23,6 @@ export interface IncompleteNet {
   groups: PinInfo[][];
   /** Pins on components not yet placed on the board */
   unplacedPins: PinInfo[];
-}
-
-/** Find which segment a board position belongs to */
-function findSegmentIndex(
-  segments: StripSegment[],
-  row: number,
-  col: number
-): number {
-  return segments.findIndex(
-    (s) => s.row === row && col >= s.startCol && col <= s.endCol
-  );
 }
 
 /** Find which connected group a segment belongs to */

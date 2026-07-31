@@ -1,3 +1,4 @@
+import { holeKey, pinKey } from "../keys";
 import { Component, ComponentDef } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { getComponentBounds, getRotatedPinPositions } from "../boardLayout";
@@ -67,7 +68,7 @@ export function compactPlacements(
         pins: getRotatedPinPositions(def, pos[i]!, comps[i].rotation).map((p) => ({
           row: p.row,
           col: p.col,
-          net: netOfPin.get(`${comps[i].id}:${p.pinId}`),
+          net: netOfPin.get(pinKey(comps[i].id, p.pinId)),
         })),
       });
     }
@@ -76,7 +77,7 @@ export function compactPlacements(
   const flexNet = (i: number, first: boolean) => {
     const def = resolveComponentDef(comps[i], componentDefs)!;
     const pinId = def.pins[first ? 0 : 1]?.id;
-    return pinId !== undefined ? netOfPin.get(`${comps[i].id}:${pinId}`) : undefined;
+    return pinId !== undefined ? netOfPin.get(pinKey(comps[i].id, pinId)) : undefined;
   };
 
   const shiftPt = (p: P, line: number, isCol: boolean) => {
@@ -115,10 +116,11 @@ export function compactPlacements(
   const unplacedNets = new Set<string>();
   {
     const onBoard = new Set(comps.filter((_, i) => pos[i]).map((c) => c.id));
+    const byId = new Map(comps.map((c) => [c.id, c]));
     for (const [pk, net] of netOfPin) {
       const cid = pk.slice(0, pk.indexOf(":"));
       if (onBoard.has(cid)) continue;
-      const comp = comps.find((c) => c.id === cid);
+      const comp = byId.get(cid);
       if (comp && !comp.boardExcluded) unplacedNets.add(net);
     }
   }
@@ -137,11 +139,11 @@ export function compactPlacements(
       });
     }
     const holeOwner = new Map<string, string>();
-    for (const p of s.pins) holeOwner.set(`${p.row},${p.col}`, p.id);
+    for (const p of s.pins) holeOwner.set(holeKey(p.row, p.col), p.id);
     for (let i = 0; i < s.flexPts.length; i++) {
       const a = s.flexPts[i];
       for (const h of corridorHoles(a.p1, a.p2)) {
-        const owner = holeOwner.get(`${h.row},${h.col}`);
+        const owner = holeOwner.get(holeKey(h.row, h.col));
         if (owner && owner !== `f${i}a` && owner !== `f${i}b`) out.add(`co:${i}:${owner}`);
       }
     }
@@ -168,12 +170,12 @@ export function compactPlacements(
     // two needy runs can serve only one of them (greedy left-to-right is
     // exact on a row).
     const occ2 = new Set<string>();
-    for (const p of s.pins) occ2.add(`${p.row},${p.col}`);
+    for (const p of s.pins) occ2.add(holeKey(p.row, p.col));
     for (const r of s.rects)
       for (let rr = r.minRow; rr <= r.maxRow; rr++)
-        for (let cc = r.minCol; cc <= r.maxCol; cc++) occ2.add(`${rr},${cc}`);
+        for (let cc = r.minCol; cc <= r.maxCol; cc++) occ2.add(holeKey(rr, cc));
     for (const f of s.flexPts)
-      for (const h of corridorHoles(f.p1, f.p2)) occ2.add(`${h.row},${h.col}`);
+      for (const h of corridorHoles(f.p1, f.p2)) occ2.add(holeKey(h.row, h.col));
     interface Run { net?: string; id: string; minCol: number; maxCol: number; free: number }
     const rowRuns = new Map<number, Run[]>();
     const runsPerNet = new Map<string, number>();
@@ -183,7 +185,7 @@ export function compactPlacements(
         const last = runs[runs.length - 1];
         if (last && last.net !== undefined && last.net === p.net) {
           // holes between same-net pins always stay with the run
-          for (let c = last.maxCol + 1; c < p.col; c++) if (!occ2.has(`${row},${c}`)) last.free++;
+          for (let c = last.maxCol + 1; c < p.col; c++) if (!occ2.has(holeKey(row, c))) last.free++;
           last.maxCol = p.col;
         } else {
           runs.push({ net: p.net, id: p.id, minCol: p.col, maxCol: p.col, free: 0 });
@@ -200,7 +202,7 @@ export function compactPlacements(
         const lo = i === 0 ? 0 : runs[i - 1].maxCol + 1;
         const hi = i === runs.length ? nCols - 1 : runs[i].minCol - 1;
         let n = 0;
-        for (let c = lo; c <= hi; c++) if (!occ2.has(`${row},${c}`)) n++;
+        for (let c = lo; c <= hi; c++) if (!occ2.has(holeKey(row, c))) n++;
         gapFree.push(n);
       }
       runs.forEach((r, i) => {

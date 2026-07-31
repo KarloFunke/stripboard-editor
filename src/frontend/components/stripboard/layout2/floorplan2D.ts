@@ -1,6 +1,5 @@
-import { Tile, DimLimits } from "./tilePlanning";
-import { sharedNetCount } from "./composeTiles";
-import { FootprintRect } from "../flexGeometry";
+import { Tile, DimLimits, sharedNetCount } from "./tileModel";
+import { FootprintRect, rectsOverlap } from "../flexGeometry";
 
 // ── Stage 2 alternative: 2D floorplan with pre-placed modules ──
 //
@@ -79,10 +78,6 @@ export function floorplan2D(
     maxCol: p.x + p.tile.width - 1,
   });
 
-  const overlapsExp = (a: FootprintRect, b: FootprintRect, dr: number, dc: number) =>
-    a.minRow - dr <= b.maxRow && a.maxRow + dr >= b.minRow &&
-    a.minCol - dc <= b.maxCol && a.maxCol + dc >= b.minCol;
-
   // Clearance around fixed parts follows the ladder's gap: the tight rung
   // packs flush for density, the wide rung leaves an extra column so a
   // locked part's cut-bounded pin segments keep holes for link wires —
@@ -94,10 +89,10 @@ export function floorplan2D(
     // clear themselves, or an edge pin's segment ends up with no free hole.
     if (hasFixed && (r.minRow < 0 || r.minCol < 1)) return false;
     for (const f of fixed.rects) {
-      if (overlapsExp(r, f, 1, fixedDc)) return false;
+      if (rectsOverlap(r, f, 1, fixedDc)) return false;
     }
     for (const p of placed) {
-      if (overlapsExp(r, bboxOf(p), 1, Math.max(1, gap - 1))) return false;
+      if (rectsOverlap(r, bboxOf(p), 1, Math.max(1, gap - 1))) return false;
     }
     return true;
   };

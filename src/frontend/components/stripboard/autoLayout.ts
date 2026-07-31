@@ -1,3 +1,4 @@
+import { holeKey, pinKey } from "./keys";
 import {
   Board,
   BoardPosition,
@@ -12,14 +13,13 @@ import {
   getComponentBounds,
   getComponentPinPositions,
   getFlexiblePinPositions,
-  getRotatedBodyCells,
   getRotatedPinPositions,
 } from "./boardLayout";
 import { computeStripSegments } from "./stripSegments";
 import { computeConnectivity } from "./connectivity";
 import { checkNetCompleteness } from "./netCompleteness";
 import { deriveCompletion } from "./autoFinish";
-import { computeAutoPlace, FlexPlacement } from "./autoPlace";
+import { collectStaticObstacles, computeAutoPlace, FlexPlacement } from "./autoPlace";
 import {
   DIAGONAL_PENALTY,
   FLEXIBLE_CORRIDOR_RADIUS,
@@ -29,35 +29,12 @@ import {
   corridorHoles,
   bodiesTooClose,
   segmentsIntersect,
+  rectsOverlap,
   spanLimits,
   clearanceOf,
 } from "./flexGeometry";
 
-export interface LayoutPlacement {
-  componentId: string;
-  boardPos: BoardPosition;
-  flexibleEndPos?: BoardPosition; // flexible parts only
-  rotation?: 0 | 90 | 180 | 270; // rigid parts only
-}
-
-export interface AutoLayoutResult {
-  placements: LayoutPlacement[];
-  // Full new sets: auto-layout regenerates cuts and wires, it does not augment
-  cuts: Cut[];
-  wires: { from: BoardPosition; to: BoardPosition }[];
-  issues: string[];
-  // What the user would see: conflicts*100 + incomplete nets + unplaced*2.
-  // 0 = fully solved. Lets parallel runs pick the best result.
-  quality: number;
-  // Nets that could not be completed (for highlighting in the UI)
-  starvedNetIds: string[];
-  // v2 layouter: the board size the layout was built for — applying the
-  // result resizes the board (the solver chooses the size, not the user)
-  boardSize?: { rows: number; cols: number };
-  // Components that must be taken OFF the board (the new layout could not
-  // place them); without this a stale position would survive the apply
-  unplaceIds?: string[];
-}
+import { AutoLayoutProgress, AutoLayoutResult, LayoutPlacement } from "./layoutTypes";
 
 // One stage-A/stage-B configuration; the retry ladder walks these
 export interface AttemptConfig {
@@ -73,15 +50,6 @@ export interface AutoLayoutOptions {
   // Re-layout only these components; everything else stays exactly as it is
   // (cuts and wires are still regenerated for the whole board)
   onlyIds?: string[];
-}
-
-// Coarse progress for a UI indicator: `frac` is 0..1 within the current
-// attempt (attempts restart it — retries are not predictable up front).
-export interface AutoLayoutProgress {
-  phase: "arrange" | "place" | "repair";
-  attempt: number;
-  maxAttempts: number;
-  frac: number;
 }
 
 interface FlexOptimizeResult {
@@ -144,10 +112,6 @@ class VersionedMap<K, V> extends Map<K, V> {
   }
 }
 
-function holeKey(row: number, col: number): string {
-  return `${row},${col}`;
-}
-
 function manhattan(a: BoardPosition, b: BoardPosition): number {
   return Math.abs(a.row - b.row) + Math.abs(a.col - b.col);
 }
@@ -207,38 +171,7 @@ function optimizeFlexibles(
   }
 
   // ── Static occupancy from everything that never moves ──
-  const hard = new Set<string>(); // pins, rigid bodies, wire ends: corridor may not cross
-  const blocked = new Set<string>(); // + drilled holes, fixed corridors: endpoints only
-  const fixedBodies: Placement[] = [];
-  const rigidRects: FootprintRect[] = []; // rigid footprints: no flexible body may cross
-
-  for (const comp of components) {
-    if (!comp.boardPos || comp.boardExcluded) continue;
-    const def = resolveComponentDef(comp, componentDefs);
-    if (!def) continue;
-    for (const pin of getComponentPinPositions(comp, def)) {
-      hard.add(holeKey(pin.row, pin.col));
-    }
-    if (def.flexible) {
-      const [p1, p2] = getFlexiblePinPositions(comp, def);
-      if (p1 && p2) {
-        fixedBodies.push({ p1: { row: p1.row, col: p1.col }, p2: { row: p2.row, col: p2.col }, clr: clearanceOf(def) });
-        for (const h of corridorHoles(p1, p2)) blocked.add(holeKey(h.row, h.col));
-      }
-    } else {
-      for (const cell of getRotatedBodyCells(def, comp.boardPos, comp.rotation)) {
-        hard.add(holeKey(cell.row, cell.col));
-      }
-      rigidRects.push(getComponentBounds(def, comp.boardPos, comp.rotation));
-    }
-  }
-  for (const wire of board.wires) {
-    hard.add(holeKey(wire.from.row, wire.from.col));
-    hard.add(holeKey(wire.to.row, wire.to.col));
-  }
-  for (const cut of board.cuts) {
-    if (cut.kind === "hole") blocked.add(holeKey(cut.row, cut.col));
-  }
+  const { hard, blocked, flexBodies: fixedBodies, rigidRects } = collectStaticObstacles(board, components, componentDefs);
 
   // ── Guarded pins: protect the last free hole of a fixed pin's strip run ──
   // A fixed pin whose net has more pins than its own strip run must receive
@@ -326,7 +259,7 @@ function optimizeFlexibles(
   // Net of every assigned pin, for the hot lookups below
   const assignedNetOf = new Map<string, string>();
   for (const a of netAssignments) {
-    assignedNetOf.set(`${a.componentId}:${a.pinId}`, a.netId);
+    assignedNetOf.set(pinKey(a.componentId, a.pinId), a.netId);
   }
 
   const virtualComponents = (): Component[] =>
@@ -578,7 +511,7 @@ function optimizeFlexibles(
       const def = resolveComponentDef(comp, componentDefs);
       if (!def) continue;
       for (const pin of getComponentPinPositions(comp, def)) {
-        const netId = assignedNetOf.get(`${comp.id}:${pin.pinId}`);
+        const netId = assignedNetOf.get(pinKey(comp.id, pin.pinId));
         if (netId !== undefined) add(netId, pin.row, pin.col, pin.col);
       }
     }
@@ -937,7 +870,7 @@ function optimizeFlexibles(
         const def = resolveComponentDef(comp, componentDefs);
         if (!def) continue;
         for (const p of getComponentPinPositions(comp, def)) {
-          const netId = assignedNetOf.get(`${comp.id}:${p.pinId}`);
+          const netId = assignedNetOf.get(pinKey(comp.id, p.pinId));
           if (netId !== undefined && starved2.has(netId)) starvedPins.push({ row: p.row, col: p.col });
         }
       }
@@ -1066,18 +999,18 @@ interface RectI {
   maxCol: number;
 }
 
-function rectsOverlap(a: RectI, b: RectI): boolean {
-  return (
-    a.minRow <= b.maxRow && b.minRow <= a.maxRow &&
-    a.minCol <= b.maxCol && b.minCol <= a.maxCol
-  );
+interface FlexSpring {
+  a: string; // net of pin 1
+  b: string; // net of pin 2
+  min: number;
+  max: number;
 }
 
-function rectsTooClose(a: RectI, b: RectI, spacing: number): boolean {
-  return (
-    a.minRow <= b.maxRow + spacing && b.minRow <= a.maxRow + spacing &&
-    a.minCol <= b.maxCol + spacing && b.minCol <= a.maxCol + spacing
-  );
+/** Rigid-repair mode: re-anneal from a failed arrangement, clearing the
+ * area around starved pins so stage B gets free holes to work with. */
+interface RigidRepair {
+  seed: Map<string, RigidState>;
+  avoidPins: BoardPosition[];
 }
 
 /**
@@ -1086,28 +1019,13 @@ function rectsTooClose(a: RectI, b: RectI, spacing: number): boolean {
  * smooth proxy cost. Locked components and placed flexibles are immovable
  * obstacles and HPWL anchors. Returns the final state of every movable
  * rigid that could be placed.
- */
-interface FlexSpring {
-  a: string; // net of pin 1
-  b: string; // net of pin 2
-  min: number;
-  max: number;
-}
-
-/**
+ *
  * @param spacing Free holes kept between rigid footprints. Without at least
  * one, adjacent pin columns produce single-hole segments with no room for
  * jumper ends; the orchestrator retries with more when routing starves.
  * @param bboxWeight Compactness pressure; relaxed on retries so congested
  * arrangements spread over the available board instead of one dense band.
  */
-/** Rigid-repair mode: re-anneal from a failed arrangement, clearing the
- * area around starved pins so stage B gets free holes to work with. */
-interface RigidRepair {
-  seed: Map<string, RigidState>;
-  avoidPins: BoardPosition[];
-}
-
 function arrangeRigids(
   board: Board,
   components: Component[],
@@ -1267,7 +1185,7 @@ function arrangeRigids(
       return false;
     }
     for (const r of fixedRects) {
-      if (rectsTooClose(rect, r, spacing)) return false;
+      if (rectsOverlap(rect, r, spacing, spacing)) return false;
     }
     for (const p of fixedPinHoles) {
       if (
@@ -1283,7 +1201,7 @@ function arrangeRigids(
     for (const other of movables) {
       if (other.comp.id === m.comp.id) continue;
       const ost = states.get(other.comp.id);
-      if (ost && rectsTooClose(rect, rectFor(other, ost), spacing)) return false;
+      if (ost && rectsOverlap(rect, rectFor(other, ost), spacing, spacing)) return false;
     }
     return true;
   };
@@ -1488,6 +1406,15 @@ function arrangeRigids(
 
 // ── Full auto-layout: stage A + stage B ────────────────
 
+const DEFAULT_SEED = 0x5eed;
+
+const DEFAULT_ATTEMPTS: AttemptConfig[] = [
+  { spacing: 1, bboxWeight: W_BBOX },
+  { spacing: 2, bboxWeight: W_BBOX },
+  { spacing: 3, bboxWeight: W_BBOX / 2 },
+  { spacing: 4, bboxWeight: W_BBOX / 4 },
+];
+
 /**
  * Arrange everything unlocked and complete the board: stage A anneals the
  * rigid arrangement on a smooth proxy (wirelength + compactness), stage B
@@ -1496,15 +1423,6 @@ function arrangeRigids(
  * parts move they would refer to positions that no longer exist. Locked
  * components never move.
  */
-const DEFAULT_SEED = 0x5eed;
-
-export const DEFAULT_ATTEMPTS: AttemptConfig[] = [
-  { spacing: 1, bboxWeight: W_BBOX },
-  { spacing: 2, bboxWeight: W_BBOX },
-  { spacing: 3, bboxWeight: W_BBOX / 2 },
-  { spacing: 4, bboxWeight: W_BBOX / 4 },
-];
-
 export function computeAutoLayout(
   board: Board,
   components: Component[],
@@ -1588,7 +1506,7 @@ export function computeAutoLayout(
   let attemptIssues: string[] = [];
   let bestQuality = Infinity;
   const netOfPin = new Map<string, string>();
-  for (const a of netAssignments) netOfPin.set(`${a.componentId}:${a.pinId}`, a.netId);
+  for (const a of netAssignments) netOfPin.set(pinKey(a.componentId, a.pinId), a.netId);
   const attempts = options?.attempts?.length ? options.attempts : DEFAULT_ATTEMPTS;
   const seed = options?.seed ?? DEFAULT_SEED;
   for (const [ai, { spacing, bboxWeight }] of attempts.entries()) {
@@ -1630,7 +1548,7 @@ export function computeAutoLayout(
           const def = resolveComponentDef(comp, componentDefs);
           if (!def) continue;
           for (const p of getComponentPinPositions(comp, def)) {
-            const nid = netOfPin.get(`${comp.id}:${p.pinId}`);
+            const nid = netOfPin.get(pinKey(comp.id, p.pinId));
             if (nid !== undefined && starved.has(nid)) avoidPins.push({ row: p.row, col: p.col });
           }
         }
