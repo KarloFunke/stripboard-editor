@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { spanLimits, DEFAULT_CLEARANCE } from "./flexGeometry";
@@ -31,6 +31,24 @@ export default function AutoLayoutSettings({ onClose }: { onClose: () => void })
   const BUDGET_STOPS = [0, 2, 5, 10, 20, 30, 60, 120];
   const budgetIdx = BUDGET_STOPS.findIndex((s) => s >= budget);
 
+  // The editor panes clip absolutely-positioned children (overflow-hidden),
+  // so the panel is fixed to the viewport instead: anchored under the gear
+  // button, clamped to stay fully on screen on narrow or zoomed viewports.
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  useLayoutEffect(() => {
+    const panel = panelRef.current;
+    const anchor = panel?.parentElement;
+    if (!panel || !anchor) return;
+    const a = anchor.getBoundingClientRect();
+    const margin = 8;
+    const left = Math.max(
+      margin,
+      Math.min(a.right - panel.offsetWidth, window.innerWidth - margin - panel.offsetWidth)
+    );
+    setPos({ top: a.bottom + 4, left });
+  }, []);
+
   const flexDefs = useMemo(() => {
     const used = new Set<string>();
     for (const c of components) {
@@ -43,7 +61,11 @@ export default function AutoLayoutSettings({ onClose }: { onClose: () => void })
   return (
     <>
       <div className="fixed inset-0 z-40" onMouseDown={onClose} />
-      <div className="absolute right-0 top-full mt-1 z-50 w-[26rem] rounded-md border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 shadow-lg dark:shadow-neutral-900/50 p-4">
+      <div
+        ref={panelRef}
+        style={pos ? { top: pos.top, left: pos.left } : { visibility: "hidden" }}
+        className="fixed z-50 w-[26rem] max-w-[calc(100vw-1rem)] rounded-md border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 shadow-lg dark:shadow-neutral-900/50 p-4"
+      >
         <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Auto-layout settings</p>
         <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 leading-snug">
           Per component type: pin spacing as the number of holes the part spans from pin to
