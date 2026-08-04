@@ -3,6 +3,14 @@ import { BoardPosition, Cut } from "@/types";
 // Shared contract between the two layout engines (autoLayout = v1,
 // autoLayout2 = v2), the worker transport, and the store's apply logic.
 
+// The shipped default for the portfolio search: keep solving alternative
+// input orderings for this many seconds, on half the machine's cores. An
+// explicit 0 in the project turns the portfolio off.
+export const DEFAULT_PERM_TIME_BUDGET = 5;
+export function defaultPermWorkers(cores: number): number {
+  return Math.max(1, Math.floor(cores / 2));
+}
+
 export interface LayoutPlacement {
   componentId: string;
   boardPos: BoardPosition;
@@ -27,6 +35,11 @@ export interface AutoLayoutResult {
   // Components that must be taken OFF the board (the new layout could not
   // place them); without this a stale position would survive the apply
   unplaceIds?: string[];
+  // How many tiles stage 1 ended up planning. The cluster cap only bounds
+  // this: a tile too big for the dimension limits is split again, so the
+  // count is the only honest measure of how the board was partitioned.
+  // Benchmark instrumentation; the editor ignores it.
+  tiles?: number;
 }
 
 // Coarse progress for a UI indicator: `frac` is 0..1 within the current

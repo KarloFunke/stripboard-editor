@@ -848,5 +848,6 @@ function layoutOnce(
     starvedNetIds: plan.starvedNetIds,
     boardSize: { rows, cols },
     unplaceIds: stillUnplaced.map((c) => c.id),
+    tiles: tiles.length,
   };
 }

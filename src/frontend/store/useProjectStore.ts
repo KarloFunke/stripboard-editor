@@ -118,7 +118,7 @@ interface ProjectActions {
   // Derive and apply the cuts/wires needed to complete the current placement
   autoFinishBoard: () => AutoFinishResult;
   // Apply an auto-layout result computed in the worker (placements + regenerated cuts/wires)
-  applyAutoLayout: (result: AutoLayoutResult) => void;
+  applyAutoLayout: (result: AutoLayoutResult, meta?: { budget: number; orderings: number }) => void;
 
   // UI state
 
@@ -326,6 +326,12 @@ function prepareProjectState(data: Project) {
     permWorkers: data.permWorkers,
     autoLayoutUsed: data.autoLayoutUsed,
     boardEditsSinceAutoLayout: data.boardEditsSinceAutoLayout,
+    autoLayoutRuns: data.autoLayoutRuns,
+    autoLayoutLastAt: data.autoLayoutLastAt,
+    autoLayoutLastQuality: data.autoLayoutLastQuality,
+    autoLayoutLastBudget: data.autoLayoutLastBudget,
+    autoLayoutLastOrderings: data.autoLayoutLastOrderings,
+    boardAddsSinceAutoLayout: data.boardAddsSinceAutoLayout,
     _lastBoardEditSeq: -1,
     wirePlacementMode: false,
     wirePlacementFrom: null,
@@ -628,6 +634,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         return { ...c, boardPos: pos, flexibleEndPos: flexEnd };
       }),
       ...bumpBoardEdits(s),
+      // First placement of a part = the circuit growing, not a correction
+      ...(s.components.find((c) => c.id === id)?.boardPos
+        ? {}
+        : { boardAddsSinceAutoLayout: (s.boardAddsSinceAutoLayout ?? 0) + 1 }),
     }));
   },
 
@@ -1001,7 +1011,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   setPermTimeBudget: (seconds) => {
-    set({ permTimeBudget: seconds > 0 ? seconds : undefined, isDirty: true });
+    // 0 is stored explicitly: absent means the shipped default, not off
+    set({ permTimeBudget: Math.max(0, seconds), isDirty: true });
   },
 
   setPermWorkers: (n) => {
@@ -1157,7 +1168,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }));
   },
 
-  applyAutoLayout: (result) => {
+  applyAutoLayout: (result, meta) => {
     const s = get();
     // Auto-layout regenerates cuts and wires; only apply (and snapshot) when
     // something actually changes.
@@ -1199,7 +1210,13 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         wires: result.wires.map((w) => ({ id: generateId(), from: w.from, to: w.to })),
       },
       autoLayoutUsed: true,
+      autoLayoutRuns: (st.autoLayoutRuns ?? 0) + 1,
+      autoLayoutLastAt: new Date().toISOString(),
+      autoLayoutLastQuality: result.quality,
+      autoLayoutLastBudget: meta?.budget ?? 0,
+      autoLayoutLastOrderings: meta?.orderings ?? 1,
       boardEditsSinceAutoLayout: 0,
+      boardAddsSinceAutoLayout: 0,
       _lastBoardEditSeq: -1,
     }));
   },
@@ -1325,6 +1342,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       permWorkers: s.permWorkers,
       autoLayoutUsed: s.autoLayoutUsed,
       boardEditsSinceAutoLayout: s.boardEditsSinceAutoLayout,
+      autoLayoutRuns: s.autoLayoutRuns,
+      autoLayoutLastAt: s.autoLayoutLastAt,
+      autoLayoutLastQuality: s.autoLayoutLastQuality,
+      autoLayoutLastBudget: s.autoLayoutLastBudget,
+      autoLayoutLastOrderings: s.autoLayoutLastOrderings,
+      boardAddsSinceAutoLayout: s.boardAddsSinceAutoLayout,
     };
   },
 
@@ -1361,6 +1384,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     permWorkers: undefined,
     autoLayoutUsed: undefined,
     boardEditsSinceAutoLayout: undefined,
+    autoLayoutRuns: undefined,
+    autoLayoutLastAt: undefined,
+    autoLayoutLastQuality: undefined,
+    autoLayoutLastBudget: undefined,
+    autoLayoutLastOrderings: undefined,
+    boardAddsSinceAutoLayout: undefined,
     _lastBoardEditSeq: -1,
     wirePlacementMode: false,
     wirePlacementFrom: null,

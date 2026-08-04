@@ -162,9 +162,10 @@ export interface Project {
   // false turns it off (halves solve time, may leave messier wires).
   tidyWires?: boolean;
   // Auto-layout config: permutation search budget. The solver tries as many
-  // deterministic input orderings as fit the time budget (seconds, 0/absent
-  // = single solve) across this many parallel workers, and applies the best
-  // finished board.
+  // deterministic input orderings as fit the time budget (seconds) across
+  // this many parallel workers, and applies the best finished board. Absent
+  // means the shipped default (5 s on half the cores); an explicit 0 turns
+  // the portfolio off (single solve).
   permTimeBudget?: number;
   permWorkers?: number;
   // Layout provenance, for telling human layouts from solver output when
@@ -174,4 +175,17 @@ export interface Project {
   // means the board is untouched solver output.
   autoLayoutUsed?: boolean;
   boardEditsSinceAutoLayout?: number;
+  // Usage metrics for evaluating solver adoption and perceived result
+  // quality: how many runs were applied in total (sticky, like
+  // autoLayoutUsed), when the last one was applied, its quality (0 = clean),
+  // the portfolio settings it ran under (budget seconds, orderings
+  // completed; 0/1 = single solve), and how many of the board edits since
+  // then placed a previously unplaced part — additions to a growing
+  // circuit, as opposed to corrections of what the solver built.
+  autoLayoutRuns?: number;
+  autoLayoutLastAt?: string;
+  autoLayoutLastQuality?: number;
+  autoLayoutLastBudget?: number;
+  autoLayoutLastOrderings?: number;
+  boardAddsSinceAutoLayout?: number;
 }

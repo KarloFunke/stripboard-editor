@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { spanLimits, DEFAULT_CLEARANCE } from "./flexGeometry";
+import { DEFAULT_PERM_TIME_BUDGET, defaultPermWorkers } from "./layoutTypes";
 
 /**
  * Popup with per-component-type auto-layout settings: the allowed pin-to-pin
@@ -24,10 +25,11 @@ export default function AutoLayoutSettings({ onClose }: { onClose: () => void })
   const permWorkers = useProjectStore((s) => s.permWorkers);
   const setPermWorkers = useProjectStore((s) => s.setPermWorkers);
   const maxWorkers = Math.max(1, (typeof navigator !== "undefined" ? navigator.hardwareConcurrency : 4) - 1);
-  const workers = Math.min(permWorkers ?? Math.min(4, maxWorkers), maxWorkers);
+  const workers = Math.min(permWorkers ?? defaultPermWorkers(maxWorkers + 1), maxWorkers);
+  const budget = permTimeBudget ?? DEFAULT_PERM_TIME_BUDGET;
   // Slider stops for the time budget; 0 = off (single solve)
   const BUDGET_STOPS = [0, 2, 5, 10, 20, 30, 60, 120];
-  const budgetIdx = BUDGET_STOPS.findIndex((s) => s >= (permTimeBudget ?? 0));
+  const budgetIdx = BUDGET_STOPS.findIndex((s) => s >= budget);
 
   const flexDefs = useMemo(() => {
     const used = new Set<string>();
@@ -149,7 +151,7 @@ export default function AutoLayoutSettings({ onClose }: { onClose: () => void })
           <div className="flex items-center justify-between gap-2">
             <span className="text-sm text-neutral-700 dark:text-neutral-200">Extra solving time</span>
             <span className="text-sm text-neutral-500 dark:text-neutral-400 w-14 text-right">
-              {permTimeBudget ? `${permTimeBudget}s` : "off"}
+              {budget ? `${budget}s` : "off"}
             </span>
           </div>
           <input
@@ -166,7 +168,7 @@ export default function AutoLayoutSettings({ onClose }: { onClose: () => void })
             up and applies the best one found. Each alternative is deterministic, so
             rerunning with the same budget on the same machine gives the same board.
           </p>
-          {(permTimeBudget ?? 0) > 0 && (
+          {budget > 0 && (
             <label className="mt-2 flex items-center justify-between gap-2">
               <span className="text-sm text-neutral-700 dark:text-neutral-200">Parallel solvers</span>
               <input

@@ -5,7 +5,7 @@ import { useProjectStore } from "@/store/useProjectStore";
 import { useStripSegments } from "@/hooks/useStripSegments";
 import { checkNetCompleteness } from "./stripboard/netCompleteness";
 import type { AutoLayoutRequest, AutoLayoutWorkerMessage } from "./stripboard/autoLayoutWorker";
-import type { AutoLayoutResult } from "./stripboard/layoutTypes";
+import { DEFAULT_PERM_TIME_BUDGET, defaultPermWorkers, type AutoLayoutResult } from "./stripboard/layoutTypes";
 import ComponentTray from "./stripboard/ComponentTray";
 import StripboardCanvas from "./stripboard/StripboardCanvas";
 import StripboardFootprintEditor from "./stripboard/StripboardFootprintEditor";
@@ -117,14 +117,14 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
         s.clearanceOverrides !== inputs.clearanceOverrides || s.tidyWires !== inputs.tidyWires
       );
     };
-    const applyBest = (result: AutoLayoutResult) => {
+    const applyBest = (result: AutoLayoutResult, meta?: { budget: number; orderings: number }) => {
       // The user kept editing while we solved: applying a result computed
       // from stale state would clobber their changes — discard instead.
       if (isStale()) {
         showAutoMsg("Board changed while solving — result discarded, run again", []);
         return;
       }
-      applyAutoLayout(result);
+      applyAutoLayout(result, meta);
       // Point the user at the first uncompletable net (or clear a stale one)
       setHighlightedNetId(result.starvedNetIds[0] ?? null);
       // A clean run speaks for itself on the board; only problems get a popup.
@@ -137,10 +137,10 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
       tidyGrowth: tidyWires === false ? undefined : Infinity,
     };
 
-    const budget = !onlyIds ? permTimeBudget ?? 0 : 0;
+    const budget = !onlyIds ? permTimeBudget ?? DEFAULT_PERM_TIME_BUDGET : 0;
     if (budget > 0) {
       const cores = typeof navigator !== "undefined" ? navigator.hardwareConcurrency || 4 : 4;
-      const nWorkers = Math.max(1, Math.min(permWorkers ?? Math.min(4, cores - 1), cores - 1));
+      const nWorkers = Math.max(1, Math.min(permWorkers ?? defaultPermWorkers(cores), cores - 1));
       const deadline = Date.now() + budget * 1000;
       let nextIdx = 0;
       let inFlight = 0;
@@ -161,7 +161,7 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
       const finalize = () => {
         clearInterval(progressTimer);
         stopAutoWorkers();
-        if (best) applyBest(best.result);
+        if (best) applyBest(best.result, { budget, orderings: solved });
         else showAutoMsg("Auto-layout failed", []);
       };
       // Every worker gets a first ordering regardless of the clock; after
