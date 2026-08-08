@@ -1,10 +1,14 @@
-import { ComponentDef, Component, Cut, BodyCell } from "@/types";
+import { ComponentDef, Component, BodyCell, Board, Cut } from "@/types";
+import { boardHasHole, cutWouldBeRedundant } from "./boardTopology";
 
 // Grid constants
 export const HOLE_SPACING = 30;
 export const HOLE_RADIUS = 4.5;
 const BOARD_PADDING = 60;
 export const STRIP_HEIGHT = 6;
+// Copper running down a column is drawn a touch heavier: on the real board
+// it is the wide bus, and it reads as one at a glance.
+export const BUS_WIDTH = 8;
 export const LABEL_FONT_SIZE = 11;
 
 // Copper strip color — default values kept for JS logic (segment coloring).
@@ -20,30 +24,31 @@ export function holeCenter(row: number, col: number): { x: number; y: number } {
   };
 }
 
-/** Snap SVG pixel coordinates to nearest hole, or null if out of bounds */
+/** Snap SVG pixel coordinates to the nearest hole, or null if there is none */
 export function nearestHole(
   svgX: number,
   svgY: number,
-  rows: number,
-  cols: number
+  board: Board
 ): { row: number; col: number } | null {
   const col = Math.round((svgX - BOARD_PADDING) / HOLE_SPACING);
   const row = Math.round((svgY - BOARD_PADDING) / HOLE_SPACING);
-  if (row < 0 || row >= rows || col < 0 || col >= cols) return null;
+  if (row < 0 || row >= board.rows || col < 0 || col >= board.cols) return null;
+  // A board map can leave positions with no hole in them; nothing snaps there.
+  if (!boardHasHole(board, row, col)) return null;
   return { row, col };
 }
 
-/** Snap to nearest cut position (midpoint between two adjacent holes on same row) */
-export function nearestCutPosition(
-  svgX: number,
-  svgY: number,
-  rows: number,
-  cols: number
-): Cut | null {
+/**
+ * Snap to the nearest cut position (midpoint between two adjacent holes on
+ * one row). Positions where the board carries no copper across the gap
+ * return null: there is nothing there to cut.
+ */
+export function nearestCutPosition(svgX: number, svgY: number, board: Board): Cut | null {
   const row = Math.round((svgY - BOARD_PADDING) / HOLE_SPACING);
   const colFloat = (svgX - BOARD_PADDING) / HOLE_SPACING - 0.5;
   const col = Math.round(colFloat);
-  if (row < 0 || row >= rows || col < 0 || col >= cols - 1) return null;
+  if (row < 0 || row >= board.rows || col < 0 || col >= board.cols - 1) return null;
+  if (cutWouldBeRedundant(board, row, col)) return null;
 
   const midX = BOARD_PADDING + (col + 0.5) * HOLE_SPACING;
   const holeY = BOARD_PADDING + row * HOLE_SPACING;

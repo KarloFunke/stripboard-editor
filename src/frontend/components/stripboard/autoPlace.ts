@@ -13,7 +13,7 @@ import {
   getFlexiblePinPositions,
   getRotatedBodyCells,
 } from "./boardLayout";
-import { computeStripSegments } from "./stripSegments";
+import { computeStripSegments, findSegmentIndex, segmentHoles } from "./stripSegments";
 import { computeConnectivity } from "./connectivity";
 import {
   DIAGONAL_PENALTY,
@@ -144,9 +144,8 @@ export function computeAutoPlace(
     const holes: BoardPosition[] = [];
     for (const gi of groupIdxs) {
       for (const si of connectivity[gi].segmentIndices) {
-        const seg = segments[si];
-        for (let c = seg.startCol; c <= seg.endCol; c++) {
-          if (isFree(seg.row, c)) holes.push({ row: seg.row, col: c });
+        for (const h of segmentHoles(segments[si])) {
+          if (isFree(h.row, h.col)) holes.push(h);
         }
       }
     }
@@ -282,9 +281,7 @@ export function computeAutoPlace(
     for (const h of corridorHoles(cand.p1, cand.p2)) blocked.add(holeKey(h.row, h.col));
     flexBodies.push({ p1: cand.p1, p2: cand.p2, clr: clearanceOf(item.def) });
     const claim = (pos: BoardPosition, netId: string) => {
-      const si = segments.findIndex(
-        (s) => s.row === pos.row && pos.col >= s.startCol && pos.col <= s.endCol
-      );
+      const si = findSegmentIndex(segments, pos.row, pos.col);
       if (si >= 0 && segToGroup.has(si)) groupNets[segToGroup.get(si)!].add(netId);
     };
     claim(cand.p1, item.netA);

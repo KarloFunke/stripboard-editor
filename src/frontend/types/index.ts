@@ -126,6 +126,14 @@ export interface Wire {
   to: BoardPosition;
 }
 
+// How the copper is laid out on the physical board. The map is a picture
+// of it — see boardMap.ts for the syntax — and it is the whole truth: it
+// carries the board's size along with its copper, so there is one model
+// here rather than a size plus a set of rules about it.
+export interface BoardLayout {
+  map: string;
+}
+
 export interface Board {
   rows: number;
   cols: number;
@@ -135,6 +143,9 @@ export interface Board {
   lockedCols?: boolean;
   cuts: Cut[];
   wires: Wire[];
+  // Copper of the physical board. Absent = plain veroboard, every row one
+  // strip running the full width.
+  layout?: BoardLayout;
 }
 
 // ── Project (top-level, serializable to JSON) ──────────

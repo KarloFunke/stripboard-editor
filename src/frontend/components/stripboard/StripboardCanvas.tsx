@@ -13,6 +13,7 @@ import {
   HOLE_RADIUS,
 
   STRIP_HEIGHT,
+  BUS_WIDTH,
   STRIP_COLOR,
   STRIP_CONFLICT_COLOR,
   LABEL_FONT_SIZE,
@@ -29,6 +30,8 @@ import {
   getGroupForWire,
 } from "./connectivity";
 import { StripSegment } from "./stripSegments";
+import { barRect, segmentBars, segmentEnds, severedGaps } from "./copperBars";
+import { boardTopology, hasHole } from "./boardTopology";
 import { bodyStyle, bellyPath, dipNotch, usbPort } from "./componentGlyphs";
 import PlacedComponent, { suppressNextCanvasClick } from "./PlacedComponent";
 import CutMark from "./CutMark";
@@ -108,6 +111,13 @@ export default function StripboardCanvas({
   // lane offsets so parallel runs stay individually visible. Wires that
   // only touch at a shared endpoint keep the same lane.
   const wireLaneOffset = useMemo(() => computeWireLaneOffsets(board.wires, 3.5), [board.wires]);
+
+  // The board's own copper: which holes exist and what joins them. It is a
+  // property of the physical board, so it renders as fixed furniture the
+  // user cannot click away.
+  const topo = useMemo(() => boardTopology(board), [board]);
+  const severed = useMemo(() => severedGaps(board), [board]);
+  const COPPER_WIDTH = { strip: STRIP_HEIGHT, bus: BUS_WIDTH };
 
 
   const {
@@ -398,7 +408,7 @@ export default function StripboardCanvas({
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
       const pt = getSVGPoint(e);
-      const hole = nearestHole(pt.x, pt.y, board.rows, board.cols);
+      const hole = nearestHole(pt.x, pt.y, board);
       if (hole) {
         setTrayGhost({ ...hole, componentId: trayDragComponentId ?? "" });
       } else {
@@ -415,7 +425,7 @@ export default function StripboardCanvas({
       const componentId = e.dataTransfer.getData("text/plain");
       if (!componentId) return;
       const pt = getSVGPoint(e);
-      const hole = nearestHole(pt.x, pt.y, board.rows, board.cols);
+      const hole = nearestHole(pt.x, pt.y, board);
       if (hole && isValidPlacement(componentId, hole)) {
         pushSnapshot(); // discrete action — placeOnBoard no longer snapshots itself
         placeOnBoard(componentId, hole);
@@ -452,7 +462,7 @@ export default function StripboardCanvas({
       // Compute offset: where within the component the user clicked
       const comp = components.find((c) => c.id === componentId);
       const pt = getSVGPoint(e);
-      const clickHole = nearestHole(pt.x, pt.y, board.rows, board.cols);
+      const clickHole = nearestHole(pt.x, pt.y, board);
       const rowOffset = comp?.boardPos && clickHole ? clickHole.row - comp.boardPos.row : 0;
       const colOffset = comp?.boardPos && clickHole ? clickHole.col - comp.boardPos.col : 0;
 
@@ -501,7 +511,7 @@ export default function StripboardCanvas({
 
       const pt = getSVGPoint(e);
       // Don't start rect if near a hole (that's for wire drawing)
-      const hole = nearestHole(pt.x, pt.y, board.rows, board.cols);
+      const hole = nearestHole(pt.x, pt.y, board);
       if (hole) {
         const holePos = holeCenter(hole.row, hole.col);
         const dist = Math.sqrt((pt.x - holePos.x) ** 2 + (pt.y - holePos.y) ** 2);
@@ -522,7 +532,7 @@ export default function StripboardCanvas({
       // Flexible pin drag
       if (flexPinDrag) {
         const pt = getSVGPoint(e);
-        const hole = nearestHole(pt.x, pt.y, board.rows, board.cols);
+        const hole = nearestHole(pt.x, pt.y, board);
         if (hole) {
           const comp = components.find((c) => c.id === flexPinDrag.componentId);
           if (comp && comp.boardPos) {
@@ -573,7 +583,7 @@ export default function StripboardCanvas({
         setDragging({ ...dragging, didDrag: true });
       }
       const pt = getSVGPoint(e);
-      const mouseHole = nearestHole(pt.x, pt.y, board.rows, board.cols);
+      const mouseHole = nearestHole(pt.x, pt.y, board);
       // Apply offset so the component doesn't snap to top-left corner
       const previewHole = mouseHole ? {
         row: mouseHole.row - dragging.rowOffset,
@@ -721,7 +731,7 @@ export default function StripboardCanvas({
 
       // Resolve whether the click landed on a hole, and what already occupies it.
       // A hole is exclusively a cut OR a wire endpoint, never both.
-      const hole = nearestHole(pt.x, pt.y, board.rows, board.cols);
+      const hole = nearestHole(pt.x, pt.y, board);
       let onHole = false;
       let holeCut: Cut | undefined;
       let wireHere = false;
@@ -781,7 +791,7 @@ export default function StripboardCanvas({
       }
 
       // Cut toggle — only between holes (tighter hitbox)
-      const cutPos = nearestCutPosition(pt.x, pt.y, board.rows, board.cols);
+      const cutPos = nearestCutPosition(pt.x, pt.y, board);
       if (cutPos) {
         const existing = board.cuts.find(
           (c) => c.kind !== "hole" && c.row === cutPos.row && c.col === cutPos.col
@@ -855,61 +865,85 @@ export default function StripboardCanvas({
           onDrop={handleDrop}
           onDragLeave={handleDragLeave}
         >
-          {/* Strip segments */}
+          {/* Snap (V-cut) lines: where the board can be broken into sections */}
+          {topo.snapX.map((col) => {
+            const x = holeCenter(0, col).x;
+            return (
+              <line
+                key={`snap-c-${col}`}
+                x1={x} y1={holeCenter(0, 0).y - HOLE_SPACING * 0.7}
+                x2={x} y2={holeCenter(board.rows - 1, 0).y + HOLE_SPACING * 0.7}
+                stroke="var(--label-text)" strokeWidth={1} strokeDasharray="6 5" opacity={0.55}
+              >
+                <title>Snap line — the board breaks apart here</title>
+              </line>
+            );
+          })}
+          {topo.snapY.map((row) => {
+            const y = holeCenter(row, 0).y;
+            return (
+              <line
+                key={`snap-r-${row}`}
+                x1={holeCenter(0, 0).x - HOLE_SPACING * 0.7} y1={y}
+                x2={holeCenter(0, board.cols - 1).x + HOLE_SPACING * 0.7} y2={y}
+                stroke="var(--label-text)" strokeWidth={1} strokeDasharray="6 5" opacity={0.55}
+              >
+                <title>Snap line — the board breaks apart here</title>
+              </line>
+            );
+          })}
+
+          {/* Copper, from the shared geometry the printout and the
+              thumbnail also draw, so the three cannot diverge. */}
           {segments.map((seg, i) => {
-            const startCenter = holeCenter(seg.row, seg.startCol);
-            const endCenter = holeCenter(seg.row, seg.endCol);
             const color = getSegmentColor(seg, i);
             const group = getGroupForSegment(connectivity, i);
             const hasNets = group ? group.netIds.length > 0 : seg.netIds.length > 0;
             const segNetIds = group ? group.netIds : seg.netIds;
             const isHighlighted = highlightedNetId !== null && segNetIds.includes(highlightedNetId);
+            const opacity = isHighlighted ? 0.9 : group?.hasConflict ? 0.8 : hasNets ? 0.5 : 0.4;
+            const showHalo = isHighlighted || group?.hasConflict;
 
-            // A hole-cut drills out the hole: its isolated single-hole segment
-            // draws no copper, and the neighbouring strips run up to the hole so
-            // the break lands on it (not in the middle of the strip).
-            const hasHoleCut = (col: number) =>
-              board.cuts.some((c) => c.kind === "hole" && c.row === seg.row && c.col === col);
-            const hasBetweenCut = (col: number) =>
-              board.cuts.some((c) => c.kind !== "hole" && c.row === seg.row && c.col === col);
-            if (seg.startCol === seg.endCol && hasHoleCut(seg.startCol)) return null;
-            const HOLE_CUT_GAP = HOLE_RADIUS + 1.5;
-            // Only run the strip up to a neighbouring hole-cut when no between-cut
-            // sits in that gap — otherwise the extension would paint over the
-            // between-cut's break.
-            const extendLeft = hasHoleCut(seg.startCol - 1) && !hasBetweenCut(seg.startCol - 1);
-            const extendRight = hasHoleCut(seg.endCol + 1) && !hasBetweenCut(seg.endCol);
-            const leftX = extendLeft
-              ? holeCenter(seg.row, seg.startCol - 1).x + HOLE_CUT_GAP
-              : startCenter.x - HOLE_SPACING * 0.4;
-            const rightX = extendRight
-              ? holeCenter(seg.row, seg.endCol + 1).x - HOLE_CUT_GAP
-              : endCenter.x + HOLE_SPACING * 0.4;
-            const hlLeftX = extendLeft ? leftX : startCenter.x - HOLE_SPACING * 0.5;
-            const hlRightX = extendRight ? rightX : endCenter.x + HOLE_SPACING * 0.5;
+            const rects = segmentBars(seg, board, severed).map((b) =>
+              barRect(b, (c) => holeCenter(0, c).x, (r) => holeCenter(r, 0).y, COPPER_WIDTH)
+            );
 
+            const grow = STRIP_HEIGHT / 2;
             return (
               <g key={`seg-${i}`}>
-                {(isHighlighted || group?.hasConflict) && (
+                {showHalo && rects.map((r, k) => (
                   <rect
-                    x={hlLeftX}
-                    y={startCenter.y - STRIP_HEIGHT}
-                    width={hlRightX - hlLeftX}
-                    height={STRIP_HEIGHT * 2}
+                    key={`h${k}`}
+                    x={r.x - grow} y={r.y - grow}
+                    width={r.width + grow * 2} height={r.height + grow * 2}
                     fill={group?.hasConflict ? STRIP_CONFLICT_COLOR : color}
-                    opacity={0.3}
-                    rx={2}
+                    opacity={0.3} rx={2}
                   />
+                ))}
+                {rects.map((r, k) => (
+                  <rect key={k} x={r.x} y={r.y} width={r.width} height={r.height}
+                    fill={color} opacity={opacity} rx={1} />
+                ))}
+              </g>
+            );
+          })}
+
+          {/* Labels a tagged run carries, at both of its ends */}
+          {segments.map((seg, i) => {
+            if (!seg.label) return null;
+            const [first, last] = segmentEnds(seg);
+            const a = holeCenter(first.row, first.col);
+            const z = holeCenter(last.row, last.col);
+            return (
+              <g key={`tag-${i}`} pointerEvents="none">
+                <text x={a.x} y={a.y - HOLE_SPACING * 0.62}
+                  textAnchor="middle" fontSize={LABEL_FONT_SIZE + 1} fontWeight={700}
+                  fill="var(--label-text)">{seg.label}</text>
+                {(z.x !== a.x || z.y !== a.y) && (
+                  <text x={z.x} y={z.y + HOLE_SPACING * 0.62 + LABEL_FONT_SIZE * 0.8}
+                    textAnchor="middle" fontSize={LABEL_FONT_SIZE + 1} fontWeight={700}
+                    fill="var(--label-text)">{seg.label}</text>
                 )}
-                <rect
-                  x={leftX}
-                  y={startCenter.y - STRIP_HEIGHT / 2}
-                  width={rightX - leftX}
-                  height={STRIP_HEIGHT}
-                  fill={color}
-                  opacity={isHighlighted ? 0.9 : group?.hasConflict ? 0.8 : hasNets ? 0.5 : 0.4}
-                  rx={1}
-                />
               </g>
             );
           })}
@@ -963,6 +997,9 @@ export default function StripboardCanvas({
           {/* Holes */}
           {Array.from({ length: board.rows }, (_, row) =>
             Array.from({ length: board.cols }, (_, col) => {
+              // A map can leave a position with no hole in it — a corner
+              // taken by a mounting hole, the strip a board is scored along.
+              if (!hasHole(topo, row, col)) return null;
               const center = holeCenter(row, col);
               return (
                 <circle

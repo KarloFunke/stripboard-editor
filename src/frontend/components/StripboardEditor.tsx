@@ -10,6 +10,8 @@ import ComponentTray from "./stripboard/ComponentTray";
 import StripboardCanvas from "./stripboard/StripboardCanvas";
 import StripboardFootprintEditor from "./stripboard/StripboardFootprintEditor";
 import AutoLayoutSettings from "./stripboard/AutoLayoutSettings";
+import BoardConfigPanel from "./stripboard/BoardConfigPanel";
+import { hasCustomLayout } from "./stripboard/boardTopology";
 import ResizableSidebar from "./ResizableSidebar";
 import { track } from "@/lib/track";
 import { LockIcon, UnlockIcon } from "./canvas/SelectionActionBar";
@@ -46,6 +48,7 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
   const fadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [autoProgress, setAutoProgress] = useState<{ label: string; frac: number } | null>(null);
   const [showLayoutSettings, setShowLayoutSettings] = useState(false);
+  const [showBoardConfig, setShowBoardConfig] = useState(false);
   const autoWorkersRef = useRef<Worker[]>([]);
   const autoRunIdRef = useRef(0);
   useEffect(() => () => {
@@ -106,12 +109,18 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
     }
     track("auto-layout-run", { engine: onlyIds ? "selection" : "full" });
     const runId = ++autoRunIdRef.current;
-    const inputs = { board, components, componentDefs, nets, netAssignments, spanOverrides, clearanceOverrides, tidyWires };
+    // A configured board is a physical object: its rails, strip breaks and
+    // snap lines are pinned to specific rows and columns, so the solver may
+    // not resize it out from under them.
+    const solveBoard = hasCustomLayout(board)
+      ? { ...board, lockedRows: true, lockedCols: true }
+      : board;
+    const inputs = { board: solveBoard, components, componentDefs, nets, netAssignments, spanOverrides, clearanceOverrides, tidyWires };
 
     const isStale = () => {
       const s = useProjectStore.getState();
       return (
-        s.board !== inputs.board || s.components !== inputs.components ||
+        s.board !== board || s.components !== inputs.components ||
         s.componentDefs !== inputs.componentDefs || s.nets !== inputs.nets ||
         s.netAssignments !== inputs.netAssignments || s.spanOverrides !== inputs.spanOverrides ||
         s.clearanceOverrides !== inputs.clearanceOverrides || s.tidyWires !== inputs.tidyWires
@@ -234,6 +243,9 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
   };
 
   const { segments, connectivity, conflictCount } = useStripSegments();
+  const boardIsCustom = hasCustomLayout(board);
+  // A map states the board's size, so the size fields report rather than set it.
+  const boardIsMapped = board.layout?.map !== undefined;
 
   const incompleteNets = useMemo(
     () => checkNetCompleteness(nets, netAssignments, segments, connectivity, components, componentDefs),
@@ -314,6 +326,18 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
                 {showLayoutSettings && <AutoLayoutSettings onClose={() => setShowLayoutSettings(false)} />}
               </div>
             </div>
+            <div className="relative">
+              <button
+                onClick={() => setShowBoardConfig((v) => !v)}
+                title="Choose the board you are building on, or describe a custom one: strip breaks, power rails and snap lines."
+                className={`border rounded px-2 py-1 text-sm transition-colors ${showBoardConfig
+                  ? "border-[#113768] text-[#113768] bg-[#113768]/10 dark:border-[#5b9bd5] dark:text-[#5b9bd5] dark:bg-[#5b9bd5]/15"
+                  : "border-neutral-300 dark:border-neutral-600 text-neutral-900 dark:text-neutral-100 dark:bg-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-700"}`}
+              >
+                Board{boardIsCustom ? " ·" : ""}
+              </button>
+              {showBoardConfig && <BoardConfigPanel onClose={() => setShowBoardConfig(false)} />}
+            </div>
             <div className="flex items-center gap-1.5">
               <span>Rows:</span>
               <input
@@ -321,6 +345,10 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
                 min={1}
                 max={100}
                 value={board.rows}
+                readOnly={boardIsMapped}
+                title={boardIsMapped
+                  ? "The board map sets this. Change it under Board, or right-click a row number to insert or remove one."
+                  : undefined}
                 onChange={(e) => setBoardSize(Math.max(1, parseInt(e.target.value) || 1), board.cols)}
                 className="w-[4.5rem] border border-neutral-300 dark:border-neutral-600 rounded px-2 py-1 text-sm text-neutral-900 dark:text-neutral-100 dark:bg-neutral-800 outline-none focus:border-blue-400 text-center"
               />
@@ -343,6 +371,10 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
                 min={1}
                 max={100}
                 value={board.cols}
+                readOnly={boardIsMapped}
+                title={boardIsMapped
+                  ? "The board map sets this. Change it under Board, or right-click a column number to insert or remove one."
+                  : undefined}
                 onChange={(e) => setBoardSize(board.rows, Math.max(1, parseInt(e.target.value) || 1))}
                 className="w-[4.5rem] border border-neutral-300 dark:border-neutral-600 rounded px-2 py-1 text-sm text-neutral-900 dark:text-neutral-100 dark:bg-neutral-800 outline-none focus:border-blue-400 text-center"
               />

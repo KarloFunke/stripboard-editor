@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import type { PreviewData } from "@/lib/api";
-import type { Component, ComponentDef, Net, NetAssignment, Wire, Cut } from "@/types";
+import type { Board, Component, ComponentDef, Net, NetAssignment } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { DEFAULT_COMPONENTS } from "@/data/defaultComponents";
 import {
@@ -13,11 +13,15 @@ import {
 } from "./stripboard/boardLayout";
 import { bodyStyle, bellyPath, dipNotch, usbPort, diagonalBody } from "./stripboard/componentGlyphs";
 import { computeWireLaneOffsets } from "./stripboard/wireLanes";
+import { computeStripSegments } from "./stripboard/stripSegments";
+import { barRect, segmentBars, severedGaps } from "./stripboard/copperBars";
+import { boardTopology, hasHole } from "./stripboard/boardTopology";
 
 const HOLE_SP = 12; // compact spacing for preview
 const HOLE_R = 2;
 const PAD = 8;
-const STRIP_H = 3;
+// A bus is drawn a shade heavier than a strip, as it is on the board.
+const COPPER_WIDTH = { strip: 3, bus: 4 };
 
 interface Props {
   data: PreviewData;
@@ -34,9 +38,16 @@ export default function StripboardPreview({ data, maxWidth = 280, maxHeight = 16
     const componentDefs = [...DEFAULT_COMPONENTS, ...customDefs];
     const nets = (data.nets ?? []) as unknown as Net[];
     const netAssignments = (data.netAssignments ?? []) as unknown as NetAssignment[];
-    const board = data.board as unknown as { rows?: number; cols?: number; wires?: Wire[]; cuts?: Cut[] };
-    const wires = (board.wires ?? []) as unknown as Wire[];
-    const cuts = (board.cuts ?? []) as unknown as Cut[];
+    const saved = data.board as unknown as Partial<Board>;
+    const board: Board = {
+      rows: saved.rows ?? 25,
+      cols: saved.cols ?? 25,
+      wires: saved.wires ?? [],
+      cuts: saved.cuts ?? [],
+      ...(saved.layout ? { layout: saved.layout } : {}),
+    };
+    const wires = board.wires;
+    const cuts = board.cuts;
 
     const placed = components.filter((c) => c.boardPos !== null);
     if (placed.length === 0) return null;
@@ -89,8 +100,27 @@ export default function StripboardPreview({ data, maxWidth = 280, maxHeight = 16
     // Lane shifts for parallel wires, scaled to the compact hole pitch
     const laneOffsets = computeWireLaneOffsets(wires, 1.5);
 
+    // The copper the board actually has, rather than one strip per row: a
+    // thumbnail of a custom board should show the board it was built on.
+    //
+    // A thumbnail crops to the components, but segments span the whole
+    // board, so each bar is trimmed to that window — a strip running off
+    // the edge should stop at it, not trail past the last hole shown.
+    const OVERSHOOT = 0.3;
+    const copper = computeStripSegments(board, placed, componentDefs, netAssignments)
+      .flatMap((seg) => segmentBars(seg, board, severedGaps(board)))
+      .map((b) => ({
+        ...b,
+        row1: Math.max(b.row1, minRow - OVERSHOOT),
+        row2: Math.min(b.row2, maxRow + OVERSHOOT),
+        col1: Math.max(b.col1, minCol - OVERSHOOT),
+        col2: Math.min(b.col2, maxCol + OVERSHOOT),
+      }))
+      .filter((b) => b.row1 <= b.row2 && b.col1 <= b.col2);
+
     return {
       placed, componentDefs, nets, netAssignments,
+      topo: boardTopology(board), copper,
       minRow, maxRow, minCol, maxCol, rows, cols,
       svgW, svgH, hx, hy, visibleWires, visibleCuts, laneOffsets,
     };
@@ -99,8 +129,8 @@ export default function StripboardPreview({ data, maxWidth = 280, maxHeight = 16
   if (!preview) return null;
 
   const {
-    placed, componentDefs, nets, netAssignments,
-    minRow, maxRow, minCol, maxCol, rows, cols,
+    placed, componentDefs, nets, netAssignments, topo, copper,
+    minRow, minCol, rows, cols,
     svgW, svgH, hx, hy, visibleWires, visibleCuts, laneOffsets,
   } = preview;
 
@@ -116,36 +146,32 @@ export default function StripboardPreview({ data, maxWidth = 280, maxHeight = 16
       viewBox={`0 0 ${svgW} ${svgH}`}
       className="font-sans rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900"
     >
-      {/* Strips */}
-      {Array.from({ length: rows }, (_, ri) => {
-        const row = minRow + ri;
-        return (
-          <rect
-            key={`s-${ri}`}
-            x={hx(minCol) - HOLE_SP * 0.3}
-            y={hy(row) - STRIP_H / 2}
-            width={(cols - 1) * HOLE_SP + HOLE_SP * 0.6}
-            height={STRIP_H}
-            fill="#D4A853"
-            opacity={0.35}
-            rx={0.5}
-          />
-        );
-      })}
+      {/* Copper, from the geometry the board editor and the printout use */}
+      {copper.map((b, i) => (
+        <rect
+          key={`s-${i}`}
+          {...barRect(b, hx, hy, COPPER_WIDTH)}
+          fill="#D4A853" opacity={0.35} rx={0.5}
+        />
+      ))}
 
       {/* Holes */}
       {Array.from({ length: rows }, (_, ri) =>
-        Array.from({ length: cols }, (_, ci) => (
-          <circle
-            key={`h-${ri}-${ci}`}
-            cx={hx(minCol + ci)}
-            cy={hy(minRow + ri)}
-            r={HOLE_R}
-            fill="var(--hole-fill)"
-            stroke="var(--hole-stroke)"
-            strokeWidth={0.3}
-          />
-        ))
+        Array.from({ length: cols }, (_, ci) => {
+          // A board map can leave a position with no hole in it.
+          if (!hasHole(topo, minRow + ri, minCol + ci)) return null;
+          return (
+            <circle
+              key={`h-${ri}-${ci}`}
+              cx={hx(minCol + ci)}
+              cy={hy(minRow + ri)}
+              r={HOLE_R}
+              fill="var(--hole-fill)"
+              stroke="var(--hole-stroke)"
+              strokeWidth={0.3}
+            />
+          );
+        })
       )}
 
       {/* Cuts */}

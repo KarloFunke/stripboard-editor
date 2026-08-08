@@ -10,11 +10,16 @@ import {
   ComponentDef,
   Wire,
   SchematicWire,
+  Board,
+  BoardLayout,
 } from "@/types";
 import { DEFAULT_COMPONENTS } from "@/data/defaultComponents";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { getComponentBounds, getComponentPinPositions } from "@/components/stripboard/boardLayout";
-import { computeStripSegments } from "@/components/stripboard/stripSegments";
+import { computeStripSegments, findSegmentIndex } from "@/components/stripboard/stripSegments";
+import { normalizeLayout, shiftLayout } from "@/components/stripboard/boardLayoutEdit";
+import { findPreset, presetBoard } from "@/components/stripboard/boardPresets";
+import { boardTopology, hasHole, hasHLink, mapSize } from "@/components/stripboard/boardTopology";
 import { computeConnectivity } from "@/components/stripboard/connectivity";
 import { recalculateNets } from "@/components/schematic/netInference";
 import { getRotatedPinPositions } from "@/components/schematic/SymbolRenderer";
@@ -98,6 +103,11 @@ interface ProjectActions {
   // Board wires
   setBoardSize: (rows: number, cols: number) => void;
   setBoardDimLock: (dim: "rows" | "cols", locked: boolean) => void;
+  // Replace the board's copper topology (rails, factory strip breaks, snap
+  // lines). null clears it back to a plain veroboard.
+  setBoardLayout: (layout: BoardLayout | null) => void;
+  // Apply a stocked board: its size and its topology in one undoable step.
+  applyBoardPreset: (presetId: string) => void;
   // Set (or clear with null) the auto-layout span range for a flexible def
   setSpanOverride: (defId: string, range: { min: number; max: number } | null) => void;
   // Set (or reset to default with null) the auto-layout clearance halo for a
@@ -316,6 +326,7 @@ function prepareProjectState(data: Project) {
       wires: data.board?.wires ?? [],
       lockedRows: data.board?.lockedRows,
       lockedCols: data.board?.lockedCols,
+      layout: normalizeLayout(data.board?.layout),
     },
     showValuesOnBoard: data.showValuesOnBoard ?? false,
     autoSave: data.autoSave ?? false,
@@ -836,9 +847,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       const segs = computeStripSegments(s.board, others, s.componentDefs, s.netAssignments);
       const groups = computeConnectivity(segs, s.board.wires);
       const ambientAt = (row: number, col: number): Set<string> => {
-        const idx = segs.findIndex(
-          (seg) => seg.row === row && col >= seg.startCol && col <= seg.endCol
-        );
+        const idx = findSegmentIndex(segs, row, col);
         if (idx < 0) return new Set();
         const g = groups.find((gr) => gr.segmentIndices.includes(idx));
         return new Set(g ? g.netIds : segs[idx].netIds);
@@ -984,6 +993,52 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }));
   },
 
+  setBoardLayout: (layout) => {
+    get().pushSnapshot();
+    set((s) => {
+      const next = normalizeLayout(layout ?? undefined);
+      // A map carries its own size, so the board takes it; without one the
+      // board keeps the size the user set.
+      const size = next?.map ? mapSize(next.map) : null;
+      const board: Board = { ...s.board, ...(size ?? {}), layout: next };
+      const topo = boardTopology(board);
+      // Cuts and wires that no longer land on copper would be invisible but
+      // still counted, so they go with the copper they were made in.
+      return {
+        board: {
+          ...board,
+          cuts: board.cuts.filter((c) =>
+            c.kind === "hole"
+              ? hasHole(topo, c.row, c.col)
+              : hasHLink(topo, c.row, c.col)
+          ),
+          wires: board.wires.filter((w) =>
+            hasHole(topo, w.from.row, w.from.col) && hasHole(topo, w.to.row, w.to.col)
+          ),
+        },
+        isDirty: true,
+        ...bumpBoardEdits(s),
+      };
+    });
+  },
+
+  applyBoardPreset: (presetId) => {
+    const preset = findPreset(presetId);
+    if (!preset) return;
+    const { layout, rows, cols } = presetBoard(preset);
+    get().pushSnapshot();
+    set((s) => ({
+      board: {
+        ...s.board,
+        rows,
+        cols,
+        layout: normalizeLayout(layout),
+      },
+      isDirty: true,
+      ...bumpBoardEdits(s),
+    }));
+  },
+
   setSpanOverride: (defId, range) => {
     set((s) => {
       const next = { ...(s.spanOverrides ?? {}) };
@@ -1050,12 +1105,13 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
             : { row: c.boardPos.row, col: c.boardPos.col + 1 },
         };
       });
-      const board = {
+      const board: Board = {
         ...s.board,
         rows: s.board.rows + (isRow ? 1 : 0),
         cols: s.board.cols + (isRow ? 0 : 1),
         cuts: s.board.cuts.map((cut) => shiftPos(cut)),
         wires: s.board.wires.map((w) => ({ ...w, from: shiftPos(w.from), to: shiftPos(w.to) })),
+        layout: shiftLayout(s.board, axis, at, 1),
       };
       return { components, board, isDirty: true, ...bumpBoardEdits(s) };
     });
@@ -1111,12 +1167,13 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
             ? cut.col === at
             : cut.col === at || cut.col === at - 1;
       const wireGone = (w: Wire) => coord(w.from) === at || coord(w.to) === at;
-      const newBoard = {
+      const newBoard: Board = {
         ...s.board,
         rows: s.board.rows - (isRow ? 1 : 0),
         cols: s.board.cols - (isRow ? 0 : 1),
         cuts: s.board.cuts.filter((c) => !cutGone(c)).map((cut) => shiftPos(cut)),
         wires: s.board.wires.filter((w) => !wireGone(w)).map((w) => ({ ...w, from: shiftPos(w.from), to: shiftPos(w.to) })),
+        layout: shiftLayout(s.board, axis, at, -1),
       };
       return { components, board: newBoard, isDirty: true, ...bumpBoardEdits(s) };
     });

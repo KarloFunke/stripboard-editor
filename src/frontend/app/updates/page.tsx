@@ -12,6 +12,14 @@ export const metadata: Metadata = {
 
 const updates: { date: string; items: string[]; link?: { href: string; lead: string; text: string } }[] = [
   {
+    date: "2026-08-08",
+    items: [
+      "Custom boards, drawn as a map. The board no longer has to be a plain veroboard with one strip per row. Click Board in the stripboard header and describe the board you actually have as a picture of its copper: holes on the even columns, \"-\" and \"|\" for the copper joining them, \".\" where there is no hole, \":\" for the V-cut lines a snappable board breaks along — a groove between two holes, so it costs no space. Anything you can draw, you can build on — strips grouped in threes, buses running down a column, runs that bend. Repeat and define keep a big board short to write.",
+      "Everything follows from the map: the canvas and the 1:1 printout draw the copper you described, cuts you cannot make are refused, parts will not land where the board has no hole, and the conflict and completeness checks account for all of it. Auto-layout solves onto a custom board without resizing it.",
+      "Board presets, including the ElectroCookie snappable PCB in all three sizes: a single snapped-off quarter, a half, or the whole board. Each comes with its strips in threes, a power rail down both outer columns of every quarter, and the V-cut lines it snaps along — as a map you can then edit like any other.",
+    ],
+  },
+  {
     date: "2026-07-31",
     items: [
       "The auto layouter now produces much straighter wiring: a second solver pass trades a little board space for fewer slanted and crossing wires, and its result is only kept when it actually is tidier. It is on by default and can be turned off in the auto-layout settings. Cuts also line up on shared columns where possible, like a human would place them. Solving is also several times faster than before, especially on big boards.",

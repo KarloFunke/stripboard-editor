@@ -1,7 +1,8 @@
 import { holeKey } from "./keys";
 import { Board, Cut } from "@/types";
-import { StripSegment } from "./stripSegments";
+import { StripSegment, segmentHoles, isRowRun } from "./stripSegments";
 import { BoardPin } from "./boardPins";
+import { boardTopology, hasHLink } from "./boardTopology";
 
 /**
  * Pick the cut position inside the gap [colA, colB-1] that leaves both sides
@@ -54,6 +55,19 @@ export function deriveCuts(
       severedGaps.add(`${cut.row}:${cut.col}`);
     } else {
       severedGaps.add(`${cut.row}:${cut.col}`);
+    }
+  }
+  // Wherever the board itself carries no copper across a gap — a factory
+  // break, the flank of a rail, a missing hole — it is already severed and
+  // the user never has to cut it.
+  // On a plain veroboard every gap carries copper, so the sweep can only
+  // add nothing — worth skipping, it runs once per completion candidate.
+  const topo = boardTopology(board);
+  if (!topo.plain) {
+    for (let row = 0; row < board.rows; row++) {
+      for (let col = 0; col < board.cols - 1; col++) {
+        if (!hasHLink(topo, row, col)) severedGaps.add(`${row}:${col}`);
+      }
     }
   }
 
@@ -172,8 +186,12 @@ export function upgradeCutsToDrills(
   noDrill: Set<string>,
   reserveNets: Set<string>
 ): Cut[] {
+  // A cut always severs a run along a row, so only those are candidates for
+  // the drill it upgrades to — copper running down a column would be cut
+  // somewhere nobody asked for.
   const segsByRow = new Map<number, StripSegment[]>();
   for (const s of segments) {
+    if (!isRowRun(s)) continue;
     if (!segsByRow.has(s.row)) segsByRow.set(s.row, []);
     segsByRow.get(s.row)!.push(s);
   }
@@ -182,7 +200,7 @@ export function upgradeCutsToDrills(
     let n = freeCount.get(s);
     if (n === undefined) {
       n = 0;
-      for (let c = s.startCol; c <= s.endCol; c++) if (!occupied.has(holeKey(s.row, c))) n++;
+      for (const h of segmentHoles(s)) if (!occupied.has(holeKey(h.row, h.col))) n++;
       freeCount.set(s, n);
     }
     return n;

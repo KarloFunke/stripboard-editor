@@ -15,7 +15,7 @@ import {
   getFlexiblePinPositions,
   getRotatedPinPositions,
 } from "./boardLayout";
-import { computeStripSegments } from "./stripSegments";
+import { computeStripSegments, isRowRun } from "./stripSegments";
 import { computeConnectivity } from "./connectivity";
 import { checkNetCompleteness } from "./netCompleteness";
 import { deriveCompletion } from "./autoFinish";
@@ -504,6 +504,9 @@ function optimizeFlexibles(
       map.get(netId)!.push({ row, startCol, endCol });
     };
     for (const seg of segments) {
+      // Runs along a row only: the distance heuristics fed from this map
+      // measure along a row.
+      if (!isRowRun(seg)) continue;
       if (seg.netIds.length === 1) add(seg.netIds[0], seg.row, seg.startCol, seg.endCol);
     }
     for (const comp of virtual) {

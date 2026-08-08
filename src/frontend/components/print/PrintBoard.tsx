@@ -11,6 +11,9 @@ import {
 } from "@/components/stripboard/boardLayout";
 import { bodyStyle, bellyPath, dipNotch, usbPort, diagonalBody } from "@/components/stripboard/componentGlyphs";
 import { computeWireLaneOffsets } from "@/components/stripboard/wireLanes";
+import { boardTopology, hasHole } from "@/components/stripboard/boardTopology";
+import { segmentBars, segmentEnds, severedGaps } from "@/components/stripboard/copperBars";
+import { computeStripSegments } from "@/components/stripboard/stripSegments";
 
 // Standard stripboard pitch is 0.1 in = 2.54 mm. The board SVG is authored in
 // 30-unit cells; sizing the element in mm at this ratio prints it 1:1.
@@ -47,18 +50,57 @@ export default function PrintBoard({ variant, showLabels, showWires, showCuts, s
 
   const compStroke = mirror ? "#bbbbbb" : "#000000";
 
+  const topo = boardTopology(board);
+  const severed = severedGaps(board);
+  const segments = computeStripSegments(board, components, componentDefs, []);
+
+  // Only the holes the board actually has get drilled markers.
   const holes: React.ReactNode[] = [];
   for (let r = 0; r < board.rows; r++) {
     for (let c = 0; c < board.cols; c++) {
+      if (!hasHole(topo, r, c)) continue;
       holes.push(
         <circle key={`h${r}-${c}`} cx={colX(c)} cy={rowY(r)} r={4} fill="none" stroke="#000" strokeWidth={1.2} />
       );
     }
   }
 
-  const strips = Array.from({ length: board.rows }, (_, r) => (
-    <line key={`s${r}`} x1={colX(0)} y1={rowY(r)} x2={colX(lastCol)} y2={rowY(r)} stroke="#dddddd" strokeWidth={2} />
-  ));
+  // The copper, from the same geometry the board canvas draws — including
+  // the drilled holes it must not run through.
+  const strips: React.ReactNode[] = [];
+  segments.forEach((seg, i) => {
+    for (const [k, b] of segmentBars(seg, board, severed).entries()) {
+      strips.push(
+        <line key={`s${i}-${k}`}
+          x1={colX(b.col1)} y1={rowY(b.row1)} x2={colX(b.col2)} y2={rowY(b.row2)}
+          stroke={b.vertical ? "#bbbbbb" : "#dddddd"} strokeWidth={b.vertical ? 4 : 2} />
+      );
+    }
+  });
+
+  // Snap lines, and the label a tagged run carries, so the sheet lands on
+  // the right board the right way round.
+  const guides: React.ReactNode[] = [];
+  for (const c of topo.snapX) {
+    guides.push(
+      <line key={`snapc${c}`} x1={colX(c)} y1={rowY(0) - 18} x2={colX(c)} y2={rowY(board.rows - 1) + 18}
+        stroke="#999999" strokeWidth={1.5} strokeDasharray="8 6" />
+    );
+  }
+  for (const r of topo.snapY) {
+    guides.push(
+      <line key={`snapr${r}`} x1={colX(0) - 18} y1={rowY(r)} x2={colX(board.cols - 1) + 18} y2={rowY(r)}
+        stroke="#999999" strokeWidth={1.5} strokeDasharray="8 6" />
+    );
+  }
+  segments.forEach((seg, i) => {
+    if (!seg.label) return;
+    const [first] = segmentEnds(seg);
+    guides.push(
+      <text key={`tag${i}`} x={colX(first.col)} y={rowY(first.row) - 12}
+        textAnchor="middle" fontSize={13} fontWeight={700} fill="#000">{seg.label}</text>
+    );
+  });
 
   return (
     <svg
@@ -68,6 +110,7 @@ export default function PrintBoard({ variant, showLabels, showWires, showCuts, s
       className="font-sans" style={{ background: "#fff" }}
     >
       {strips}
+      {guides}
       {holes}
 
       {components.map((comp) => {

@@ -3,7 +3,7 @@ import { holeKey } from "../keys";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { getComponentBounds } from "../boardLayout";
 import { corridorHoles } from "../flexGeometry";
-import { computeStripSegments } from "../stripSegments";
+import { computeStripSegments, segmentContains, isRowRun } from "../stripSegments";
 import { Candidate, Chooser } from "./chooser";
 
 // ── Slant repairs on the final candidate ──
@@ -31,8 +31,12 @@ export function repairSlantWires(
       if (offenders.length === 0) break;
       const segBoard: Board = { ...board, rows: cur.rows, cols: cur.cols, cuts: cur.plan.cuts, wires: [] };
       const segments = computeStripSegments(segBoard, cur.virtual, componentDefs, netAssignments);
-      const segAt = (r: number, c: number) =>
-        segments.find((s) => s.row === r && c >= s.startCol && c <= s.endCol);
+      // The slide reasoning below is about columns within one row, so a
+      // wire endpoint that landed on a power rail is left alone.
+      const segAt = (r: number, c: number) => {
+        const s = segments.find((seg) => segmentContains(seg, r, c));
+        return s && isRowRun(s) ? s : undefined;
+      };
       // Physical blockers only (pins, bodies, corridors): everything else
       // — cuts, wire endpoints — is re-derived per candidate anyway
       const phys = new Set<string>();

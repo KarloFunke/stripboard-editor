@@ -8,6 +8,7 @@ import {
 } from "./boardLayout";
 import { bodyStyle } from "./componentGlyphs";
 import { corridorHoles } from "./flexGeometry";
+import { boardTopology, hasHole } from "./boardTopology";
 
 export interface BoardPin {
   row: number;
@@ -27,6 +28,7 @@ export function collectBoardPins(
   netAssignments: NetAssignment[]
 ): BoardPin[] {
   const pins: BoardPin[] = [];
+  const topo = boardTopology(board);
   const netOfPin = new Map<string, string>();
   for (const a of netAssignments) {
     netOfPin.set(pinKey(a.componentId, a.pinId), a.netId);
@@ -37,6 +39,7 @@ export function collectBoardPins(
     if (!def) continue;
     for (const pin of getComponentPinPositions(comp, def)) {
       if (pin.row < 0 || pin.row >= board.rows || pin.col < 0 || pin.col >= board.cols) continue;
+      if (!topo.plain && !hasHole(topo, pin.row, pin.col)) continue;
       const netId = netOfPin.get(pinKey(comp.id, pin.pinId));
       pins.push({
         row: pin.row,
@@ -105,6 +108,18 @@ export function collectOccupiedHoles(
 
   for (const cut of board.cuts) {
     if (cut.kind === "hole") occupied.add(holeKey(cut.row, cut.col));
+  }
+
+  // Positions the board simply has no hole at — a mounting-hole corner, the
+  // material a snappable board is scored along. Nothing can be soldered
+  // there, so they block exactly like a drilled hole.
+  const topo = boardTopology(board);
+  if (!topo.plain) {
+    for (let row = 0; row < board.rows; row++) {
+      for (let col = 0; col < board.cols; col++) {
+        if (!hasHole(topo, row, col)) occupied.add(holeKey(row, col));
+      }
+    }
   }
 
   return occupied;

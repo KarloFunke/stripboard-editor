@@ -16,6 +16,7 @@ import { WireObstacleIndex, WireObstacles } from "./flexGeometry";
 import { collectBoardPins, collectOccupiedHoles } from "./boardPins";
 import { deriveCuts, upgradeCutsToDrills } from "./cutPlanning";
 import { deriveWires } from "./wireRouting";
+import { boardTopology, carriesVerticalCopper, hasHole } from "./boardTopology";
 
 export interface AutoFinishResult {
   cuts: Cut[];
@@ -211,6 +212,21 @@ export function deriveCompletion(
 
   const noDrill = new Set<string>();
   for (const p of pins) noDrill.add(holeKey(p.row, p.col));
+  // Drilling out a hole that carries copper down a column would sever that
+  // bus at a point the user never asked to break, so it is never the
+  // sacrifice for a cut along a row. Nor is a hole the board does not have.
+  // A plain board has every hole and no vertical copper, so this adds
+  // nothing there; it runs per completion candidate, inside the solve.
+  const topoF = boardTopology(board);
+  if (!topoF.plain) {
+    for (let row = 0; row < board.rows; row++) {
+      for (let col = 0; col < board.cols; col++) {
+        if (!hasHole(topoF, row, col) || carriesVerticalCopper(topoF, row, col)) {
+          noDrill.add(holeKey(row, col));
+        }
+      }
+    }
+  }
   for (const c of board.cuts) if (c.kind === "hole") noDrill.add(holeKey(c.row, c.col));
   for (const w of [...board.wires, ...wires]) {
     noDrill.add(holeKey(w.from.row, w.from.col));

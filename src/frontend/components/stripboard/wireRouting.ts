@@ -1,6 +1,6 @@
 import { holeKey } from "./keys";
 import { BoardPosition, Net } from "@/types";
-import { StripSegment } from "./stripSegments";
+import { StripSegment, segmentHoles, isRowRun } from "./stripSegments";
 import { BoardPin } from "./boardPins";
 import {
   WIRE_OFFAXIS_FREE,
@@ -31,6 +31,15 @@ const WIRE_OVERLAP_RATE = 2;
 // joint costs a small flat tax, so a clean direct vertical still wins; a
 // slanted direct wire usually loses.
 const RELAY_WIRE_TAX = 1;
+
+/** One side big enough to index every hole any segment mentions. */
+function boardCols(segments: StripSegment[]): number {
+  let n = 1;
+  for (const s of segments) {
+    n = Math.max(n, (s.endRow ?? s.row) + 1, s.endCol + 1);
+  }
+  return n;
+}
 
 interface WireChoice {
   from: BoardPosition;
@@ -82,17 +91,16 @@ export function deriveWires(
   wireMess: number;
   sharedJoints: number;
 } {
-  const segsByRow = new Map<number, { idx: number; startCol: number; endCol: number }[]>();
+  // Hole -> segment index, over a flat array: built by walking every
+  // segment's holes, so copper running down a column lands in the index the
+  // same way a run along a row does, at no cost in keys or hashing.
+  const width = boardCols(segments);
+  const segIdxByHole = new Int32Array(width * width).fill(-1);
   segments.forEach((s, idx) => {
-    if (!segsByRow.has(s.row)) segsByRow.set(s.row, []);
-    segsByRow.get(s.row)!.push({ idx, startCol: s.startCol, endCol: s.endCol });
+    for (const h of segmentHoles(s)) segIdxByHole[h.row * width + h.col] = idx;
   });
-  const segIndexAt = (row: number, col: number) => {
-    for (const e of segsByRow.get(row) ?? []) {
-      if (col >= e.startCol && col <= e.endCol) return e.idx;
-    }
-    return -1;
-  };
+  const segIndexAt = (row: number, col: number) =>
+    row < 0 || col < 0 || row >= width || col >= width ? -1 : segIdxByHole[row * width + col];
 
   const segToGroup = new Map<number, number>();
   groups.forEach((g, gi) => {
@@ -107,9 +115,8 @@ export function deriveWires(
     if (!holes) {
       holes = [];
       for (const si of groups[gi].segmentIndices) {
-        const seg = segments[si];
-        for (let c = seg.startCol; c <= seg.endCol; c++) {
-          if (!occupied.has(holeKey(seg.row, c))) holes.push({ row: seg.row, col: c });
+        for (const h of segmentHoles(segments[si])) {
+          if (!occupied.has(holeKey(h.row, h.col))) holes.push(h);
         }
       }
       groupFreeCache.set(gi, holes);
@@ -190,6 +197,10 @@ export function deriveWires(
   });
   segments.forEach((seg, si) => {
     if (skipRelays) return;
+    // The tail donation below reasons in columns along one row. Copper
+    // running any other way never donates a tail — it stays available as a
+    // whole group, which is what a bus is good for anyway.
+    if (!isRowRun(seg)) return;
     const gi = segToGroup.get(si);
     if (gi === undefined) return;
     const segPins = pins.filter((p) => p.row === seg.row && p.col >= seg.startCol && p.col <= seg.endCol);

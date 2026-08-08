@@ -20,6 +20,8 @@
     "../../components/stripboard/autoLayout.ts",
     "../../components/stripboard/autoLayout2.ts",
     "../../components/stripboard/netCompleteness.ts",
+    "../../components/stripboard/boardPresets.ts",
+    "../../components/stripboard/boardLayoutEdit.ts",
     "../../data/defaultComponents.ts"
   ]
 }
