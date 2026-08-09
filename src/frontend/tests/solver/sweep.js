@@ -3,7 +3,7 @@
 //
 //   node tests/solver/sweep.js --data <dir> [--locked N] [--tag name] [--ids 1,2,3] [--jobs N] [--tidy 15|30|unlimited] [--perms K]
 //                              [--lock-connectors] [--lock-width] [--only-locked] [--require-connector] [--max-parts N]
-//                              [--relax adaptive|flat]
+//                              [--relax adaptive|flat] [--beam]
 //
 // Each project runs from a blank board. With --locked N, a second run locks
 // N parts at their human positions (connectors first, then big rigids — the
@@ -31,6 +31,10 @@ let maxClusterOpt = 0;
 let tidyGrowthOpt = 0;
 // Input-order jitter: number of deterministic orderings to solve (0/1 = off)
 let permsOpt = 0;
+// Beam search: refine every distinct stage-2 construction, keep the best
+let beamOpt = false;
+// Guarded final pick: fewest crossings first, then the rating
+let pickCrossings = false;
 // Lock every connector rather than the --locked N head of the priority list
 let lockConnectors = false;
 // Hold the board to the human's column count; rows stay free
@@ -133,6 +137,8 @@ function solve(board, comps, defs, nets, asg) {
       ...(maxClusterOpt > 0 ? { maxCluster: maxClusterOpt } : {}),
       ...(tidyGrowthOpt > 0 ? { tidyGrowth: tidyGrowthOpt } : {}),
       ...(permsOpt > 1 ? { permutations: permsOpt } : {}),
+      ...(beamOpt ? { beamSearch: true } : {}),
+      ...(pickCrossings ? { crossingsPick: true } : {}),
     });
   } catch (err) {
     return { error: String(err && err.message ? err.message : err), ms: Date.now() - t0 };
@@ -274,6 +280,8 @@ if (!isMainThread) {
   maxClusterOpt = workerData.maxClusterOpt ?? 0;
   tidyGrowthOpt = workerData.tidyGrowthOpt ?? 0;
   permsOpt = workerData.permsOpt ?? 0;
+  beamOpt = !!workerData.beamOpt;
+  pickCrossings = !!workerData.pickCrossings;
   lockConnectors = !!workerData.lockConnectors;
   lockWidth = !!workerData.lockWidth;
   onlyLocked = !!workerData.onlyLocked;
@@ -301,6 +309,8 @@ maxClusterOpt = Number(argVal("max-cluster") ?? 0);
 const tidyArg = argVal("tidy");
 tidyGrowthOpt = tidyArg === "unlimited" ? Infinity : tidyArg ? Number(tidyArg) / 100 : 0;
 permsOpt = Number(argVal("perms") ?? 0);
+beamOpt = args.includes("--beam");
+pickCrossings = args.includes("--pick-crossings");
 lockConnectors = args.includes("--lock-connectors");
 lockWidth = args.includes("--lock-width");
 onlyLocked = args.includes("--only-locked");
@@ -349,7 +359,7 @@ function finish(results) {
   fs.writeFileSync(
     outFile,
     JSON.stringify(
-      { tag, lockedN, lockConnectors, lockWidth, onlyLocked, perms: permsOpt, maxCluster: maxClusterOpt, relax: relaxMode, date: new Date().toISOString(), results },
+      { tag, lockedN, lockConnectors, lockWidth, onlyLocked, perms: permsOpt, beam: beamOpt, pickCrossings, maxCluster: maxClusterOpt, relax: relaxMode, date: new Date().toISOString(), results },
       null,
       1
     )
@@ -417,7 +427,7 @@ if (jobs <= 1) {
   let done = 0;
   for (let w = 0; w < jobs; w++) {
     const worker = new Worker(__filename, {
-      workerData: { dataDir, lockedN, noHarvest, maxClusterOpt, tidyGrowthOpt, permsOpt, lockConnectors, lockWidth, onlyLocked, relaxMode },
+      workerData: { dataDir, lockedN, noHarvest, maxClusterOpt, tidyGrowthOpt, permsOpt, beamOpt, pickCrossings, lockConnectors, lockWidth, onlyLocked, relaxMode },
     });
     worker.on("message", ({ i, row }) => {
       results[i] = row;

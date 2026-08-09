@@ -35,6 +35,9 @@ export interface AutoLayoutResult {
   // Components that must be taken OFF the board (the new layout could not
   // place them); without this a stale position would survive the apply
   unplaceIds?: string[];
+  // Beam-search experiment: the stage-2 ladder's distinct candidate pool,
+  // ranked by (bad, cost). Attached only when beamIndex/beamStats is set.
+  beamPool?: { bad: number; cost: number; rows: number; cols: number; label?: string }[];
   // How many tiles stage 1 ended up planning. The cluster cap only bounds
   // this: a tile too big for the dimension limits is split again, so the
   // count is the only honest measure of how the board was partitioned.

@@ -29,6 +29,14 @@ export interface Candidate {
 export class Chooser {
   chosen: Candidate | null = null;
 
+  // Beam-search experiment: while active (through the ladder), every routed
+  // candidate with a distinct placement is kept, so refinement can be run
+  // from the k-th best construction instead of only the best. Frozen before
+  // the post-ladder phases so local-move proposals don't pollute the pool.
+  private pool: { cand: Candidate; cost: number; label?: string }[] = [];
+  private poolSigs = new Set<string>();
+  private poolActive = true;
+
   constructor(
     private board: Board,
     private componentDefs: ComponentDef[],
@@ -70,7 +78,53 @@ export class Chooser {
     );
   }
 
-  route(virtual: Component[], rows: number, cols: number, movedIds: Set<string>, repair = false): Candidate {
+  private signatureOf(c: Candidate): string {
+    const parts = c.virtual
+      .filter((v) => v.boardPos)
+      .map(
+        (v) =>
+          `${v.id}:${v.boardPos!.row},${v.boardPos!.col},${v.rotation ?? 0},${
+            v.flexibleEndPos ? `${v.flexibleEndPos.row},${v.flexibleEndPos.col}` : ""
+          }`
+      )
+      .sort()
+      .join("|");
+    return `${c.rows}x${c.cols}|${parts}`;
+  }
+
+  resetPool() {
+    this.pool = [];
+    this.poolSigs.clear();
+    this.poolActive = true;
+  }
+
+  /** Stop collecting and rank the pool by (bad, cost); stable, so the
+   * incumbent (first seen among ties) stays in front. */
+  freezePool() {
+    this.poolActive = false;
+    this.pool.sort((a, b) => a.cand.bad - b.cand.bad || a.cost - b.cost);
+  }
+
+  poolEntry(i: number): Candidate {
+    return this.pool[Math.max(0, Math.min(i, this.pool.length - 1))].cand;
+  }
+
+  poolSummary(): { bad: number; cost: number; rows: number; cols: number; label?: string }[] {
+    return this.pool.map((e) => ({
+      bad: e.cand.bad,
+      cost: Math.round(e.cost * 10) / 10,
+      rows: e.cand.rows,
+      cols: e.cand.cols,
+      ...(e.label ? { label: e.label } : {}),
+    }));
+  }
+
+  /** Beam search: make the given pool candidate the incumbent. */
+  install(c: Candidate) {
+    this.chosen = c;
+  }
+
+  route(virtual: Component[], rows: number, cols: number, movedIds: Set<string>, repair = false, label?: string): Candidate {
     const tryBoard: Board = { ...this.board, rows, cols, cuts: [], wires: [] };
     const plan = deriveCompletion(tryBoard, virtual, this.componentDefs, this.nets, this.netAssignments, {
       allowSharedJoints: this.allowSharedJoints,
@@ -81,6 +135,13 @@ export class Chooser {
       (this.limits.maxCols ? Math.max(0, cols - this.limits.maxCols) : 0);
     const bad = plan.unresolvedConflicts * 100 + 40 * overCap + plan.starvedNetIds.length;
     const cand: Candidate = { virtual, rows, cols, movedIds, plan, bad };
+    if (this.poolActive) {
+      const sig = this.signatureOf(cand);
+      if (!this.poolSigs.has(sig)) {
+        this.poolSigs.add(sig);
+        this.pool.push({ cand, cost: this.cost(cand), label });
+      }
+    }
     if (!this.chosen || bad < this.chosen.bad || (bad === this.chosen.bad && this.cost(cand) < this.cost(this.chosen))) {
       this.chosen = cand;
     }
