@@ -80,6 +80,21 @@ export interface AutoLayout2Options {
   // finished result. For callers that spread orderings over parallel
   // workers and compare via rateResult; overrides `permutations`.
   permutationIndex?: number;
+  // Beam-search experiment: after the stage-2 ladder, continue refinement
+  // from the k-th best distinct construction instead of the best (0 = the
+  // normal path). The tidy pass's internal re-solves always take the best.
+  beamIndex?: number;
+  // Beam-search experiment: run the complete pipeline from EVERY distinct
+  // stage-2 construction and keep the best finished board (per ordering,
+  // when combined with permutations). Overrides beamIndex.
+  beamSearch?: boolean;
+  // Experimental guarded final pick: among finished candidates (orderings
+  // and/or beam runs), wire-over-part crossings may never trade up — fewest
+  // crossings first, then the rating. Mirrors the tidy pass's guard.
+  crossingsPick?: boolean;
+  // Attach the ladder's candidate pool to the result (beamPool) without
+  // changing the solve.
+  beamStats?: boolean;
 }
 
 /**
@@ -114,12 +129,13 @@ export function computeAutoLayout2(
   options?: AutoLayout2Options
 ): AutoLayoutResult {
   const inputs: SolveInputs = { components, nets, netAssignments };
+  const solveOne = options?.beamSearch ? solveBeam : solvePipeline;
   if (options?.permutationIndex !== undefined) {
     const pin = permutedInputs(inputs, options.permutationIndex);
-    return solvePipeline(board, pin, componentDefs, onProgress, options);
+    return solveOne(board, pin, componentDefs, onProgress, options);
   }
   const nPerms = Math.max(1, Math.floor(options?.permutations ?? 1));
-  if (nPerms === 1) return solvePipeline(board, inputs, componentDefs, onProgress, options);
+  if (nPerms === 1) return solveOne(board, inputs, componentDefs, onProgress, options);
 
   // Each ordering runs the COMPLETE pipeline (base + tidy pass + cut
   // alignment) and the finished results compete: judging orderings on their
@@ -129,17 +145,50 @@ export function computeAutoLayout2(
   // plain solve of the same project.
   const slice = (f0: number, span: number) =>
     onProgress ? (p: AutoLayoutProgress) => onProgress({ ...p, frac: f0 + p.frac * span }) : undefined;
-  let best: { result: AutoLayoutResult; score: number } | null = null;
+  let best: { result: AutoLayoutResult; score: number; cx: number } | null = null;
   for (let i = 0; i < nPerms; i++) {
     const pin = permutedInputs(inputs, i);
-    const r = solvePipeline(board, pin, componentDefs, slice(i / nPerms, 1 / nPerms), options);
+    const r = solveOne(board, pin, componentDefs, slice(i / nPerms, 1 / nPerms), options);
     const s = rateResult(r, board, pin.components, componentDefs);
+    const cx = options?.crossingsPick ? wireMessScore(r, pin.components, componentDefs).crossings : 0;
     if (!best || r.quality < best.result.quality ||
-        (r.quality === best.result.quality && s < best.score)) {
-      best = { result: r, score: s };
+        (r.quality === best.result.quality && (cx < best.cx || (cx === best.cx && s < best.score)))) {
+      best = { result: r, score: s, cx };
     }
   }
   return best!.result;
+}
+
+// Beam search over the ladder's candidate pool: run the complete pipeline
+// from every distinct stage-2 construction of this ordering and keep the
+// best finished board. Index 0 is the normal path and wins ties, so this
+// never returns a worse result than the plain solve.
+function solveBeam(
+  board: Board,
+  inputs: SolveInputs,
+  componentDefs: ComponentDef[],
+  onProgress: ((p: AutoLayoutProgress) => void) | undefined,
+  options: AutoLayout2Options | undefined
+): AutoLayoutResult {
+  const first = solvePipeline(board, inputs, componentDefs, onProgress, {
+    ...options,
+    beamIndex: undefined,
+    beamStats: true,
+  });
+  const poolSize = first.beamPool?.length ?? 1;
+  const cxOf = (r: AutoLayoutResult) =>
+    options?.crossingsPick ? wireMessScore(r, inputs.components, componentDefs).crossings : 0;
+  let best = { result: first, score: rateResult(first, board, inputs.components, componentDefs), cx: cxOf(first) };
+  for (let k = 1; k < poolSize; k++) {
+    const r = solvePipeline(board, inputs, componentDefs, undefined, { ...options, beamIndex: k });
+    const s = rateResult(r, board, inputs.components, componentDefs);
+    const cx = cxOf(r);
+    if (r.quality < best.result.quality ||
+        (r.quality === best.result.quality && (cx < best.cx || (cx === best.cx && s < best.score)))) {
+      best = { result: r, score: s, cx };
+    }
+  }
+  return best.result;
 }
 
 // The single-ordering pipeline: base solve, tidy second pass, cut alignment.
@@ -168,16 +217,25 @@ function solvePipeline(
   const hasLockedParts = components.some((c) => c.locked && c.boardPos && !c.boardExcluded);
   const base = layoutOnce(board, components, componentDefs, nets, netAssignments, slice(...spans[0]), options);
 
+  // The beam fork applies to the base construction only; the tidy pass's
+  // internal re-solves always take their own best. The base's pool rides
+  // along on whatever result wins.
+  const variantOptions =
+    options && (options.beamIndex !== undefined || options.beamStats)
+      ? { ...options, beamIndex: undefined, beamStats: undefined }
+      : options;
+  const carry = (r: AutoLayoutResult): AutoLayoutResult => (base.beamPool ? { ...r, beamPool: base.beamPool } : r);
+
   const aligned = (result: AutoLayoutResult): AutoLayoutResult =>
     result.quality === 0 ? alignCuts(result, board, components, componentDefs) : result;
-  if (nVariants === 0 || growCap === undefined || base.quality !== 0 || !base.boardSize) return aligned(base);
+  if (nVariants === 0 || growCap === undefined || base.quality !== 0 || !base.boardSize) return carry(aligned(base));
 
   const finish = (result: AutoLayoutResult): AutoLayoutResult =>
     trimResult(result, board, components, componentDefs, hasLockedParts);
 
   const finishedBase = finish(base);
   const baseScore = wireMessScore(base, components, componentDefs);
-  if (baseScore.mess <= 0) return aligned(finishedBase);
+  if (baseScore.mess <= 0) return carry(aligned(finishedBase));
   const baseArea = finishedBase.boardSize!.rows * finishedBase.boardSize!.cols;
 
   // Locking the found width changes the economics, not the budget: unused
@@ -217,7 +275,7 @@ function solvePipeline(
     const capped = layoutOnce(
       { ...board, cols: colCap, lockedCols: true, ...(rowCap !== undefined ? { rows: rowCap, lockedRows: true } : {}) },
       components, componentDefs, nets, netAssignments,
-      slice(...spans[vi + 1]), options, icChannels
+      slice(...spans[vi + 1]), variantOptions, icChannels
     );
     if (capped.quality !== 0 || !capped.boardSize || capped.boardSize.cols > colCap) return;
     if (rowCap !== undefined && capped.boardSize.rows > rowCap) return;
@@ -229,7 +287,7 @@ function solvePipeline(
         (best.score.crossings === score.crossings && best.score.mess <= score.mess))) return;
     best = { result: finished, score };
   });
-  return aligned(best ? (best as { result: AutoLayoutResult }).result : finishedBase);
+  return carry(aligned(best ? (best as { result: AutoLayoutResult }).result : finishedBase));
 }
 
 function layoutOnce(
@@ -660,11 +718,12 @@ function layoutOnce(
     for (const use2D of [true, false]) {
     outer: for (const gap of [2 + seamExtra, 3 + seamExtra]) {
       const m = materialize(gap, use2D);
+      const tag = `${use2D ? "2d" : "bands"}-g${gap}`;
       report("place", (use2D ? 0.2 : 0.5) + (gap === 2 ? 0.05 : 0.15));
       if (m.rows * m.cols <= 300) {
         // small board: routing is cheap enough to verify every removal, so
         // compaction stops exactly where wires would starve or get messy
-        const loose = chooser.route(m.virtual, m.rows, m.cols, m.movedIds);
+        const loose = chooser.route(m.virtual, m.rows, m.cols, m.movedIds, false, `${tag}-loose`);
         if (loose.bad === 0) {
           const messCap = loose.plan.wireMess + 2;
           const validate = (comps: Component[], rows: number, cols: number) => {
@@ -674,7 +733,7 @@ function layoutOnce(
             return p.unresolvedConflicts === 0 && p.starvedNetIds.length === 0 && p.wireMess <= messCap;
           };
           const full = compactPlacements(m.virtual, componentDefs, netOfPin, m.rows, m.cols, Infinity, validate);
-          chooser.route(full.comps, full.rows, full.cols, m.movedIds);
+          chooser.route(full.comps, full.rows, full.cols, m.movedIds, false, `${tag}-full`);
           // a result that needed pin-joint sharing is legal but last-resort:
           // keep exploring the remaining ladder rungs for a joint-free one
           if (chooser.chosen!.plan.sharedJoints === 0) break outer;
@@ -684,16 +743,16 @@ function layoutOnce(
         // gets a chance, since full compaction may pull the board under its cap
       }
       const full = compactPlacements(m.virtual, componentDefs, netOfPin, m.rows, m.cols);
-      const compacted = chooser.route(full.comps, full.rows, full.cols, m.movedIds);
+      const compacted = chooser.route(full.comps, full.rows, full.cols, m.movedIds, false, `${tag}-full`);
       if (compacted.bad === 0 && compacted.plan.sharedJoints === 0) break;
-      const loose = chooser.route(m.virtual, m.rows, m.cols, m.movedIds);
+      const loose = chooser.route(m.virtual, m.rows, m.cols, m.movedIds, false, `${tag}-loose`);
       if (loose.bad === 0) {
         let lo = 0;
         let hi = full.removals;
         while (hi - lo > 1) {
           const mid = (lo + hi) >> 1;
           const part = compactPlacements(m.virtual, componentDefs, netOfPin, m.rows, m.cols, mid);
-          if (chooser.route(part.comps, part.rows, part.cols, m.movedIds).bad === 0) lo = mid;
+          if (chooser.route(part.comps, part.rows, part.cols, m.movedIds, false, `${tag}-part`).bad === 0) lo = mid;
           else hi = mid;
         }
         if (chooser.chosen!.plan.sharedJoints === 0) break outer;
@@ -706,7 +765,7 @@ function layoutOnce(
     // Keep one (or both) when what it fixes or saves outweighs its cost.
     if (chooser.chosen!.bad < 100) {
       const c0: Candidate = chooser.chosen!;
-      chooser.route(c0.virtual, c0.rows, c0.cols + 1, c0.movedIds);
+      chooser.route(c0.virtual, c0.rows, c0.cols + 1, c0.movedIds, false, "edge+1");
       if (lockedParts.length === 0) {
         // shifting the content right is only possible when nothing is locked
         const shifted = c0.virtual.map((c) => {
@@ -719,8 +778,8 @@ function layoutOnce(
               : {}),
           };
         });
-        chooser.route(shifted, c0.rows, c0.cols + 1, c0.movedIds); // left channel only
-        chooser.route(shifted, c0.rows, c0.cols + 2, c0.movedIds); // both edges
+        chooser.route(shifted, c0.rows, c0.cols + 1, c0.movedIds, false, "edge+1L"); // left channel only
+        chooser.route(shifted, c0.rows, c0.cols + 2, c0.movedIds, false, "edge+2"); // both edges
       } else if (chooser.chosen!.bad > 0) {
         // With locked parts that shift would move them off their positions.
         // But a starved segment flush against a board edge (e.g. a horizontal
@@ -730,7 +789,7 @@ function layoutOnce(
         for (const dc of [1, -1, 2, -2]) {
           if (chooser.chosen!.bad === 0) break;
           const slid = shiftFreeSideways(c0.virtual, dc, c0.cols);
-          if (slid) chooser.route(slid, c0.rows, c0.cols, c0.movedIds);
+          if (slid) chooser.route(slid, c0.rows, c0.cols, c0.movedIds, false, "edge-slide");
         }
       }
     }
@@ -743,8 +802,13 @@ function layoutOnce(
     for (const t of [...tiles].filter((x) => x.anchor)) demoteTile(t);
     computeFixed();
     chooser.chosen = null;
+    chooser.resetPool();
     runLadder();
   }
+  // Beam-search experiment: refinement continues from the k-th best distinct
+  // construction instead of the incumbent. k = 0 (or absent) changes nothing.
+  chooser.freezePool();
+  if ((options?.beamIndex ?? 0) > 0) chooser.install(chooser.poolEntry(options!.beamIndex!));
   // ── V1 polish: re-anneal each tile in place ──────────
   // A tile is a small local problem — the regime where the v1 optimizer
   // produces human-density results (its weakness, global structure, is
@@ -849,5 +913,6 @@ function layoutOnce(
     boardSize: { rows, cols },
     unplaceIds: stillUnplaced.map((c) => c.id),
     tiles: tiles.length,
+    ...(options?.beamIndex !== undefined || options?.beamStats ? { beamPool: chooser.poolSummary() } : {}),
   };
 }
