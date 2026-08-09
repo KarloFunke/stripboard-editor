@@ -127,7 +127,9 @@ export default function AutoLayoutGuidePage() {
             </p>
             <p className="text-sm text-neutral-700 dark:text-neutral-300 leading-relaxed mt-3">
               Refer to the <Link href="/guide" className="text-[var(--copper)] hover:underline">quick guide</Link> for the exact
-              keys and buttons.
+              keys and buttons. If you want the full account, with the problem stated formally, the cost functions the
+              router actually minimises, and a benchmark against hand-built boards, read the{" "}
+              <Link href="/paper" className="text-[var(--copper)] hover:underline">technical report</Link>.
             </p>
           </section>
         </div>
