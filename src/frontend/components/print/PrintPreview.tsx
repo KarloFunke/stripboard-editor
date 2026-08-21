@@ -29,6 +29,9 @@ export default function PrintPreview({ onClose, source, editUuid, viewUuid }: { 
   const components = useProjectStore((s) => s.components);
   const componentDefs = useProjectStore((s) => s.componentDefs);
   const name = useProjectStore((s) => s.name);
+  const description = useProjectStore((s) => s.description ?? "");
+  const notes = useProjectStore((s) => s.notes ?? "");
+  const hasNotes = !!(description || notes);
 
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -36,6 +39,7 @@ export default function PrintPreview({ onClose, source, editUuid, viewUuid }: { 
   const [showComponentSheet, setShowComponentSheet] = useState(true);
   const [includeCutSheet, setIncludeCutSheet] = useState(true);
   const [showBom, setShowBom] = useState(true);
+  const [showNotes, setShowNotes] = useState(true);
   const [includeExcludedInBom, setIncludeExcludedInBom] = useState(false);
   const [showLabels, setShowLabels] = useState(true);
   const [showWires, setShowWires] = useState(true);
@@ -67,6 +71,7 @@ export default function PrintPreview({ onClose, source, editUuid, viewUuid }: { 
       cutSheet: includeCutSheet ? "on" : "off",
       bom: showBom ? "on" : "off",
       bomOffBoard: includeExcludedInBom ? "on" : "off",
+      notes: hasNotes && showNotes ? "on" : "off",
       refLabels: showLabels ? "on" : "off",
       wires: showWires ? "on" : "off",
       cuts: showCuts ? "on" : "off",
@@ -86,7 +91,8 @@ export default function PrintPreview({ onClose, source, editUuid, viewUuid }: { 
 
   if (!mounted) return null;
 
-  const nothingSelected = !showComponentSheet && !includeCutSheet && !showBom;
+  const printNotes = hasNotes && showNotes;
+  const nothingSelected = !showComponentSheet && !includeCutSheet && !showBom && !printNotes;
 
   return createPortal(
     <div className="print-portal">
@@ -98,6 +104,7 @@ export default function PrintPreview({ onClose, source, editUuid, viewUuid }: { 
           {toggle("Cut sheet", includeCutSheet, setIncludeCutSheet)}
           {toggle("BOM", showBom, setShowBom)}
           {showBom && toggle("Off-board parts in BOM", includeExcludedInBom, setIncludeExcludedInBom)}
+          {hasNotes && toggle("Notes", showNotes, setShowNotes)}
           <span className="opacity-40">|</span>
           {toggle("Ref labels", showLabels, setShowLabels)}
           {toggle("Wires", showWires, setShowWires)}
@@ -199,6 +206,23 @@ export default function PrintPreview({ onClose, source, editUuid, viewUuid }: { 
                 )}
               </tbody>
             </table>
+          </div>
+          )}
+          {printNotes && (
+          <div className="p-[10mm]">
+            <div className="text-sm font-semibold mb-2">{name} | notes</div>
+            {description && (
+              <div className="text-xs mb-3">
+                <div className="font-semibold mb-0.5">Description</div>
+                <div className="whitespace-pre-wrap break-words">{description}</div>
+              </div>
+            )}
+            {notes && (
+              <div className="text-xs">
+                <div className="font-semibold mb-0.5">Notes</div>
+                <div className="whitespace-pre-wrap break-words">{notes}</div>
+              </div>
+            )}
           </div>
           )}
           {nothingSelected && (

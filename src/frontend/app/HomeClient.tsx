@@ -364,6 +364,11 @@ export default function HomeClient({
                       <span className="font-medium text-[#113768] dark:text-[#5b9bd5]">
                         {project.name}
                       </span>
+                      {project.description && (
+                        <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5 truncate">
+                          {project.description}
+                        </p>
+                      )}
                       <p className="text-xs text-neutral-400 dark:text-neutral-500 mt-0.5" suppressHydrationWarning>
                         Updated {new Date(project.updated_at).toLocaleDateString()}
                         {project.fork_count > 0 && ` · ${project.fork_count} fork${project.fork_count > 1 ? "s" : ""}`}

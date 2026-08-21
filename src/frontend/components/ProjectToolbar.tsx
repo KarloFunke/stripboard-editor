@@ -10,6 +10,7 @@ import { createZip } from "@/lib/zip";
 import ThemeToggle from "./ThemeToggle";
 import PrintPreview from "./print/PrintPreview";
 import AuthModal from "./AuthModal";
+import ProjectNotesPanel from "./ProjectNotesPanel";
 
 interface Props {
   editUuid?: string;
@@ -156,6 +157,7 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [showPrint, setShowPrint] = useState(false);
   const [showSaveNotice, setShowSaveNotice] = useState(false);
+  const [showNotes, setShowNotes] = useState(false);
   const hasShownSaveNotice = useRef(false);
   // Number of generated footprints shipped with the last netlist export, or null.
   const [footprintNotice, setFootprintNotice] = useState<number | null>(null);
@@ -454,6 +456,14 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
               label="Share"
             />
           )}
+          <button
+            onClick={() => setShowNotes((s) => !s)}
+            className={`px-3.5 py-1.5 rounded transition-all text-sm text-white ${
+              showNotes ? "bg-white/25" : "bg-white/10 hover:bg-white/20"
+            }`}
+          >
+            Description &amp; Notes
+          </button>
           <FeedbackButton
             onClick={() => { track("print-open", { source: "edit" }); setShowPrint(true); }}
             label="Print"
@@ -516,6 +526,9 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
       </div>
 
       {showPrint && <PrintPreview source="edit" editUuid={editUuid} viewUuid={viewUuid} onClose={() => setShowPrint(false)} />}
+
+      {/* Description and notes drawer */}
+      {showNotes && <ProjectNotesPanel onClose={() => setShowNotes(false)} />}
 
       {/* Share panel */}
       {showShare && editUuid && viewUuid && (
