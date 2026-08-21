@@ -9,7 +9,7 @@ import {
 } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { getRotatedPinPositions, getComponentBounds, getComponentPinPositions } from "./boardLayout";
-import { deriveCompletion, CompletionPlan } from "./autoFinish";
+import { deriveCompletion, drillRemainingCuts, CompletionPlan } from "./autoFinish";
 import { computeStripSegments } from "./stripSegments";
 import { computeConnectivity } from "./connectivity";
 import { checkNetCompleteness } from "./netCompleteness";
@@ -32,7 +32,7 @@ import { floorplan2D, Fixed2D } from "./layout2/floorplan2D";
 import { compactPlacements } from "./layout2/compaction";
 import { alignCuts } from "./layout2/alignCuts";
 import { trimResult } from "./layout2/trimResult";
-import { IC_MIN_PINS, rigidJoinsOf, wireMessScore } from "./layout2/tidyScore";
+import { AREA_WEIGHT, IC_MIN_PINS, avoidableBetweenCuts, rigidJoinsOf, wireMessScore } from "./layout2/tidyScore";
 import { Candidate, Chooser } from "./layout2/chooser";
 import { insertWireChannels } from "./layout2/channelPass";
 import { makeClusterPlanner } from "./layout2/clusterPlanning";
@@ -88,10 +88,15 @@ export interface AutoLayout2Options {
   // stage-2 construction and keep the best finished board (per ordering,
   // when combined with permutations). Overrides beamIndex.
   beamSearch?: boolean;
-  // Experimental guarded final pick: among finished candidates (orderings
-  // and/or beam runs), wire-over-part crossings may never trade up — fewest
-  // crossings first, then the rating. Mirrors the tidy pass's guard.
+  // Guarded final pick: among finished candidates (orderings and/or beam
+  // runs), wire-over-part crossings may never trade up — fewest crossings
+  // first, then the rating. Mirrors the tidy pass's guard. ON by default
+  // (explicit false disables, for A/B measurement).
   crossingsPick?: boolean;
+  // Only sever strips by drilling holes: routing avoids cuts that must stay
+  // between-cuts, and any the drill upgrade cannot absorb are priced like a
+  // slanted wire so roomier layouts win.
+  drilledCutsOnly?: boolean;
   // Attach the ladder's candidate pool to the result (beamPool) without
   // changing the solve.
   beamStats?: boolean;
@@ -106,7 +111,8 @@ export function rateResult(
   result: AutoLayoutResult,
   board: Board,
   components: Component[],
-  componentDefs: ComponentDef[]
+  componentDefs: ComponentDef[],
+  drilledCutsOnly = false
 ): number {
   const hasLockedParts = components.some((c) => c.locked && c.boardPos && !c.boardExcluded);
   const t = trimResult(result, board, components, componentDefs, hasLockedParts);
@@ -115,7 +121,16 @@ export function rateResult(
   const { mess } = wireMessScore(t, components, componentDefs);
   const wireLen = t.wires.reduce((s, w) => s + Math.hypot(w.from.row - w.to.row, w.from.col - w.to.col), 0);
   const slants = t.wires.reduce((n, w) => n + (w.from.col !== w.to.col ? 1 : 0), 0);
-  return rows * cols + mess + wireLen + Math.max(rows, cols) * slants;
+  let betweenCuts = 0;
+  if (drilledCutsOnly) {
+    const byId = new Map(t.placements.map((p) => [p.componentId, p]));
+    const virtual = components.map((c) => {
+      const p = byId.get(c.id);
+      return p ? { ...c, boardPos: p.boardPos, rotation: p.rotation ?? c.rotation, flexibleEndPos: p.flexibleEndPos } : c;
+    });
+    betweenCuts = avoidableBetweenCuts(t.cuts, virtual, componentDefs);
+  }
+  return AREA_WEIGHT * rows * cols + mess + wireLen + Math.max(rows, cols) * (slants + betweenCuts);
 }
 
 
@@ -149,8 +164,8 @@ export function computeAutoLayout2(
   for (let i = 0; i < nPerms; i++) {
     const pin = permutedInputs(inputs, i);
     const r = solveOne(board, pin, componentDefs, slice(i / nPerms, 1 / nPerms), options);
-    const s = rateResult(r, board, pin.components, componentDefs);
-    const cx = options?.crossingsPick ? wireMessScore(r, pin.components, componentDefs).crossings : 0;
+    const s = rateResult(r, board, pin.components, componentDefs, options?.drilledCutsOnly);
+    const cx = options?.crossingsPick !== false ? wireMessScore(r, pin.components, componentDefs).crossings : 0;
     if (!best || r.quality < best.result.quality ||
         (r.quality === best.result.quality && (cx < best.cx || (cx === best.cx && s < best.score)))) {
       best = { result: r, score: s, cx };
@@ -177,11 +192,11 @@ function solveBeam(
   });
   const poolSize = first.beamPool?.length ?? 1;
   const cxOf = (r: AutoLayoutResult) =>
-    options?.crossingsPick ? wireMessScore(r, inputs.components, componentDefs).crossings : 0;
-  let best = { result: first, score: rateResult(first, board, inputs.components, componentDefs), cx: cxOf(first) };
+    options?.crossingsPick !== false ? wireMessScore(r, inputs.components, componentDefs).crossings : 0;
+  let best = { result: first, score: rateResult(first, board, inputs.components, componentDefs, options?.drilledCutsOnly), cx: cxOf(first) };
   for (let k = 1; k < poolSize; k++) {
     const r = solvePipeline(board, inputs, componentDefs, undefined, { ...options, beamIndex: k });
-    const s = rateResult(r, board, inputs.components, componentDefs);
+    const s = rateResult(r, board, inputs.components, componentDefs, options?.drilledCutsOnly);
     const cx = cxOf(r);
     if (r.quality < best.result.quality ||
         (r.quality === best.result.quality && (cx < best.cx || (cx === best.cx && s < best.score)))) {
@@ -192,7 +207,34 @@ function solveBeam(
 }
 
 // The single-ordering pipeline: base solve, tidy second pass, cut alignment.
+// Parts with no net assigned at all have nothing to solve for: they are
+// deliberately left off the board, silently — planning them would only fail
+// with errors the user cannot act on ("no strip plan found") and a quality
+// penalty that suppresses the tidy pass. They still land in unplaceIds so a
+// stale board position gets cleared on apply; a locked one the user placed
+// by hand stays put.
 function solvePipeline(
+  board: Board,
+  inputs: SolveInputs,
+  componentDefs: ComponentDef[],
+  onProgress: ((p: AutoLayoutProgress) => void) | undefined,
+  options: AutoLayout2Options | undefined
+): AutoLayoutResult {
+  const assignedIds = new Set(inputs.netAssignments.map((a) => a.componentId));
+  const noNet = inputs.components.filter(
+    (c) => !c.boardExcluded && !assignedIds.has(c.id) && !(c.locked && c.boardPos)
+  );
+  if (noNet.length === 0) return solvePipelineInner(board, inputs, componentDefs, onProgress, options);
+  const skip = new Set(noNet.map((c) => c.id));
+  const res = solvePipelineInner(
+    board,
+    { ...inputs, components: inputs.components.filter((c) => !skip.has(c.id)) },
+    componentDefs, onProgress, options
+  );
+  return { ...res, unplaceIds: [...(res.unplaceIds ?? []), ...noNet.map((c) => c.id)] };
+}
+
+function solvePipelineInner(
   board: Board,
   inputs: SolveInputs,
   componentDefs: ComponentDef[],
@@ -226,8 +268,21 @@ function solvePipeline(
       : options;
   const carry = (r: AutoLayoutResult): AutoLayoutResult => (base.beamPool ? { ...r, beamPool: base.beamPool } : r);
 
-  const aligned = (result: AutoLayoutResult): AutoLayoutResult =>
-    result.quality === 0 ? alignCuts(result, board, components, componentDefs) : result;
+  const aligned = (result: AutoLayoutResult): AutoLayoutResult => {
+    if (result.quality !== 0) return result;
+    const r = alignCuts(result, board, components, componentDefs);
+    if (!options?.drilledCutsOnly || !r.boardSize) return r;
+    // Alignment may have slid a stuck between-cut next to a drillable hole
+    const byId = new Map(r.placements.map((p) => [p.componentId, p]));
+    const virtual = components.map((c) => {
+      const p = byId.get(c.id);
+      return p
+        ? { ...c, boardPos: p.boardPos, rotation: p.rotation ?? c.rotation, flexibleEndPos: p.flexibleEndPos }
+        : c;
+    });
+    const vBoard: Board = { ...board, rows: r.boardSize.rows, cols: r.boardSize.cols, cuts: [], wires: [] };
+    return { ...r, cuts: drillRemainingCuts(vBoard, virtual, componentDefs, netAssignments, r.cuts, r.wires) };
+  };
   if (nVariants === 0 || growCap === undefined || base.quality !== 0 || !base.boardSize) return carry(aligned(base));
 
   const finish = (result: AutoLayoutResult): AutoLayoutResult =>
@@ -283,6 +338,11 @@ function solvePipeline(
     if (finished.boardSize!.rows * finished.boardSize!.cols > baseArea * (1 + growCap)) return;
     const score = wireMessScore(capped, components, componentDefs);
     if (score.crossings > baseScore.crossings || score.mess >= baseScore.mess) return;
+    // Tidier AND not worse overall: the variant's extra board must pay for
+    // its mess win at the standard exchange rate, or an unlimited growth
+    // budget lets a marginal improvement buy an enormous board.
+    if (rateResult(finished, board, components, componentDefs, options?.drilledCutsOnly) >
+        rateResult(finishedBase, board, components, componentDefs, options?.drilledCutsOnly)) return;
     if (best && (best.score.crossings < score.crossings ||
         (best.score.crossings === score.crossings && best.score.mess <= score.mess))) return;
     best = { result: finished, score };
@@ -611,7 +671,7 @@ function layoutOnce(
   // link wire), find the largest prefix of the removal sequence that still
   // routes cleanly; a wider-gap floorplan is the last resort. The chooser
   // keeps the best routed candidate across every phase from here on.
-  const chooser = new Chooser(board, componentDefs, nets, netAssignments, lockedParts.length > 0, limits);
+  const chooser = new Chooser(board, componentDefs, nets, netAssignments, lockedParts.length > 0, limits, options?.drilledCutsOnly);
   // Slide only the FREE content sideways by dc columns, locked parts staying
   // put. A uniform shift leaves free-vs-free geometry unchanged, so only the
   // new relations against locked parts need checking here; whether the result
@@ -680,7 +740,7 @@ function layoutOnce(
         lockGeo.segs.some(
           (ls) =>
             segmentsIntersect(fs.p1, fs.p2, ls.p1, ls.p2) ||
-            bodiesTooClose(fs.p1, fs.p2, ls.p1, ls.p2, fs.clr + ls.clr)
+            bodiesTooClose(fs.p1, fs.p2, ls.p1, ls.p2, Math.max(fs.clr, ls.clr))
         )
       )
         return null;
@@ -700,7 +760,7 @@ function layoutOnce(
   // clearance; compaction closes the seam wherever that stays legal.
   // Clearances above the default widen the seams: two padded parts may face
   // each other across a tile boundary the planner never checks pairwise
-  // (gap 2 covers exactly two default halos).
+  // (gap 2 covers exactly the default one-free-line clearance).
   const maxClr = Math.max(
     0,
     ...components
@@ -710,7 +770,7 @@ function layoutOnce(
         return def ? clearanceOf(def) : 0;
       })
   );
-  const seamExtra = Math.max(0, Math.ceil(1 + 2 * maxClr - 1e-6) - 2);
+  const seamExtra = Math.max(0, maxClr - 1);
   const runLadder = () => {
     // Both stage-2 strategies always contribute candidates and chooser.route()
     // keeps the better routed result: the 2D floorplan usually wins, but
@@ -729,6 +789,7 @@ function layoutOnce(
           const validate = (comps: Component[], rows: number, cols: number) => {
             const p = deriveCompletion({ ...board, rows, cols, cuts: [], wires: [] }, comps, componentDefs, nets, netAssignments, {
               allowSharedJoints: lockedParts.length > 0,
+              ...(options?.drilledCutsOnly ? { drilledCutsOnly: true } : {}),
             });
             return p.unresolvedConflicts === 0 && p.starvedNetIds.length === 0 && p.wireMess <= messCap;
           };
@@ -830,6 +891,7 @@ function layoutOnce(
       const r1 = computeAutoLayout(vBoard, cur.virtual, componentDefs, nets, netAssignments, undefined, {
         attempts: polishAttempts,
         onlyIds: memberIds,
+        ...(options?.drilledCutsOnly ? { drilledCutsOnly: true } : {}),
       });
       const byId = new Map(r1.placements.map((p) => [p.componentId, p]));
       const cand = cur.virtual.map((c) => {

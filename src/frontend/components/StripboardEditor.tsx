@@ -5,7 +5,7 @@ import { useProjectStore } from "@/store/useProjectStore";
 import { useStripSegments } from "@/hooks/useStripSegments";
 import { checkNetCompleteness } from "./stripboard/netCompleteness";
 import type { AutoLayoutRequest, AutoLayoutWorkerMessage } from "./stripboard/autoLayoutWorker";
-import { DEFAULT_PERM_TIME_BUDGET, defaultPermWorkers, type AutoLayoutResult } from "./stripboard/layoutTypes";
+import { defaultPermBoards, defaultPermWorkers, type AutoLayoutResult } from "./stripboard/layoutTypes";
 import ComponentTray from "./stripboard/ComponentTray";
 import StripboardCanvas from "./stripboard/StripboardCanvas";
 import StripboardFootprintEditor from "./stripboard/StripboardFootprintEditor";
@@ -31,7 +31,8 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
   const spanOverrides = useProjectStore((s) => s.spanOverrides);
   const clearanceOverrides = useProjectStore((s) => s.clearanceOverrides);
   const tidyWires = useProjectStore((s) => s.tidyWires);
-  const permTimeBudget = useProjectStore((s) => s.permTimeBudget);
+  const drilledCutsOnly = useProjectStore((s) => s.drilledCutsOnly);
+  const permBoards = useProjectStore((s) => s.permBoards);
   const permWorkers = useProjectStore((s) => s.permWorkers);
   const isActive = useProjectStore((s) => s.activeEditor === "stripboard");
   const setActiveEditor = useProjectStore((s) => s.setActiveEditor);
@@ -95,9 +96,10 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
 
   // Full runs use the v2 strip-first layouter (deterministic, picks its own
   // board size). Scoped re-layouts of a selection stay on the v1 optimizer,
-  // which can keep everything else fixed. With a time budget set, several
-  // workers solve deterministic input orderings of the same circuit until
-  // the time is up and the best finished board (quality, then score) wins.
+  // which can keep everything else fixed. With more than one board
+  // configured, several workers solve that many deterministic input
+  // orderings of the same circuit and the best finished board (quality,
+  // then guarded crossings, then score) wins.
   const handleAutoLayout = (onlyIds?: string[]) => {
     if (autoWorkersRef.current.length > 0) {
       stopAutoWorkers();
@@ -106,7 +108,7 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
     }
     track("auto-layout-run", { engine: onlyIds ? "selection" : "full" });
     const runId = ++autoRunIdRef.current;
-    const inputs = { board, components, componentDefs, nets, netAssignments, spanOverrides, clearanceOverrides, tidyWires };
+    const inputs = { board, components, componentDefs, nets, netAssignments, spanOverrides, clearanceOverrides, tidyWires, drilledCutsOnly };
 
     const isStale = () => {
       const s = useProjectStore.getState();
@@ -114,10 +116,11 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
         s.board !== inputs.board || s.components !== inputs.components ||
         s.componentDefs !== inputs.componentDefs || s.nets !== inputs.nets ||
         s.netAssignments !== inputs.netAssignments || s.spanOverrides !== inputs.spanOverrides ||
-        s.clearanceOverrides !== inputs.clearanceOverrides || s.tidyWires !== inputs.tidyWires
+        s.clearanceOverrides !== inputs.clearanceOverrides || s.tidyWires !== inputs.tidyWires ||
+        s.drilledCutsOnly !== inputs.drilledCutsOnly
       );
     };
-    const applyBest = (result: AutoLayoutResult, meta?: { budget: number; orderings: number }) => {
+    const applyBest = (result: AutoLayoutResult, meta?: { boards: number; orderings: number; drilled: boolean }) => {
       // The user kept editing while we solved: applying a result computed
       // from stale state would clobber their changes — discard instead.
       if (isStale()) {
@@ -137,37 +140,26 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
       tidyGrowth: tidyWires === false ? undefined : Infinity,
     };
 
-    const budget = !onlyIds ? permTimeBudget ?? DEFAULT_PERM_TIME_BUDGET : 0;
-    if (budget > 0) {
+    const boards = !onlyIds
+      ? Math.max(1, permBoards ?? defaultPermBoards(components.filter((c) => !c.boardExcluded).length))
+      : 1;
+    if (boards > 1) {
       const cores = typeof navigator !== "undefined" ? navigator.hardwareConcurrency || 4 : 4;
-      const nWorkers = Math.max(1, Math.min(permWorkers ?? defaultPermWorkers(cores), cores - 1));
-      const deadline = Date.now() + budget * 1000;
+      const nWorkers = Math.max(1, Math.min(permWorkers ?? defaultPermWorkers(cores), cores, boards));
       let nextIdx = 0;
       let inFlight = 0;
       let solved = 0;
-      let best: { result: AutoLayoutResult; score: number; index: number } | null = null;
-
-      const progressTimer = setInterval(() => {
-        if (runId !== autoRunIdRef.current) {
-          clearInterval(progressTimer);
-          return;
-        }
-        setAutoProgress({
-          label: `Solving layouts (${solved} done)`,
-          frac: Math.min(1, (Date.now() - (deadline - budget * 1000)) / (budget * 1000)),
-        });
-      }, 200);
+      let best: { result: AutoLayoutResult; score: number; crossings: number; index: number } | null = null;
 
       const finalize = () => {
-        clearInterval(progressTimer);
         stopAutoWorkers();
-        if (best) applyBest(best.result, { budget, orderings: solved });
+        if (best) applyBest(best.result, { boards, orderings: solved, drilled: drilledCutsOnly === true });
         else showAutoMsg("Auto-layout failed", []);
       };
-      // Every worker gets a first ordering regardless of the clock; after
-      // that, new orderings are handed out only while time remains.
+      // Workers pull ordering indices from a shared counter until the
+      // requested board count is reached.
       const dispatch = (worker: Worker & { _idx?: number }): boolean => {
-        if (nextIdx >= nWorkers && Date.now() >= deadline) return false;
+        if (nextIdx >= boards) return false;
         worker._idx = nextIdx++;
         inFlight++;
         worker.postMessage({ ...request, permutationIndex: worker._idx });
@@ -177,18 +169,22 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
         const worker: Worker & { _idx?: number } = new Worker(new URL("./stripboard/autoLayoutWorker.ts", import.meta.url));
         worker.onmessage = (e: MessageEvent<AutoLayoutWorkerMessage>) => {
           if (runId !== autoRunIdRef.current) return;
-          if (e.data.type === "progress") return; // the bar tracks the clock
+          if (e.data.type === "progress") return; // the bar tracks finished boards
           inFlight--;
           solved++;
+          setAutoProgress({ label: `Solving layouts (${solved}/${boards})`, frac: solved / boards });
           const { result } = e.data;
           const score = e.data.score ?? Infinity;
+          const crossings = e.data.crossings ?? 0;
           const idx = worker._idx!;
           // Deterministic winner for a given set of finished orderings:
-          // quality, then score, then the earliest ordering.
+          // quality, then the guarded pick (wire-over-part crossings never
+          // trade up), then score, then the earliest ordering.
           if (!best || result.quality < best.result.quality ||
               (result.quality === best.result.quality &&
-                (score < best.score || (score === best.score && idx < best.index)))) {
-            best = { result, score, index: idx };
+                (crossings < best.crossings || (crossings === best.crossings &&
+                  (score < best.score || (score === best.score && idx < best.index)))))) {
+            best = { result, score, crossings, index: idx };
           }
           if (!dispatch(worker) && inFlight === 0) finalize();
         };
@@ -222,7 +218,7 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
         return;
       }
       stopAutoWorkers();
-      applyBest(e.data.result);
+      applyBest(e.data.result, { boards: 1, orderings: 1, drilled: drilledCutsOnly === true });
     };
     worker.onerror = (err) => {
       if (runId !== autoRunIdRef.current) return;

@@ -58,8 +58,8 @@ function auditProject(id) {
       const b = flexParts[j];
       if (flexGeometry.segmentsIntersect(a.p1, a.p2, b.p1, b.p2)) kinds.add("flexCross");
       else {
-        const clrSum = flexGeometry.clearanceOf(a.def) + flexGeometry.clearanceOf(b.def);
-        if (flexGeometry.bodiesTooClose(a.p1, a.p2, b.p1, b.p2, clrSum)) kinds.add("flexTooClose");
+        const pairClr = Math.max(flexGeometry.clearanceOf(a.def), flexGeometry.clearanceOf(b.def));
+        if (flexGeometry.bodiesTooClose(a.p1, a.p2, b.p1, b.p2, pairClr)) kinds.add("flexTooClose");
       }
     }
   }

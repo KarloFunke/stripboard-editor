@@ -132,7 +132,7 @@ export function compactPlacements(
       for (let j = i + 1; j < s.flexPts.length; j++) {
         const b = s.flexPts[j];
         if (segmentsIntersect(a.p1, a.p2, b.p1, b.p2)) out.add(`ffx:${i}:${j}`);
-        if (bodiesTooClose(a.p1, a.p2, b.p1, b.p2, aClr + clearanceOf(occ.flexes[j].def))) out.add(`ffc:${i}:${j}`);
+        if (bodiesTooClose(a.p1, a.p2, b.p1, b.p2, Math.max(aClr, clearanceOf(occ.flexes[j].def)))) out.add(`ffc:${i}:${j}`);
       }
       s.rects.forEach((rect, ri) => {
         if (bodyIntersectsRect(a.p1, a.p2, rect, aClr)) out.add(`fr:${i}:${ri}`);

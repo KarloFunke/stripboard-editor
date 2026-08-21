@@ -2,6 +2,7 @@ import { Board, Component, ComponentDef, Net, NetAssignment } from "@/types";
 import { AutoLayoutOptions, computeAutoLayout } from "./autoLayout";
 import { AutoLayoutProgress, AutoLayoutResult } from "./layoutTypes";
 import { computeAutoLayout2, rateResult } from "./autoLayout2";
+import { wireMessScore } from "./layout2/tidyScore";
 
 export interface AutoLayoutRequest {
   board: Board;
@@ -16,10 +17,12 @@ export interface AutoLayoutRequest {
   options?: AutoLayoutOptions;
   // Per-def-id span ranges for flexible parts (project auto-layout config)
   spanOverrides?: Record<string, { min: number; max: number }>;
-  // Per-def-id body clearance halo in hole pitches (project auto-layout config)
+  // Per-def-id body clearance in free board lines (project auto-layout config)
   clearanceOverrides?: Record<string, number>;
   // Tidy second pass: allowed board area growth as a fraction (Infinity = any)
   tidyGrowth?: number;
+  // Only sever strips by drilling holes (project auto-layout config)
+  drilledCutsOnly?: boolean;
   // Solve exactly this input ordering (parallel permutation search): the
   // editor spreads indices over several workers and compares the returned
   // scores. Undefined = plain single solve of the caller's own ordering.
@@ -28,9 +31,11 @@ export interface AutoLayoutRequest {
 
 export type AutoLayoutWorkerMessage =
   | { type: "progress"; progress: AutoLayoutProgress }
-  // score: rateResult of the finished board (v2 only) — lower is better,
-  // compare on (quality, score); lets the editor pick across workers.
-  | { type: "done"; result: AutoLayoutResult; score?: number };
+  // score: rateResult of the finished board (v2 only) — lower is better.
+  // crossings: wire-over-part crossings, for the guarded final pick —
+  // compare on (quality, crossings, score); lets the editor pick across
+  // workers without letting crossings trade up.
+  | { type: "done"; result: AutoLayoutResult; score?: number; crossings?: number };
 
 const ctx = self as unknown as {
   postMessage(msg: AutoLayoutWorkerMessage): void;
@@ -38,7 +43,7 @@ const ctx = self as unknown as {
 };
 
 ctx.onmessage = (e) => {
-  const { board, components, componentDefs, nets, netAssignments, engine, options, spanOverrides, clearanceOverrides, tidyGrowth, permutationIndex } = e.data;
+  const { board, components, componentDefs, nets, netAssignments, engine, options, spanOverrides, clearanceOverrides, tidyGrowth, drilledCutsOnly, permutationIndex } = e.data;
   const onProgress = (progress: AutoLayoutProgress) => {
     ctx.postMessage({ type: "progress", progress });
   };
@@ -56,13 +61,22 @@ ctx.onmessage = (e) => {
       })
     : componentDefs;
   if (engine === "v1") {
-    const result = computeAutoLayout(board, components, defs, nets, netAssignments, onProgress, options);
+    const result = computeAutoLayout(board, components, defs, nets, netAssignments, onProgress, {
+      ...options,
+      ...(drilledCutsOnly ? { drilledCutsOnly: true } : {}),
+    });
     ctx.postMessage({ type: "done", result });
     return;
   }
   const result = computeAutoLayout2(board, components, defs, nets, netAssignments, onProgress, {
     ...(tidyGrowth !== undefined ? { tidyGrowth } : {}),
     ...(permutationIndex !== undefined ? { permutationIndex } : {}),
+    ...(drilledCutsOnly ? { drilledCutsOnly: true } : {}),
   });
-  ctx.postMessage({ type: "done", result, score: rateResult(result, board, components, defs) });
+  ctx.postMessage({
+    type: "done",
+    result,
+    score: rateResult(result, board, components, defs, drilledCutsOnly),
+    crossings: wireMessScore(result, components, defs).crossings,
+  });
 };

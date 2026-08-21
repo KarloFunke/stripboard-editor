@@ -5,15 +5,16 @@ import { BoardPosition, ComponentDef } from "@/types";
 export const FLEXIBLE_CORRIDOR_RADIUS = 0.5;
 
 // Fat-body clearance between two flexible components: near the pins the part
-// is only a thin lead, so the body segment is shrunk at each end. Each part
-// carries a clearance halo around its shrunk segment; a pair's required
-// distance is the contact minimum plus both halos. The default halo
-// reproduces the classic rule (one free row/col between parallel bodies:
-// 1 + 0.5 + 0.5 = 2) while a type set to 0 in the project config may sit
-// adjacent. End-to-end stacking stays legal either way.
+// is only a thin lead, so the body segment is shrunk at each end. Clearance
+// is a whole number of free board lines the part keeps next to its body,
+// against neighbours of every kind: 0 = may sit directly adjacent, 1 = one
+// free row/column between (the classic rule for resistors, and the
+// default). A pair shares the moat, so the requirement between two parts is
+// the larger of their two clearances, not the sum. End-to-end stacking
+// stays legal either way.
 const BODY_END_SHRINK = 0.5;
 const BODY_CONTACT_SEPARATION = 1;
-export const DEFAULT_CLEARANCE = 0.5;
+export const DEFAULT_CLEARANCE = 1;
 
 // Pin-to-pin span limits in hole pitches (Euclidean). Axial parts with a fat
 // body (resistors, inductors) can't sit closer than 4 (5 holes end to end);
@@ -32,11 +33,11 @@ export function spanLimits(def: ComponentDef): { min: number; max: number } {
 }
 
 /**
- * The clearance halo (hole pitches) around this part's body, from the
- * project's per-type config, defaulting to the classic half-hole halo.
- * Rigid parts always use 0: their footprint is their true body. Halos are
- * additive per pair, so a padded part keeps its extra air from an unpadded
- * neighbour too.
+ * The clearance (free board lines next to the body) of this part, from the
+ * project's per-type config. Flexible parts default to one free line; rigid
+ * parts are always 0 — their footprint IS their true body (whoever defined
+ * the footprint sized it to the real plastic, overhang included), so two
+ * rigid parts may sit directly against one another.
  */
 export function clearanceOf(def: ComponentDef): number {
   return def.flexible ? def.clearance ?? DEFAULT_CLEARANCE : 0;
@@ -46,10 +47,11 @@ export function clearanceOf(def: ComponentDef): number {
 // dearer than straight, so diagonals only appear when they save real work.
 export const DIAGONAL_PENALTY = 3;
 
-// Clearance between a flexible part's body and a rigid component's footprint
-// rectangle. Below 0.5 so a part running parallel one column beside a DIP's
-// pin column stays legal, while anything over the footprint is rejected.
-const RIGID_BODY_CLEARANCE = 0.4;
+// A flexible body physically fills half a pitch each side of its centerline;
+// a rigid body likewise fills half a pitch past its footprint rect's outer
+// holes. Contact is therefore at centerline-to-rect distance 1 — clearance
+// counts its free lines on top of that.
+const FLEX_BODY_HALF_WIDTH = 0.5;
 
 interface Pt {
   row: number;
@@ -159,13 +161,14 @@ function shrinkSegment(p1: Pt, p2: Pt, amount: number): [Pt, Pt] {
   ];
 }
 
-/** Fat-body clearance check between two flexible parts. `clrSum` is the sum
- * of both parts' clearance halos on top of the contact minimum; the default
- * is two standard halos, i.e. the classic 2-pitch separation. */
-export function bodiesTooClose(a1: Pt, a2: Pt, b1: Pt, b2: Pt, clrSum = 2 * DEFAULT_CLEARANCE): boolean {
+/** Fat-body clearance check between two flexible parts. `spacing` is the
+ * free lines the pair must keep — the LARGER of the two parts' clearances,
+ * since a shared moat serves both. The default reproduces the classic rule:
+ * parallel bodies two pitches apart, one free line between. */
+export function bodiesTooClose(a1: Pt, a2: Pt, b1: Pt, b2: Pt, spacing = DEFAULT_CLEARANCE): boolean {
   const [sa1, sa2] = shrinkSegment(a1, a2, BODY_END_SHRINK);
   const [sb1, sb2] = shrinkSegment(b1, b2, BODY_END_SHRINK);
-  return segmentSegmentDistance(sa1, sa2, sb1, sb2) < BODY_CONTACT_SEPARATION + clrSum - 1e-6;
+  return segmentSegmentDistance(sa1, sa2, sb1, sb2) < BODY_CONTACT_SEPARATION + spacing - 1e-6;
 }
 
 /** Closed-interval rectangle overlap, with optional slack per axis. */
@@ -195,6 +198,65 @@ export interface FootprintRect {
 export const WIRE_OFFAXIS_FREE = 1;
 export const WIRE_OFFAXIS_RATE = 2;
 export const WIRE_CROSS_EXTRA = 8;
+
+// ── Wire stacking (parallel runs sharing one channel) ──
+// Wires running collinearly on top of each other are physically fine
+// (insulation) and a standard human technique, but every added lane makes
+// the channel harder to solder and to read. Pricing escalates with the
+// stack depth the new wire lands in: the second wire in a channel is still
+// cheaper than a slant of a few holes, the third only wins over a real
+// detour, and a fourth is out — no channel may carry more than
+// WIRE_STACK_MAX wires. The hard cap softens to WIRE_STACK_RESCUE per extra
+// lane only when a net cannot complete any other way (completeness beats
+// the cap, matching the shared-joint rescue).
+export const WIRE_STACK_MAX = 3;
+export const WIRE_STACK_PRICES = [0, 4, 10];
+export const WIRE_STACK_RESCUE = 1000;
+
+/**
+ * The deepest stack a wire from `from` to `to` would join: the maximum
+ * number of existing wires covering any single point of it collinearly.
+ * Pairwise overlap counts overstate a long wire that meets two disjoint
+ * stacks; the sweep below prices the true worst point.
+ */
+export function wireStackDepth(
+  from: Pt,
+  to: Pt,
+  wires: { from: Pt; to: Pt }[]
+): number {
+  const dr = to.row - from.row;
+  const dc = to.col - from.col;
+  const along = (p: Pt) => p.row * dr + p.col * dc;
+  const aMin = Math.min(along(from), along(to));
+  const aMax = Math.max(along(from), along(to));
+  // Overlap intervals along the wire's own line, then an endpoint sweep
+  const events: { x: number; d: number }[] = [];
+  for (const w of wires) {
+    if (!segmentsOverlapCollinear(from, to, w.from, w.to)) continue;
+    const bMin = Math.max(aMin, Math.min(along(w.from), along(w.to)));
+    const bMax = Math.min(aMax, Math.max(along(w.from), along(w.to)));
+    events.push({ x: bMin, d: 1 }, { x: bMax, d: -1 });
+  }
+  if (events.length === 0) return 0;
+  events.sort((a, b) => a.x - b.x || b.d - a.d);
+  let depth = 0;
+  let max = 0;
+  for (const e of events) {
+    depth += e.d;
+    if (depth > max) max = depth;
+  }
+  return max;
+}
+
+/**
+ * Extra effective length a wire pays for joining a stack of `depth`
+ * existing wires. Beyond the cap: Infinity normally (the candidate is
+ * rejected), the rescue rate when completing the net has no alternative.
+ */
+export function wireStackPenalty(depth: number, rescue = false): number {
+  if (depth < WIRE_STACK_PRICES.length) return WIRE_STACK_PRICES[depth];
+  return rescue ? WIRE_STACK_RESCUE * (depth - WIRE_STACK_PRICES.length + 1) : Infinity;
+}
 
 export interface WireObstacles {
   rects: FootprintRect[];
@@ -334,15 +396,20 @@ export class WireObstacleIndex {
 
 /**
  * Whether a flexible part's body (pin-to-pin segment minus the thin lead
- * ends) enters a rigid component's footprint rectangle. This is a true
+ * ends) enters a rigid component's footprint rectangle or the free lines
+ * its clearance demands next to it. `spacing` is the flexible part's own
+ * clearance (rigid parts demand none). The rect is credited half a pitch —
+ * plastic reaches at most to its outer cells' edges — so at the default a
+ * body running parallel one column beside the footprint is exactly too
+ * close (no free column), two columns away keeps its one free column, and
+ * a part standing END-ON with its lead in the neighbouring column stays
+ * legal, mirroring flex-to-flex end-to-end stacking. This is a true
  * geometric test: hole-based corridor checks miss diagonals that thread
  * between grid points.
  */
-export function bodyIntersectsRect(p1: Pt, p2: Pt, rect: FootprintRect, clr = DEFAULT_CLEARANCE): boolean {
+export function bodyIntersectsRect(p1: Pt, p2: Pt, rect: FootprintRect, spacing = DEFAULT_CLEARANCE): boolean {
   const [s1, s2] = shrinkSegment(p1, p2, BODY_END_SHRINK);
-  // Anchored so the default halo gives exactly RIGID_BODY_CLEARANCE; a halo
-  // of 0 lets the body touch the footprint edge (never enter it).
-  const clearance = Math.max(0, RIGID_BODY_CLEARANCE + clr - DEFAULT_CLEARANCE);
+  const clearance = spacing + FLEX_BODY_HALF_WIDTH - 1e-6;
   const minRow = rect.minRow - clearance;
   const maxRow = rect.maxRow + clearance;
   const minCol = rect.minCol - clearance;

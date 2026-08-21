@@ -70,7 +70,14 @@ export function deriveCompletion(
   // from a cached baseline), relays are skipped (they never fix
   // starvation, only tidiness), and the cosmetic drill upgrade plus the
   // final verification recompute are dropped.
-  opts?: { allowSharedJoints?: boolean; repairSlants?: boolean; evalNets?: Set<string> }
+  // drilledCutsOnly makes the router sever donated relay tails by drilling
+  // out a tail hole instead of cutting beside it; the knife cuts that
+  // remain after the upgrade below are priced by the caller. Running the
+  // upgrade BEFORE routing was measured over the corpus and rejected: the
+  // drills it can take early either cost a free hole the router needed
+  // (0.35 knife cuts saved per board against 26 off-axis wires and 16
+  // crossings) or are ones this pass takes anyway.
+  opts?: { allowSharedJoints?: boolean; repairSlants?: boolean; evalNets?: Set<string>; drilledCutsOnly?: boolean }
 ): CompletionPlan {
   const cutIssues: string[] = [];
   const pins = collectBoardPins(board, components, componentDefs, netAssignments);
@@ -107,7 +114,7 @@ export function deriveCompletion(
     cuts: Cut[];
     segments: StripSegment[];
     wires: { from: BoardPosition; to: BoardPosition }[];
-    extraCuts: { row: number; col: number }[];
+    extraCuts: Cut[];
     wireMess: number;
     sharedJoints: number;
     wireIssues: string[];
@@ -125,7 +132,8 @@ export function deriveCompletion(
     const { wires, extraCuts, wireMess, sharedJoints } = deriveWires(
       segments, connectivity, routeNets, pins, occupied, board.wires, reserveNets, obstacleIndex, wireIssues, starvedNetIds, starvedPinPositions,
       opts?.allowSharedJoints ?? false,
-      opts?.evalNets !== undefined
+      opts?.evalNets !== undefined,
+      opts?.drilledCutsOnly ?? false
     );
     return { cuts: cutsTry, segments, wires, extraCuts, wireMess, sharedJoints, wireIssues, starvedNetIds, starvedPinPositions };
   };
@@ -173,6 +181,15 @@ export function deriveCompletion(
           for (let g = gLo; g <= gHi; g++) if (g !== cut.col) gs.push(g);
           gs.sort((a, b) => Math.abs(a - cut.col) - Math.abs(b - cut.col));
           for (const g of gs.slice(0, 7)) {
+            // A hole cut's col IS a hole: it may not land on a pin or on an
+            // endpoint of a caller-fixed wire (derived wires re-route).
+            if (cut.kind === "hole" &&
+                ((pinsByRow.get(cut.row) ?? []).includes(g) ||
+                  board.wires.some((w) =>
+                    (w.from.row === cut.row && w.from.col === g) ||
+                    (w.to.row === cut.row && w.to.col === g)))) {
+              continue;
+            }
             if (budget-- <= 0) break outer;
             const cutsTry = attempt.cuts.map((c) => (c === cut ? { ...c, col: g } : c));
             const t = routeWith(cutsTry);
@@ -212,12 +229,15 @@ export function deriveCompletion(
   const noDrill = new Set<string>();
   for (const p of pins) noDrill.add(holeKey(p.row, p.col));
   for (const c of board.cuts) if (c.kind === "hole") noDrill.add(holeKey(c.row, c.col));
+  // Relay tails severed by a drill own that hole; no other cut may claim it
+  for (const c of extraCuts) if (c.kind === "hole") noDrill.add(holeKey(c.row, c.col));
   for (const w of [...board.wires, ...wires]) {
     noDrill.add(holeKey(w.from.row, w.from.col));
     noDrill.add(holeKey(w.to.row, w.to.col));
   }
-  // Tail-severing cuts stay between-cuts: a drilled flank hole inside the
-  // donated tail could sever the relay copper between its two hop wires.
+  // Tail-severing cuts keep the kind the router chose: a between-cut by
+  // default (a drilled flank could sever the relay copper between its two
+  // hop wires), a drill on the sacrificed tail hole in drilled-cuts mode.
   const finalCuts = [...upgradeCutsToDrills(attempt.cuts, segments, occupied, noDrill, reserveNets), ...extraCuts];
 
   const finalBoard: Board = {
@@ -242,6 +262,37 @@ export function deriveCompletion(
 }
 
 /**
+ * Drilled-cuts-only final pass. Cut alignment slides cuts inside their dead
+ * zones; a between-cut that was boxed in by wire endpoints at its original
+ * position may have an open, sacrificable flank at its slid one. Rebuild
+ * segments and occupancy for the finished board and try the drill upgrade
+ * once more — wires stay exactly as routed, and drilling a flank hole never
+ * changes which used holes share copper.
+ */
+export function drillRemainingCuts(
+  board: Board,
+  components: Component[],
+  componentDefs: ComponentDef[],
+  netAssignments: NetAssignment[],
+  cuts: Cut[],
+  wires: { from: BoardPosition; to: BoardPosition }[]
+): Cut[] {
+  if (!cuts.some((c) => c.kind !== "hole")) return cuts;
+  const pins = collectBoardPins(board, components, componentDefs, netAssignments);
+  const occupied = collectOccupiedHoles(board, components, componentDefs, pins);
+  const fullBoard: Board = { ...board, cuts: [...board.cuts, ...cuts] };
+  const segments = computeStripSegments(fullBoard, components, componentDefs, netAssignments);
+  const noDrill = new Set<string>();
+  for (const p of pins) noDrill.add(holeKey(p.row, p.col));
+  for (const c of fullBoard.cuts) if (c.kind === "hole") noDrill.add(holeKey(c.row, c.col));
+  for (const w of [...board.wires, ...wires]) {
+    noDrill.add(holeKey(w.from.row, w.from.col));
+    noDrill.add(holeKey(w.to.row, w.to.col));
+  }
+  return upgradeCutsToDrills(cuts, segments, occupied, noDrill, new Set());
+}
+
+/**
  * User-facing wrapper around deriveCompletion: nothing is placed for
  * unplaced components; leftovers are reported as readable issues.
  */
@@ -250,9 +301,10 @@ export function computeAutoFinish(
   components: Component[],
   componentDefs: ComponentDef[],
   nets: Net[],
-  netAssignments: NetAssignment[]
+  netAssignments: NetAssignment[],
+  drilledCutsOnly = false
 ): AutoFinishResult {
-  const plan = deriveCompletion(board, components, componentDefs, nets, netAssignments, { repairSlants: true });
+  const plan = deriveCompletion(board, components, componentDefs, nets, netAssignments, { repairSlants: true, drilledCutsOnly });
   const issues = [...plan.issues];
 
   if (plan.unresolvedConflicts > 0) {
