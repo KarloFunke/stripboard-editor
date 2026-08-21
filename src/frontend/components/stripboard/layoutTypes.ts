@@ -3,12 +3,32 @@ import { BoardPosition, Cut } from "@/types";
 // Shared contract between the two layout engines (autoLayout = v1,
 // autoLayout2 = v2), the worker transport, and the store's apply logic.
 
-// The shipped default for the portfolio search: keep solving alternative
-// input orderings for this many seconds, on half the machine's cores. An
-// explicit 0 in the project turns the portfolio off.
-export const DEFAULT_PERM_TIME_BUDGET = 5;
+// Published iteration of the v2 ("strip-first") layouter, recorded on every
+// applied result so stored boards can be grouped by the solver that made
+// them. Bump on any change that alters the layouts users get.
+export const LAYOUT_VERSION = "2.1.3";
+
+// The shipped default for the portfolio search: solve this many alternative
+// input orderings (boards) and apply the best, on three quarters of the
+// machine's cores. A count of 1 turns the portfolio off (single solve). A
+// fixed count is machine-independent, unlike the earlier time budget: the
+// same count always solves the same set of orderings.
+//
+// The default is size-aware, aiming to keep a first click under ~30 s on an
+// average machine (assumed 8 cores / 6 workers, 3x slower than the corpus
+// benchmark box — which cancels the benchmark's ~3x contention inflation,
+// so sweep times read as average-solo times). 10 boards = two waves of 6,
+// so the corpus timing bands give: up to 30 parts ~2x(p90 ~17 s) stays near
+// the aim; 31-40 parts drop to one wave of 3 (p90 ~27 s); beyond 40 even a
+// single solve runs ~23 s median, so the portfolio waits for the user to
+// opt in via the slider.
+export function defaultPermBoards(parts: number): number {
+  if (parts > 40) return 1;
+  if (parts > 30) return 3;
+  return 10;
+}
 export function defaultPermWorkers(cores: number): number {
-  return Math.max(1, Math.floor(cores / 2));
+  return Math.max(1, Math.floor((cores * 3) / 4));
 }
 
 export interface LayoutPlacement {

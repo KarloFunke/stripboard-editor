@@ -2,7 +2,7 @@ import { holeKey, pinKey } from "../keys";
 import { Component, ComponentDef } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { getRotatedPinPositions, getComponentBounds } from "../boardLayout";
-import { clearanceOf } from "../flexGeometry";
+import { bodiesTooClose, clearanceOf, segmentsIntersect } from "../flexGeometry";
 import {
   ClusterAnalysis, DimLimits, Flex, Rot, Tile, TilePlan,
   allowedDrows,
@@ -15,16 +15,32 @@ export function packTile(analysis: ClusterAnalysis, plan: TilePlan, limits: DimL
   const info = (key: string) => plan.keyInfo.get(key);
 
   // ── Column packing (diagonals take their extra columns outward) ──
-  // Margin per pair = both parts' clearance halos, rounded up to the grid:
-  // two default halos (0.5 + 0.5) give the classic one free column between
-  // parallel bodies; a pair of 0-halo parts may sit in adjacent columns.
+  // Margin per pair = the larger of the two parts' clearances (free columns
+  // next to the body, a shared moat): the default 1 gives the classic one
+  // free column between parallel bodies; a pair of 0-clearance parts may
+  // sit in adjacent columns.
   interface Usage { colLo: number; colHi: number; top: number; bot: number; clr: number }
   const colUsage: Usage[] = [];
   const overlaps = (cLo: number, cHi: number, top: number, bot: number, clr = 0) =>
     colUsage.some((u) => {
-      const m = Math.ceil(clr + u.clr - 1e-6);
+      const m = Math.max(clr, u.clr);
       return cLo <= u.colHi + m && cHi >= u.colLo - m && !(top > u.bot || bot < u.top);
     });
+  // The box test margins columns only — correct for vertical drops, blind
+  // to bodies lying ALONG a row, whose moat faces the neighbouring rows
+  // (two flat resistors in adjacent rows slipped straight through it). The
+  // exact pairwise geometry is orientation-aware and also keeps end-to-end
+  // stacking legal, so every flex placement passes through it too.
+  const flexGeoms: { p1: { row: number; col: number }; p2: { row: number; col: number }; clr: number }[] = [];
+  const flexBodyOk = (r1: number, c1: number, r2: number, c2: number, clr: number) => {
+    const p1 = { row: r1, col: c1 };
+    const p2 = { row: r2, col: c2 };
+    return !flexGeoms.some(
+      (g) =>
+        segmentsIntersect(p1, p2, g.p1, g.p2) ||
+        bodiesTooClose(p1, p2, g.p1, g.p2, Math.max(clr, g.clr))
+    );
+  };
 
   // Claims keep left-to-right segment order on shared rows: a hole may not
   // land left of a lower-ranked segment's holes (no cut could separate them).
@@ -132,7 +148,13 @@ export function packTile(analysis: ClusterAnalysis, plan: TilePlan, limits: DimL
         const hi = c + rr.box.maxCol + 1;
         const rLo = lo - resL;
         const rHi = hi + resR;
-        const blocked = (u: Usage) => rLo <= u.colHi && rHi >= u.colLo && !(top > u.bot || bot < u.top);
+        // The box is already expanded by 1, which covers a neighbour's
+        // default clearance of one free line; only larger clearances add
+        // their excess, so defaults leave the packing untouched.
+        const blocked = (u: Usage) => {
+          const m = Math.max(0, u.clr - 1);
+          return rLo <= u.colHi + m && rHi >= u.colLo - m && !(top - m > u.bot || bot + m < u.top);
+        };
         if (colUsage.some(blocked) || (useRes && reservations.some(blocked))) continue;
         let ok = true;
         for (let ci = 0; ci < rr.pinClaims.length; ci++) {
@@ -253,6 +275,7 @@ export function packTile(analysis: ClusterAnalysis, plan: TilePlan, limits: DimL
       const cHi = Math.max(c1, c2);
       if (cLo < colMin || cHi > colMax) continue;
       if (overlaps(cLo, cHi, top, bot, clr)) continue;
+      if (!flexBodyOk(rA, c1, rB, c2, clr)) continue;
       if (!claimOk(rA, c1, a) || !claimOk(rB, c2, b)) continue;
       if (rA === rB && a !== b && !rankInfo(a) && !rankInfo(b)) {
         // this part fixes the segment order of its shared row
@@ -262,6 +285,7 @@ export function packTile(analysis: ClusterAnalysis, plan: TilePlan, limits: DimL
         dynBase += 4;
       }
       colUsage.push({ colLo: cLo, colHi: cHi, top, bot, clr });
+      flexGeoms.push({ p1: { row: rA, col: c1 }, p2: { row: rB, col: c2 }, clr });
       addClaim(rA, c1, a);
       addClaim(rB, c2, b);
       placements.push({ comp: f.comp, row1: rA, col1: c1, row2: rB, col2: c2 });
@@ -360,7 +384,10 @@ export function packTile(analysis: ClusterAnalysis, plan: TilePlan, limits: DimL
       let c = start;
       for (let j = 0; j <= 40; j++, c += dir) {
         if (c < colMin || c > colMax) continue;
-        if (colUsage.some((u) => c >= u.colLo && c <= u.colHi && atRow >= u.top && atRow <= u.bot)) continue;
+        // A tap is a rigid hole: neighbours' clearances (their moats) apply
+        if (colUsage.some((u) =>
+          c >= u.colLo - u.clr && c <= u.colHi + u.clr && atRow >= u.top - u.clr && atRow <= u.bot + u.clr
+        )) continue;
         if (!claimOk(atRow, c, key)) continue;
         colUsage.push({ colLo: c, colHi: c, top: atRow, bot: atRow, clr: 0 });
         addClaim(atRow, c, key);
@@ -423,8 +450,10 @@ export function packTile(analysis: ClusterAnalysis, plan: TilePlan, limits: DimL
             const top = Math.min(row, r2);
             const bot = Math.max(row, r2);
             if (overlaps(c, c, top, bot, clearanceOf(ft.def))) continue;
+            if (!flexBodyOk(row, c, r2, c, clearanceOf(ft.def))) continue;
             if (!claimOk(row, c, key)) continue;
             colUsage.push({ colLo: c, colHi: c, top, bot, clr: clearanceOf(ft.def) });
+            flexGeoms.push({ p1: { row, col: c }, p2: { row: r2, col: c }, clr: clearanceOf(ft.def) });
             addClaim(row, c, key);
             placements.push(ft.firstAssigned
               ? { comp: ft.comp, row1: row, col1: c, row2: r2, col2: c }

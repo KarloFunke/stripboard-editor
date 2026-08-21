@@ -44,9 +44,9 @@ export interface StaticObstacles {
   // additionally drilled holes and existing corridors: no endpoint may land
   // there, but a new corridor may pass over
   blocked: Set<string>;
-  // placed flexible bodies with their clearance halos
+  // placed flexible bodies with their clearances
   flexBodies: { p1: BoardPosition; p2: BoardPosition; clr: number }[];
-  // rigid footprints: no flexible body may cross
+  // rigid footprints: no flexible body may cross or crowd them
   rigidRects: FootprintRect[];
 }
 
@@ -59,7 +59,7 @@ export function collectStaticObstacles(
   const hard = new Set<string>();
   const blocked = new Set<string>();
   const flexBodies: StaticObstacles["flexBodies"] = [];
-  const rigidRects: FootprintRect[] = [];
+  const rigidRects: StaticObstacles["rigidRects"] = [];
 
   for (const comp of components) {
     if (!comp.boardPos || comp.boardExcluded) continue;
@@ -177,7 +177,7 @@ export function computeAutoPlace(
     }
     for (const body of flexBodies) {
       if (segmentsIntersect(p1, p2, body.p1, body.p2)) return false;
-      if (bodiesTooClose(p1, p2, body.p1, body.p2, clr + body.clr)) return false;
+      if (bodiesTooClose(p1, p2, body.p1, body.p2, Math.max(clr, body.clr))) return false;
     }
     return true;
   };

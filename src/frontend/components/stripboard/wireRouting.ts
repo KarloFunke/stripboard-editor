@@ -1,12 +1,13 @@
 import { holeKey } from "./keys";
-import { BoardPosition, Net } from "@/types";
+import { BoardPosition, Cut, Net } from "@/types";
 import { StripSegment } from "./stripSegments";
 import { BoardPin } from "./boardPins";
 import {
   WIRE_OFFAXIS_FREE,
   WIRE_OFFAXIS_RATE,
   WireObstacleIndex,
-  segmentsOverlapCollinear,
+  wireStackDepth,
+  wireStackPenalty,
 } from "./flexGeometry";
 
 // ── Routing cost model ─────────────────────────────────
@@ -22,10 +23,10 @@ const MAX_RELAY_CANDS = 32;
 const PIN_SHARE_PENALTY = 4;
 // Wires running on top of each other are physically fine (insulation)
 // and a standard human technique for parallel runs sharing a column;
-// the editor renders them in separate lanes. Price each overlapped
-// wire below a slant's cost so a free column still wins, a pile-up
-// stays unattractive, and overlap beats going diagonal.
-const WIRE_OVERLAP_RATE = 2;
+// the editor renders them in separate lanes. Depth-priced and capped in
+// flexGeometry (wireStackPenalty): the second wire in a channel still
+// beats a slant, the third only beats a real detour, a fourth is barred
+// unless nothing else completes the net.
 // Relay route: two vertical hops through an unclaimed pin-free strip,
 // competing with the direct wire on the same cost scale. The extra solder
 // joint costs a small flat tax, so a clean direct vertical still wins; a
@@ -75,10 +76,15 @@ export function deriveWires(
   starvedNetIds: string[],
   starvedPinPositions: BoardPosition[],
   allowSharedJoints: boolean,
-  skipRelays = false
+  skipRelays = false,
+  // Drilled-cuts-only mode: a donated tail is severed by DRILLING OUT the
+  // tail hole next to the donor's pins rather than cutting the copper
+  // beside it. The relay runs on the rest of the tail, which stays intact,
+  // so the mode keeps its strongest off-axis repair.
+  drillTailRelays = false
 ): {
   wires: { from: BoardPosition; to: BoardPosition }[];
-  extraCuts: { row: number; col: number }[];
+  extraCuts: Cut[];
   wireMess: number;
   sharedJoints: number;
 } {
@@ -176,11 +182,12 @@ export function deriveWires(
     byCol: Map<number, number[]>;
     // Tail donation only: the severing cut (gap col), the donor group whose
     // free holes shrink by `holes`, and its net
-    cut?: { row: number; col: number };
+    cut?: Cut;
     donorGroup?: number;
     donorNet?: string;
     donorNeedy?: boolean;
   }
+  const pinHoles = new Set(pins.map((p) => holeKey(p.row, p.col)));
   const relayCands: RelayCand[] = [];
   groups.forEach((_, gi) => {
     if (skipRelays || groupPins.has(gi)) return;
@@ -202,18 +209,36 @@ export function deriveWires(
     const pinMin = Math.min(...segPins.map((p) => p.col));
     const pinMax = Math.max(...segPins.map((p) => p.col));
     for (const side of ["L", "R"] as const) {
+      // The severing cut: normally the copper gap beside the donor's outer
+      // pin; in drilled mode the tail hole on that side, sacrificed so the
+      // break is a drill. The sacrificed hole leaves the usable tail.
+      const drillCol = side === "L" ? pinMin - 1 : pinMax + 1;
+      if (drillTailRelays &&
+          (drillCol < seg.startCol || drillCol > seg.endCol ||
+            // a floating (netless) pin can sit on a donor segment, and its
+            // hole must survive
+            pinHoles.has(holeKey(seg.row, drillCol)))) {
+        continue;
+      }
+      const beyond = drillTailRelays ? drillCol : side === "L" ? pinMin : pinMax;
       const tail = free.filter(
         (h) =>
           h.row === seg.row && h.col >= seg.startCol && h.col <= seg.endCol &&
-          (side === "L" ? h.col < pinMin : h.col > pinMax)
+          (side === "L" ? h.col < beyond : h.col > beyond)
       );
       // two distinct columns, or the two hops collapse onto one hole
       if (new Set(tail.map((h) => h.col)).size < 2) continue;
+      // The sacrificed hole counts as consumed (nothing may route to it or
+      // keep it as a spare) but is not offered as a hop endpoint.
+      const holeSet = new Set(tail.map((h) => holeKey(h.row, h.col)));
+      if (drillTailRelays) holeSet.add(holeKey(seg.row, drillCol));
       relayCands.push({
         holes: tail,
-        holeSet: new Set(tail.map((h) => holeKey(h.row, h.col))),
+        holeSet,
         byCol: byColOf(tail),
-        cut: { row: seg.row, col: side === "L" ? pinMin - 1 : pinMax },
+        cut: drillTailRelays
+          ? { row: seg.row, col: drillCol, kind: "hole" as const }
+          : { row: seg.row, col: side === "L" ? pinMin - 1 : pinMax },
         donorGroup: gi,
         donorNet,
         donorNeedy,
@@ -249,7 +274,7 @@ export function deriveWires(
 
   interface RoutePass {
     wires: { from: BoardPosition; to: BoardPosition }[];
-    extraCuts: { row: number; col: number }[]; // cuts severing donated relay tails
+    extraCuts: Cut[]; // cuts severing donated relay tails
     issues: string[];
     starved: string[];
     starvedPins: BoardPosition[];
@@ -296,13 +321,11 @@ export function deriveWires(
       wireEnds.add(holeKey(w.from.row, w.from.col));
       wireEnds.add(holeKey(w.to.row, w.to.col));
     }
-    const overlapPenalty = (from: BoardPosition, to: BoardPosition) => {
-      let n = 0;
-      for (const w of allWires) {
-        if (segmentsOverlapCollinear(from, to, w.from, w.to)) n++;
-      }
-      return n * WIRE_OVERLAP_RATE;
-    };
+    // Rescue mode (per wire, see below): allow over-cap stacks at the
+    // rescue rate when nothing under the cap can complete the net.
+    let allowDeepStacks = false;
+    const overlapPenalty = (from: BoardPosition, to: BoardPosition) =>
+      wireStackPenalty(wireStackDepth(from, to, allWires), allowDeepStacks);
 
     for (const net of order) {
       const groupIdxs = netGroupIdxs.get(net.id)!;
@@ -360,6 +383,7 @@ export function deriveWires(
             // over routed wires is the priciest term here.
             if (best && dist + mess > best.cost + 1e-9) return null;
             mess += overlapPenalty(ha, hb);
+            if (!isFinite(mess)) return null; // over the stack cap
             const cost = dist + mess;
             // Tiebreak: prefer straight vertical jumpers
             const better =
@@ -417,6 +441,7 @@ export function deriveWires(
                   (sharedPinPen.get(holeKey(ra, col)) ?? 0) +
                   (sharedPinPen.get(holeKey(rb, col)) ?? 0) +
                   overlapPenalty(from, to);
+                if (!isFinite(mess)) continue; // over the stack cap
                 const cost = d + mess;
                 if (!best || cost < best.cost - 1e-9) best = { from, to, cost, mess };
               }
@@ -468,14 +493,25 @@ export function deriveWires(
         // Relays exist to avoid messy wires, not to shorten clean ones:
         // when the direct choice is a clean vertical, skip the (expensive)
         // relay search entirely.
-        const best = findBest();
         // A relay may only replace a messy direct wire when its two hops
         // stay comparable in length — a huge detour to save a slant is a
         // worse build than the slant (with no direct option, anything goes).
-        const maxHops = best
-          ? Math.hypot(best.from.row - best.to.row, best.from.col - best.to.col) * 1.5 + 4
-          : Infinity;
-        const relay = !best || best.mess > 0.25 ? findRelayBest(maxHops) : null;
+        const search = (): { best: WireChoice | null; relay: RelayChoice | null } => {
+          const best = findBest();
+          const maxHops = best
+            ? Math.hypot(best.from.row - best.to.row, best.from.col - best.to.col) * 1.5 + 4
+            : Infinity;
+          const relay = !best || best.mess > 0.25 ? findRelayBest(maxHops) : null;
+          return { best, relay };
+        };
+        let { best, relay } = search();
+        if (!best && !relay) {
+          // Everything under the stack cap is taken: an over-cap stack at
+          // the rescue rate still beats starving the net.
+          allowDeepStacks = true;
+          ({ best, relay } = search());
+          allowDeepStacks = false;
+        }
         if (!best && !relay) {
           pass.issues.push(`Net "${net.name}": no free hole to attach a link wire`);
           pass.starved.push(net.id);

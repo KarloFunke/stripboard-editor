@@ -14,6 +14,7 @@ const updates: { date: string; items: string[]; link?: { href: string; lead: str
   {
     date: "2026-08-21",
     items: [
+      "The auto layouter now keeps proper clearance around every part, and can be set to only use drilled cuts instead of cutting the copper between two holes.",
       "Projects can now carry a description and notes.",
     ],
   },

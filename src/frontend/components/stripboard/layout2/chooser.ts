@@ -1,5 +1,6 @@
 import { Board, Component, ComponentDef, Net, NetAssignment } from "@/types";
 import { CompletionPlan, deriveCompletion } from "../autoFinish";
+import { AREA_WEIGHT, avoidableBetweenCuts } from "./tidyScore";
 import { DimLimits } from "./tileModel";
 
 // A routed board candidate: virtual component set, board size, and the
@@ -44,7 +45,11 @@ export class Chooser {
     private netAssignments: NetAssignment[],
     // Pin-joint sharing is a locked-layout rescue; see deriveCompletion
     private allowSharedJoints: boolean,
-    private limits: DimLimits
+    private limits: DimLimits,
+    // Drilled-cuts-only preference: each cut the drill upgrade could not
+    // absorb is priced like a slanted wire (one board line), so layouts
+    // that leave room to drill win without making between-cuts a defect.
+    private drilledCutsOnly = false
   ) {}
 
   // Ribbon boards read badly even at equal area: beyond maxDim = 2·minDim,
@@ -70,11 +75,15 @@ export class Chooser {
   }
 
   private cost(c: Candidate): number {
+    const betweenCuts = this.drilledCutsOnly
+      ? avoidableBetweenCuts(c.plan.cuts, c.virtual, this.componentDefs)
+      : 0;
     return (
-      (this.limits.maxRows ? Math.max(this.limits.maxRows, c.rows) : c.rows) *
+      AREA_WEIGHT *
+        (this.limits.maxRows ? Math.max(this.limits.maxRows, c.rows) : c.rows) *
         (this.limits.maxCols ? Math.max(this.limits.maxCols, c.cols) : c.cols) +
       c.plan.wireMess + this.wireLenOf(c.plan) + this.aspectOver(c.rows, c.cols) +
-      Math.max(c.rows, c.cols) * this.slantsOf(c.plan)
+      Math.max(c.rows, c.cols) * (this.slantsOf(c.plan) + betweenCuts)
     );
   }
 
@@ -129,6 +138,7 @@ export class Chooser {
     const plan = deriveCompletion(tryBoard, virtual, this.componentDefs, this.nets, this.netAssignments, {
       allowSharedJoints: this.allowSharedJoints,
       ...(repair ? { repairSlants: true } : {}),
+      ...(this.drilledCutsOnly ? { drilledCutsOnly: true } : {}),
     });
     const overCap =
       (this.limits.maxRows ? Math.max(0, rows - this.limits.maxRows) : 0) +

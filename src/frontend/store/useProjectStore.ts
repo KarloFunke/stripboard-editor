@@ -21,7 +21,7 @@ import { getRotatedPinPositions } from "@/components/schematic/SymbolRenderer";
 import { pointKey } from "@/utils/schematicConstants";
 import { createFootprintSymbol, registerCustomSymbol } from "@/data/symbolDefs";
 import { computeAutoFinish, AutoFinishResult } from "@/components/stripboard/autoFinish";
-import { AutoLayoutResult } from "@/components/stripboard/layoutTypes";
+import { AutoLayoutResult, LAYOUT_VERSION } from "@/components/stripboard/layoutTypes";
 
 function generateId(): string {
   return crypto.randomUUID();
@@ -100,12 +100,14 @@ interface ProjectActions {
   setBoardDimLock: (dim: "rows" | "cols", locked: boolean) => void;
   // Set (or clear with null) the auto-layout span range for a flexible def
   setSpanOverride: (defId: string, range: { min: number; max: number } | null) => void;
-  // Set (or reset to default with null) the auto-layout clearance halo for a
-  // flexible def; an explicit 0 allows adjacent placement
+  // Set (or reset to default with null) the auto-layout clearance (free
+  // board lines) for a flexible def; an explicit 0 allows adjacent placement
   setClearanceOverride: (defId: string, clearance: number | null) => void;
   // Toggle the tidy-wires second pass (on by default)
   setTidyWires: (value: boolean) => void;
-  setPermTimeBudget: (seconds: number) => void;
+  // Toggle drilled-cuts-only mode (off by default)
+  setDrilledCutsOnly: (value: boolean) => void;
+  setPermBoards: (n: number) => void;
   setPermWorkers: (n: number) => void;
   // Insert a blank row/column at `at` (0-based): everything at or beyond it
   // shifts by one line. A rigid part whose footprint straddles the line
@@ -118,7 +120,7 @@ interface ProjectActions {
   // Derive and apply the cuts/wires needed to complete the current placement
   autoFinishBoard: () => AutoFinishResult;
   // Apply an auto-layout result computed in the worker (placements + regenerated cuts/wires)
-  applyAutoLayout: (result: AutoLayoutResult, meta?: { budget: number; orderings: number }) => void;
+  applyAutoLayout: (result: AutoLayoutResult, meta?: { boards: number; orderings: number; drilled: boolean }) => void;
 
   // UI state
 
@@ -326,16 +328,33 @@ function prepareProjectState(data: Project) {
     showValuesOnBoard: data.showValuesOnBoard ?? false,
     autoSave: data.autoSave ?? false,
     spanOverrides: data.spanOverrides,
-    clearanceOverrides: data.clearanceOverrides,
+    // Clearance is a whole number of free board lines. Legacy projects
+    // stored fractional halos that ADDED pairwise (default 0.5 each side =
+    // one free line); a fractional value converts to its free-line
+    // equivalent, integers pass through.
+    clearanceOverrides: data.clearanceOverrides
+      ? Object.fromEntries(
+          Object.entries(data.clearanceOverrides).map(([id, v]) => [
+            id,
+            Number.isInteger(v) ? v : Math.round(v * 2),
+          ])
+        )
+      : undefined,
     tidyWires: data.tidyWires,
-    permTimeBudget: data.permTimeBudget,
+    drilledCutsOnly: data.drilledCutsOnly,
+    // Legacy time budgets map onto the board count once: an explicit 0 was
+    // "portfolio off" and stays off (1 board); any other stored time falls
+    // to the shipped default count.
+    permBoards: data.permBoards ?? (data.permTimeBudget === 0 ? 1 : undefined),
     permWorkers: data.permWorkers,
     autoLayoutUsed: data.autoLayoutUsed,
     boardEditsSinceAutoLayout: data.boardEditsSinceAutoLayout,
     autoLayoutRuns: data.autoLayoutRuns,
     autoLayoutLastAt: data.autoLayoutLastAt,
     autoLayoutLastQuality: data.autoLayoutLastQuality,
-    autoLayoutLastBudget: data.autoLayoutLastBudget,
+    autoLayoutVersion: data.autoLayoutVersion,
+    autoLayoutLastBoards: data.autoLayoutLastBoards,
+    autoLayoutLastDrilled: data.autoLayoutLastDrilled,
     autoLayoutLastOrderings: data.autoLayoutLastOrderings,
     boardAddsSinceAutoLayout: data.boardAddsSinceAutoLayout,
     _lastBoardEditSeq: -1,
@@ -1007,7 +1026,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set((s) => {
       const next = { ...(s.clearanceOverrides ?? {}) };
       if (clearance === null) delete next[defId];
-      else next[defId] = Math.max(0, Math.min(5, Math.round(clearance * 4) / 4));
+      else next[defId] = Math.max(0, Math.min(5, Math.round(clearance)));
       return { clearanceOverrides: next, isDirty: true };
     });
   },
@@ -1016,9 +1035,13 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set({ tidyWires: value, isDirty: true });
   },
 
-  setPermTimeBudget: (seconds) => {
-    // 0 is stored explicitly: absent means the shipped default, not off
-    set({ permTimeBudget: Math.max(0, seconds), isDirty: true });
+  setDrilledCutsOnly: (value) => {
+    set({ drilledCutsOnly: value || undefined, isDirty: true });
+  },
+
+  setPermBoards: (n) => {
+    // 1 is stored explicitly: absent means the shipped default, not off
+    set({ permBoards: Math.max(1, Math.round(n)), isDirty: true });
   },
 
   setPermWorkers: (n) => {
@@ -1219,8 +1242,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       autoLayoutRuns: (st.autoLayoutRuns ?? 0) + 1,
       autoLayoutLastAt: new Date().toISOString(),
       autoLayoutLastQuality: result.quality,
-      autoLayoutLastBudget: meta?.budget ?? 0,
+      autoLayoutVersion: LAYOUT_VERSION,
+      autoLayoutLastBoards: meta?.boards ?? 1,
       autoLayoutLastOrderings: meta?.orderings ?? 1,
+      autoLayoutLastDrilled: meta?.drilled ?? false,
       boardEditsSinceAutoLayout: 0,
       boardAddsSinceAutoLayout: 0,
       _lastBoardEditSeq: -1,
@@ -1230,7 +1255,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   autoFinishBoard: () => {
     const s = get();
     const result = computeAutoFinish(
-      s.board, s.components, s.componentDefs, s.nets, s.netAssignments
+      s.board, s.components, s.componentDefs, s.nets, s.netAssignments, s.drilledCutsOnly ?? false
     );
     if (result.cuts.length > 0 || result.wires.length > 0) {
       get().pushSnapshot();
@@ -1350,14 +1375,17 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       spanOverrides: s.spanOverrides,
       clearanceOverrides: s.clearanceOverrides,
       tidyWires: s.tidyWires,
-      permTimeBudget: s.permTimeBudget,
+      drilledCutsOnly: s.drilledCutsOnly,
+      permBoards: s.permBoards,
       permWorkers: s.permWorkers,
       autoLayoutUsed: s.autoLayoutUsed,
       boardEditsSinceAutoLayout: s.boardEditsSinceAutoLayout,
       autoLayoutRuns: s.autoLayoutRuns,
       autoLayoutLastAt: s.autoLayoutLastAt,
       autoLayoutLastQuality: s.autoLayoutLastQuality,
-      autoLayoutLastBudget: s.autoLayoutLastBudget,
+      autoLayoutVersion: s.autoLayoutVersion,
+      autoLayoutLastBoards: s.autoLayoutLastBoards,
+      autoLayoutLastDrilled: s.autoLayoutLastDrilled,
       autoLayoutLastOrderings: s.autoLayoutLastOrderings,
       boardAddsSinceAutoLayout: s.boardAddsSinceAutoLayout,
     };
@@ -1394,14 +1422,17 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     spanOverrides: undefined,
     clearanceOverrides: undefined,
     tidyWires: undefined,
-    permTimeBudget: undefined,
+    drilledCutsOnly: undefined,
+    permBoards: undefined,
     permWorkers: undefined,
     autoLayoutUsed: undefined,
     boardEditsSinceAutoLayout: undefined,
     autoLayoutRuns: undefined,
     autoLayoutLastAt: undefined,
     autoLayoutLastQuality: undefined,
-    autoLayoutLastBudget: undefined,
+    autoLayoutVersion: undefined,
+    autoLayoutLastBoards: undefined,
+    autoLayoutLastDrilled: undefined,
     autoLayoutLastOrderings: undefined,
     boardAddsSinceAutoLayout: undefined,
     _lastBoardEditSeq: -1,

@@ -2,7 +2,7 @@ import { Board, Component, ComponentDef, NetAssignment } from "@/types";
 import { holeKey } from "../keys";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { getComponentBounds } from "../boardLayout";
-import { corridorHoles } from "../flexGeometry";
+import { bodyIntersectsRect, clearanceOf, corridorHoles } from "../flexGeometry";
 import { computeStripSegments } from "../stripSegments";
 import { Candidate, Chooser } from "./chooser";
 
@@ -37,6 +37,9 @@ export function repairSlantWires(
       // — cuts, wire endpoints — is re-derived per candidate anyway
       const phys = new Set<string>();
       const tapAt = new Map<string, Component>();
+      // Flexible bodies with their clearance moats: a tap parked inside one
+      // would violate the body's free lines, which no re-route can fix
+      const moats: { p1: { row: number; col: number }; p2: { row: number; col: number }; clr: number }[] = [];
       for (const c of cur.virtual) {
         if (!c.boardPos || c.boardExcluded) continue;
         const def = resolveComponentDef(c, componentDefs);
@@ -46,6 +49,7 @@ export function repairSlantWires(
           for (const h of corridorHoles(c.boardPos, p2)) phys.add(holeKey(h.row, h.col));
           phys.add(holeKey(c.boardPos.row, c.boardPos.col));
           phys.add(holeKey(p2.row, p2.col));
+          moats.push({ p1: c.boardPos, p2, clr: clearanceOf(def) });
         } else {
           const b = getComponentBounds(def, c.boardPos, c.rotation);
           for (let r = b.minRow; r <= b.maxRow; r++) {
@@ -56,6 +60,10 @@ export function repairSlantWires(
           }
         }
       }
+      const tapSpotOk = (row: number, col: number) =>
+        !moats.some((f) =>
+          bodyIntersectsRect(f.p1, f.p2, { minRow: row, maxRow: row, minCol: col, maxCol: col }, f.clr)
+        );
       let attempts = 0;
       for (const w of offenders) {
         if (!stillCur() || attempts >= 8) break;
@@ -100,11 +108,11 @@ export function repairSlantWires(
               const spots: number[] = [];
               if (left) {
                 for (let z = c2 - 1; z >= 0 && spots.length < movers.length; z--) {
-                  if (!phys.has(holeKey(seg.row, z))) spots.push(z);
+                  if (!phys.has(holeKey(seg.row, z)) && tapSpotOk(seg.row, z)) spots.push(z);
                 }
               } else {
                 for (let z = c2 + 1; z < cur.cols && spots.length < movers.length; z++) {
-                  if (!phys.has(holeKey(seg.row, z))) spots.push(z);
+                  if (!phys.has(holeKey(seg.row, z)) && tapSpotOk(seg.row, z)) spots.push(z);
                 }
               }
               if (spots.length < movers.length) continue;
@@ -130,7 +138,7 @@ export function repairSlantWires(
             // window first, since they cannot re-block it
             const targets: number[] = [];
             for (let t = 0; t < cur.cols; t++) {
-              if (t === col || phys.has(holeKey(seg.row, t))) continue;
+              if (t === col || phys.has(holeKey(seg.row, t)) || !tapSpotOk(seg.row, t)) continue;
               targets.push(t);
             }
             targets.sort(

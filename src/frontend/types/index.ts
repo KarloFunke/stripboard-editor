@@ -29,9 +29,10 @@ export interface ComponentDef {
   // Pin-to-pin span range for flexible parts, in hole pitches. Not part of a
   // stored def: stamped on at solve time from the project's spanOverrides.
   spanOverride?: { min: number; max: number };
-  // Clearance halo around the body in hole pitches (absent = 0.5 default;
-  // 0 allows adjacent placement). Not part of a stored def: stamped on at
-  // solve time from the project's clearanceOverrides.
+  // Clearance: whole free board lines the body keeps to any neighbour
+  // (absent = 1 by default; 0 allows adjacent placement). Not part of a
+  // stored def: stamped on at solve time from the project's
+  // clearanceOverrides. Flexible parts only.
   clearance?: number;
 }
 
@@ -155,21 +156,29 @@ export interface Project {
   // Auto-layout config: per component type (def id), the allowed pin-to-pin
   // span range for flexible parts, replacing the built-in default.
   spanOverrides?: Record<string, { min: number; max: number }>;
-  // Auto-layout config: per component type (def id), the body clearance
-  // halo in hole pitches, replacing the 0.5 default (flexible parts only;
-  // 0 allows adjacent placement).
+  // Auto-layout config: per component type (def id), the clearance as a
+  // whole number of free board lines the body keeps to any neighbour,
+  // replacing the default of 1 (flexible parts only; 0 allows adjacent
+  // placement). Legacy projects stored fractional halos; converted on load.
   clearanceOverrides?: Record<string, number>;
   // Auto-layout config: tidy second pass that trades board area for
   // straighter wires, kept only when it actually is tidier. On by default;
   // false turns it off (halves solve time, may leave messier wires).
   tidyWires?: boolean;
-  // Auto-layout config: permutation search budget. The solver tries as many
-  // deterministic input orderings as fit the time budget (seconds) across
-  // this many parallel workers, and applies the best finished board. Absent
-  // means the shipped default (5 s on half the cores); an explicit 0 turns
-  // the portfolio off (single solve).
-  permTimeBudget?: number;
+  // Auto-layout config: only sever strips by drilling a hole, never by
+  // cutting the copper between two holes (easier to build, may cost board
+  // space). Off by default.
+  drilledCutsOnly?: boolean;
+  // Auto-layout config: portfolio size. The solver solves this many
+  // deterministic input orderings (boards) across permWorkers parallel
+  // workers and applies the best finished one. Absent means the shipped
+  // default (10 boards on three quarters of the cores); 1 turns the
+  // portfolio off (single solve).
+  permBoards?: number;
   permWorkers?: number;
+  // Legacy portfolio config (seconds of solve time); read once on load and
+  // mapped onto permBoards, never written back.
+  permTimeBudget?: number;
   // Layout provenance, for telling human layouts from solver output when
   // benchmarking: whether the auto-layouter was ever applied to this project
   // (sticky, survives undo), and how many structural board edits (one per
@@ -180,14 +189,17 @@ export interface Project {
   // Usage metrics for evaluating solver adoption and perceived result
   // quality: how many runs were applied in total (sticky, like
   // autoLayoutUsed), when the last one was applied, its quality (0 = clean),
-  // the portfolio settings it ran under (budget seconds, orderings
-  // completed; 0/1 = single solve), and how many of the board edits since
+  // which layouter version produced it, the portfolio settings it ran under
+  // (layouts requested and actually solved; 1 = single solve), whether the
+  // drilled-cuts-only option was on, and how many of the board edits since
   // then placed a previously unplaced part — additions to a growing
   // circuit, as opposed to corrections of what the solver built.
   autoLayoutRuns?: number;
   autoLayoutLastAt?: string;
   autoLayoutLastQuality?: number;
-  autoLayoutLastBudget?: number;
+  autoLayoutVersion?: string;
+  autoLayoutLastBoards?: number;
   autoLayoutLastOrderings?: number;
+  autoLayoutLastDrilled?: boolean;
   boardAddsSinceAutoLayout?: number;
 }

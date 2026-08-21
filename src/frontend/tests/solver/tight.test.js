@@ -32,9 +32,12 @@ function buildCircuit() {
 }
 
 // ── Two-DIP circuit at the frontier: needs the retry seed ──
-// 12x10 with two DIP8s is unsolvable for the default anneal seed (one net
+// 12x11 with two DIP8s is unsolvable for the default anneal seed (one net
 // starves) but solves fully with the retry seed — this mirrors the editor's
 // two-wave strategy and is the regression test for multi-seed + repair.
+// (Was 12x10 before clearance became one whole free line against rigid
+// bodies too; the honest rule costs the old frontier board exactly one
+// column.)
 function buildTwoDip() {
   const u1 = rigid("dip8", "U1");
   const u2 = rigid("dip8", "U2");
@@ -60,7 +63,7 @@ function buildTwoDip() {
 {
   const RETRY_SEED = 0xbeef;
   const { components, nets, asg } = buildTwoDip();
-  const board = emptyBoard(12, 10);
+  const board = emptyBoard(12, 11);
   let res = computeAutoLayout(board, components, DEFS, nets, asg);
   if (res.quality > 0) {
     res = computeAutoLayout(board, components, DEFS, nets, asg, undefined, { seed: RETRY_SEED });
@@ -68,10 +71,10 @@ function buildTwoDip() {
   const { board: b2, components: c2 } = applyLayout(board, components, res);
   const v = verify(b2, c2, nets, asg);
   const geo = checkGeometry(b2, c2);
-  console.log(`12x10 two-DIP (with retry seed): incomplete=${v.incomplete.length} conflicts=${v.conflicts} quality=${res.quality}`);
+  console.log(`12x11 two-DIP (with retry seed): incomplete=${v.incomplete.length} conflicts=${v.conflicts} quality=${res.quality}`);
   assert(res.quality === 0 && v.conflicts === 0 && v.incomplete.length === 0,
-    "tight 12x10 two-DIP: solved within two seeds");
-  assert(geo.length === 0, `tight 12x10 two-DIP: geometry clean (${geo.join("; ") || "ok"})`);
+    "tight 12x11 two-DIP: solved within two seeds");
+  assert(geo.length === 0, `tight 12x11 two-DIP: geometry clean (${geo.join("; ") || "ok"})`);
 }
 
 for (const [rows, cols] of [[14, 14], [12, 16], [16, 12], [13, 13]]) {

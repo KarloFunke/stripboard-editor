@@ -104,8 +104,9 @@ export default function AutoLayoutGuidePage() {
             <p className="text-sm text-neutral-700 dark:text-neutral-300 leading-relaxed">
               Several of these stages produce multiple candidate layouts, each of which is scored. A layout rates better when it is
               smaller, uses fewer link wires, keeps wires vertical instead of slanted, and has fewer wires crossing over
-              components or running on top of each other; the strongest candidates are carried forward. The scoring is fully
-              deterministic, so a given circuit always yields the same layout.
+              components or piling up in one channel; the strongest candidates are carried forward. On top of that, the router
+              solves the whole circuit several times over from different starting points and keeps the best finished board. The
+              scoring is fully deterministic, so a given circuit always yields the same layout.
             </p>
           </section>
 
@@ -115,8 +116,10 @@ export default function AutoLayoutGuidePage() {
             <ul className="space-y-2 text-sm text-neutral-700 dark:text-neutral-300">
               <li><strong>Board size.</strong> Lock the rows or columns using the padlock beside their field and the router holds exactly that dimension, so the result fits a board you already own.</li>
               <li><strong>Locked parts.</strong> Fix a part in a chosen position and the router designs the remaining layout around it rather than moving it.</li>
-              <li><strong>Pin spacing and clearance.</strong> Open the settings with the gear beside the <em>Auto-layout</em> button to tune each flexible part type. <em>Pin spacing</em> sets how many holes a part may span from pin to pin, so you can force resistors to stand upright or stretch flat. <em>Clearance</em> is the air the router keeps around a body: the default leaves one free strip beside the part, and lowering it to 0 lets parts of that type sit directly side by side.</li>
+              <li><strong>Pin spacing and clearance.</strong> Open the settings with the gear beside the <em>Auto-layout</em> button to tune each flexible part type. <em>Pin spacing</em> sets how many holes a part may span from pin to pin, so you can force resistors to stand upright or stretch flat. <em>Clearance</em> is the number of free rows or columns the router keeps between a part's body and any neighbour: the default of 1 leaves one free line beside the part, and lowering it to 0 lets parts of that type sit directly side by side.</li>
               <li><strong>Straighter wires.</strong> The second pass from step 6 is the <em>Straighter wires</em> checkbox in the same settings panel. It is on by default; turning it off roughly halves the solve time and accepts whatever wiring the first pass produces.</li>
+              <li><strong>Drilled cuts only.</strong> With this option the router avoids cuts in the copper between two holes wherever it can, severing strips only by drilled-out holes — easier to make accurately, at the price of a slightly larger board. Only directly neighbouring pins of one part still force a knife cut between them.</li>
+              <li><strong>Layouts to solve.</strong> The router solves this many alternative layouts of the circuit and applies the best one. The default adapts to the size of the project so a first run stays quick; raising it can find a better board, with diminishing returns beyond about ten. <em>Parallel solvers</em> sets how many of them are solved at the same time on your machine's CPU cores.</li>
               <li><strong>Physical constraints.</strong> By default the router accounts for the space real parts occupy; it will, for example, leave a strip between two through-hole resistors instead of overlapping their bodies. The clearance setting above is what governs this, so you decide how tightly a given part type packs.</li>
             </ul>
             <p className="text-sm text-neutral-700 dark:text-neutral-300 leading-relaxed mt-3">

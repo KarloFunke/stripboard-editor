@@ -3,7 +3,7 @@
 //
 //   node tests/solver/sweep.js --data <dir> [--locked N] [--tag name] [--ids 1,2,3] [--jobs N] [--tidy 15|30|unlimited] [--perms K]
 //                              [--lock-connectors] [--lock-width] [--only-locked] [--require-connector] [--max-parts N]
-//                              [--relax adaptive|flat] [--beam]
+//                              [--relax adaptive|flat] [--beam] [--no-pick-crossings] [--drilled]
 //
 // Each project runs from a blank board. With --locked N, a second run locks
 // N parts at their human positions (connectors first, then big rigids — the
@@ -33,8 +33,11 @@ let tidyGrowthOpt = 0;
 let permsOpt = 0;
 // Beam search: refine every distinct stage-2 construction, keep the best
 let beamOpt = false;
-// Guarded final pick: fewest crossings first, then the rating
-let pickCrossings = false;
+// Guarded final pick: fewest crossings first, then the rating. ON by
+// default in the solver now; --no-pick-crossings disables it for A/B runs.
+let noPickCrossings = false;
+// Drilled-cuts-only mode (project option): never cut between holes
+let drilledOpt = false;
 // Lock every connector rather than the --locked N head of the priority list
 let lockConnectors = false;
 // Hold the board to the human's column count; rows stay free
@@ -83,13 +86,13 @@ function relaxDefs(defs, comps) {
     const a = flexParts[i];
     for (let j = i + 1; j < flexParts.length; j++) {
       const b = flexParts[j];
-      const sum = flexGeometry.clearanceOf(a.def) + flexGeometry.clearanceOf(b.def);
-      if (!flexGeometry.bodiesTooClose(a.p1, a.p2, b.p1, b.p2, sum)) continue;
-      // Largest halo sum the pair still permits, halved between the two
-      // defs so any assignment respecting both stays legal. Bodies inside
-      // the contact minimum bisect down to 0: best effort.
+      const pairClr = Math.max(flexGeometry.clearanceOf(a.def), flexGeometry.clearanceOf(b.def));
+      if (!flexGeometry.bodiesTooClose(a.p1, a.p2, b.p1, b.p2, pairClr)) continue;
+      // Largest pair clearance (the max of the two defs') this placement
+      // still permits; both defs get lowered to it, so the pair max stays
+      // legal. Bodies inside the contact minimum bisect down to 0.
       let lo = 0;
-      let hi = sum;
+      let hi = pairClr;
       if (!flexGeometry.bodiesTooClose(a.p1, a.p2, b.p1, b.p2, 0)) {
         for (let k = 0; k < 30; k++) {
           const mid = (lo + hi) / 2;
@@ -97,8 +100,8 @@ function relaxDefs(defs, comps) {
           else lo = mid;
         }
       }
-      lowerHalo(a.defId, lo / 2);
-      lowerHalo(b.defId, lo / 2);
+      lowerHalo(a.defId, lo);
+      lowerHalo(b.defId, lo);
     }
     for (const rect of rigidRects) {
       const clr = flexGeometry.clearanceOf(a.def);
@@ -138,7 +141,8 @@ function solve(board, comps, defs, nets, asg) {
       ...(tidyGrowthOpt > 0 ? { tidyGrowth: tidyGrowthOpt } : {}),
       ...(permsOpt > 1 ? { permutations: permsOpt } : {}),
       ...(beamOpt ? { beamSearch: true } : {}),
-      ...(pickCrossings ? { crossingsPick: true } : {}),
+      ...(noPickCrossings ? { crossingsPick: false } : {}),
+      ...(drilledOpt ? { drilledCutsOnly: true } : {}),
     });
   } catch (err) {
     return { error: String(err && err.message ? err.message : err), ms: Date.now() - t0 };
@@ -172,8 +176,18 @@ function solve(board, comps, defs, nets, asg) {
     area: solvedBoard.rows * solvedBoard.cols,
     aspect: aspectOf(solvedBoard.rows, solvedBoard.cols),
     unplaced: m.unplaced,
+    // Beam runs only: how many distinct stage-2 constructions the ladder
+    // offered, i.e. how many complete solves the beam paid for.
+    ...(res.beamPool ? { poolSize: res.beamPool.length } : {}),
     cuts: m.cuts,
+    betweenCuts: res.cuts.reduce((n, c) => n + (c.kind !== "hole" ? 1 : 0), 0),
     wires: m.wires,
+    // Deepest channel stack: wires sharing one line collinearly (self included)
+    maxWireStack: res.wires.reduce(
+      (mx, w, i) =>
+        Math.max(mx, 1 + flexGeometry.wireStackDepth(w.from, w.to, res.wires.filter((_, j) => j !== i))),
+      res.wires.length > 0 ? 1 : 0
+    ),
     wireLen: m.wireLen,
     offAxisWires: m.offAxisWires,
     crossings: m.crossings,
@@ -281,7 +295,8 @@ if (!isMainThread) {
   tidyGrowthOpt = workerData.tidyGrowthOpt ?? 0;
   permsOpt = workerData.permsOpt ?? 0;
   beamOpt = !!workerData.beamOpt;
-  pickCrossings = !!workerData.pickCrossings;
+  noPickCrossings = !!workerData.noPickCrossings;
+  drilledOpt = !!workerData.drilledOpt;
   lockConnectors = !!workerData.lockConnectors;
   lockWidth = !!workerData.lockWidth;
   onlyLocked = !!workerData.onlyLocked;
@@ -310,7 +325,8 @@ const tidyArg = argVal("tidy");
 tidyGrowthOpt = tidyArg === "unlimited" ? Infinity : tidyArg ? Number(tidyArg) / 100 : 0;
 permsOpt = Number(argVal("perms") ?? 0);
 beamOpt = args.includes("--beam");
-pickCrossings = args.includes("--pick-crossings");
+noPickCrossings = args.includes("--no-pick-crossings");
+drilledOpt = args.includes("--drilled");
 lockConnectors = args.includes("--lock-connectors");
 lockWidth = args.includes("--lock-width");
 onlyLocked = args.includes("--only-locked");
@@ -359,7 +375,7 @@ function finish(results) {
   fs.writeFileSync(
     outFile,
     JSON.stringify(
-      { tag, lockedN, lockConnectors, lockWidth, onlyLocked, perms: permsOpt, beam: beamOpt, pickCrossings, maxCluster: maxClusterOpt, relax: relaxMode, date: new Date().toISOString(), results },
+      { tag, lockedN, lockConnectors, lockWidth, onlyLocked, perms: permsOpt, beam: beamOpt, pickCrossings: !noPickCrossings, drilled: drilledOpt, maxCluster: maxClusterOpt, relax: relaxMode, date: new Date().toISOString(), results },
       null,
       1
     )
@@ -427,7 +443,7 @@ if (jobs <= 1) {
   let done = 0;
   for (let w = 0; w < jobs; w++) {
     const worker = new Worker(__filename, {
-      workerData: { dataDir, lockedN, noHarvest, maxClusterOpt, tidyGrowthOpt, permsOpt, beamOpt, pickCrossings, lockConnectors, lockWidth, onlyLocked, relaxMode },
+      workerData: { dataDir, lockedN, noHarvest, maxClusterOpt, tidyGrowthOpt, permsOpt, beamOpt, noPickCrossings, drilledOpt, lockConnectors, lockWidth, onlyLocked, relaxMode },
     });
     worker.on("message", ({ i, row }) => {
       results[i] = row;

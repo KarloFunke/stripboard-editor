@@ -19,6 +19,7 @@ import { computeStripSegments } from "./stripSegments";
 import { computeConnectivity } from "./connectivity";
 import { checkNetCompleteness } from "./netCompleteness";
 import { deriveCompletion } from "./autoFinish";
+import { avoidableBetweenCuts } from "./layout2/tidyScore";
 import { collectStaticObstacles, computeAutoPlace, FlexPlacement } from "./autoPlace";
 import {
   DIAGONAL_PENALTY,
@@ -50,6 +51,8 @@ export interface AutoLayoutOptions {
   // Re-layout only these components; everything else stays exactly as it is
   // (cuts and wires are still regenerated for the whole board)
   onlyIds?: string[];
+  // Only sever strips by drilling holes; see AutoLayout2Options
+  drilledCutsOnly?: boolean;
 }
 
 interface FlexOptimizeResult {
@@ -151,7 +154,8 @@ function optimizeFlexibles(
   componentDefs: ComponentDef[],
   nets: Net[],
   netAssignments: NetAssignment[],
-  onProgress?: (frac: number, phase: "place" | "repair") => void
+  onProgress?: (frac: number, phase: "place" | "repair") => void,
+  drilledCutsOnly = false
 ): FlexOptimizeResult {
   const issues: string[] = [];
 
@@ -287,7 +291,7 @@ function optimizeFlexibles(
   // `problems` counts unresolved conflicts and issues (starved nets etc.);
   // `bad` = any problem — never settle for those when avoidable.
   const fullCost = (): { cost: number; bad: boolean; problems: number; starvedNets: string[] } => {
-    const plan = deriveCompletion(board, virtualComponents(), componentDefs, nets, netAssignments);
+    const plan = deriveCompletion(board, virtualComponents(), componentDefs, nets, netAssignments, { drilledCutsOnly });
     let cost =
       plan.cuts.length * COST_CUT +
       plan.wires.length * COST_WIRE +
@@ -295,6 +299,10 @@ function optimizeFlexibles(
       // priced like extra wire length, so placements that allow tidy
       // wiring win over ones that force ugly jumpers
       plan.wireMess * COST_WIRE_LEN +
+      // Drilled-cuts-only: a cut the drill upgrade could not absorb is
+      // priced like a wire, so placements that leave room to drill win.
+      // Cuts between directly adjacent pins are forced and exempt.
+      (drilledCutsOnly ? avoidableBetweenCuts(plan.cuts, virtualComponents(), componentDefs) * COST_WIRE : 0) +
       (plan.unresolvedConflicts + plan.issues.length) * COST_UNRESOLVED;
     const ext = { ...staticExtent };
     const extend = (p: BoardPosition) => {
@@ -340,7 +348,7 @@ function optimizeFlexibles(
   }
   const captureEvalBase = (partNets: Set<string>): EvalBase => {
     const others = new Set(nets.filter((n) => !partNets.has(n.id)).map((n) => n.id));
-    const plan = deriveCompletion(board, virtualComponents(), componentDefs, nets, netAssignments, { evalNets: others });
+    const plan = deriveCompletion(board, virtualComponents(), componentDefs, nets, netAssignments, { evalNets: others, drilledCutsOnly });
     let wireCost = plan.wires.length * COST_WIRE + plan.wireMess * COST_WIRE_LEN;
     const ext = { ...staticExtent };
     for (const w of plan.wires) {
@@ -355,7 +363,7 @@ function optimizeFlexibles(
     return { wireCost, starved: plan.starvedNetIds.length, ext };
   };
   const evalCost = (partNets: Set<string>, base: EvalBase): { cost: number; bad: boolean; problems: number } => {
-    const plan = deriveCompletion(board, virtualComponents(), componentDefs, nets, netAssignments, { evalNets: partNets });
+    const plan = deriveCompletion(board, virtualComponents(), componentDefs, nets, netAssignments, { evalNets: partNets, drilledCutsOnly });
     // cuts and cut issues are derived globally even in eval mode, so they
     // come from this call; the baseline contributes only wire terms
     let cost =
@@ -404,7 +412,7 @@ function optimizeFlexibles(
     }
     const clashes = (other: Placement, otherClr: number): boolean =>
       segmentsIntersect(p1, p2, other.p1, other.p2) ||
-      bodiesTooClose(p1, p2, other.p1, other.p2, selfClr + otherClr) ||
+      bodiesTooClose(p1, p2, other.p1, other.p2, Math.max(selfClr, otherClr)) ||
       // endpoints inside the other's corridor and vice versa
       pointSegmentDistance(p1, other.p1, other.p2) <= FLEXIBLE_CORRIDOR_RADIUS + 1e-6 ||
       pointSegmentDistance(p2, other.p1, other.p2) <= FLEXIBLE_CORRIDOR_RADIUS + 1e-6 ||
@@ -912,7 +920,7 @@ function optimizeFlexibles(
   }
 
   // ── Final completion on the optimized layout ─────────
-  const plan = deriveCompletion(board, virtualComponents(), componentDefs, nets, netAssignments);
+  const plan = deriveCompletion(board, virtualComponents(), componentDefs, nets, netAssignments, { drilledCutsOnly });
   issues.push(...plan.issues);
   if (plan.unresolvedConflicts > 0) {
     issues.push(
@@ -1526,7 +1534,8 @@ export function computeAutoLayout(
     });
     const tryFlex = optimizeFlexibles(
       baseBoard, arranged, componentDefs, nets, netAssignments,
-      report && ((f, phase) => report(phase, 0.35 + f * 0.65))
+      report && ((f, phase) => report(phase, 0.35 + f * 0.65)),
+      options?.drilledCutsOnly
     );
     let chosenStates = tryStates;
     let chosenFlex = tryFlex;
@@ -1571,7 +1580,8 @@ export function computeAutoLayout(
           });
           const flex2 = optimizeFlexibles(
             baseBoard, arranged2, componentDefs, nets, netAssignments,
-            report && ((f, phase) => report(phase, 0.35 + f * 0.65))
+            report && ((f, phase) => report(phase, 0.35 + f * 0.65)),
+            options?.drilledCutsOnly
           );
           const q2 = attemptQuality(arranged2, flex2);
           if (q2 < quality) {
