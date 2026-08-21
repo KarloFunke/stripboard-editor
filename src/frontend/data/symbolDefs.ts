@@ -17,6 +17,7 @@ export interface SymbolPinStub {
   stubStart: { x: number; y: number }; // where stub meets body
   stubEnd: { x: number; y: number };   // where wire connects (MUST be multiple of G)
   side: "top" | "bottom" | "left" | "right"; // which direction the stub exits
+  labelPos?: { x: number; y: number }; // where the label attaches (defaults to stubEnd)
 }
 
 export interface SymbolDef {
@@ -28,6 +29,7 @@ export interface SymbolDef {
   pins: SymbolPinStub[];
   labelYOffset?: number; // extra pixels to push the component label upward
   hidePinLabels?: boolean; // don't show pin labels (for simple symmetric components)
+  pinLabelOffset?: number; // gap between pin endpoint and its label (default 8)
 }
 
 export interface SymbolExtraElement {
@@ -664,11 +666,26 @@ export function createFootprintSymbol(
     const distRight = maxCol - pin.offsetCol;
     const distTop = pin.offsetRow;
     const distBottom = maxRow - pin.offsetRow;
-    const minDist = Math.min(distLeft, distRight, distTop, distBottom);
-    let side: "top" | "bottom" | "left" | "right" = "left";
-    if (minDist === distTop) side = "top";
-    else if (minDist === distBottom) side = "bottom";
-    else if (minDist === distRight) side = "right";
+    // Corner pins are equally close to a vertical and a horizontal edge. Break the
+    // tie along the axis the pin's neighbours run in, so the end pins of a column
+    // keep their labels beside them instead of flipping to top/bottom.
+    const inSameCol = pins.filter((p) => p.offsetCol === pin.offsetCol).length;
+    const inSameRow = pins.filter((p) => p.offsetRow === pin.offsetRow).length;
+    const horizDist = Math.min(distLeft, distRight);
+    const vertDist = Math.min(distTop, distBottom);
+    const horizontal = horizDist < vertDist || (horizDist === vertDist && inSameCol >= inSameRow);
+
+    let side: "top" | "bottom" | "left" | "right";
+    if (horizontal) side = distRight <= distLeft ? "right" : "left";
+    else side = distTop <= distBottom ? "top" : "bottom";
+
+    // Anchor the label to the body outline rather than the pin, so every label
+    // keeps the same gap from the edge even when the pin sits further inside.
+    const labelPos =
+      side === "left" ? { x: bodyLeft, y }
+      : side === "right" ? { x: bodyRight, y }
+      : side === "top" ? { x, y: bodyTop }
+      : { x, y: bodyBottom };
 
     return {
       pinId: pin.id,
@@ -676,6 +693,7 @@ export function createFootprintSymbol(
       stubStart: { x, y },
       stubEnd: { x, y },
       side,
+      labelPos,
     };
   });
 
@@ -684,6 +702,8 @@ export function createFootprintSymbol(
     label: "Custom",
     category: "generic",
     labelYOffset: 10,
+    // Labels attach to the outline (see labelPos), so this is the gap from it
+    pinLabelOffset: 6,
     bodyPaths: [
       { d: `M ${bodyLeft} ${bodyTop} L ${bodyRight} ${bodyTop} L ${bodyRight} ${bodyBottom} L ${bodyLeft} ${bodyBottom} Z`, fill: "none" },
     ],

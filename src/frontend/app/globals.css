@@ -12,6 +12,7 @@
 
   /* SVG semantic colors */
   --board-bg: white;
+  --schematic-bg: white;
   --hole-fill: white;
   --hole-stroke: #d4d4d4;
   --grid-dot: #c4c4c4;
@@ -42,6 +43,7 @@
   --copper: #D4A853;
 
   --board-bg: #1a1a1a;
+  --schematic-bg: #1e1e1e;
   --hole-fill: #252525;
   --hole-stroke: #555;
   --grid-dot: #3a3a3a;
