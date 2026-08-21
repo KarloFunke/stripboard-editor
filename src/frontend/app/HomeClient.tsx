@@ -76,6 +76,14 @@ export default function HomeClient({
     { title: "Print and build", body: "Print a 1:1 template, lay it on the board, and push parts straight through the paper." },
   ];
 
+  // Photos of the demo circuit above, built on real stripboard.
+  const buildShots = [
+    { src: "/print-out-with-board.jpg", caption: "print at 1:1", alt: "Printed placement and cut sheets with a bare stripboard laid on top" },
+    { src: "/drilled-holes.jpg", caption: "cut the tracks", alt: "Stripboard with copper tracks cut at the marked holes" },
+    { src: "/board-partly-assembled-front.jpg", caption: "push parts through", alt: "Printed template taped to the board with the first components pushed through the paper" },
+    { src: "/board-fully-assembled-back.jpg", caption: "solder the joints", alt: "Solder side of the finished stripboard" },
+  ];
+
   const features = [
     "Automatic layout router: places every part, sizes the board, and works out the cuts and link wires",
     "Schematic editor with a standard symbol library and automatic net detection",
@@ -202,7 +210,7 @@ export default function HomeClient({
         {!user && (<>
         {/* Editor screenshot */}
         <div className="mb-12">
-          <Link href="/view/2b08cf25-5e23-4952-8df3-0d0fd385b58e" className="block group">
+          <Link href="/view/85394a12-c5f3-4aff-a874-55837bbf4a80" className="block group">
             <img
               src="/demo-circuit.png"
               alt="Stripboard Editor with schematic and board layout side by side"
@@ -213,7 +221,15 @@ export default function HomeClient({
               alt="Stripboard Editor with schematic and board layout side by side"
               className="rounded-lg border-2 border-neutral-200 dark:border-neutral-700 group-hover:border-[var(--copper)] dark:group-hover:border-[var(--copper)] shadow-sm dark:shadow-neutral-900/30 w-full transition-colors hidden dark:block"
             />
-            <p className="font-mono text-xs text-neutral-500 dark:text-neutral-400 mt-2 text-center">click to open this demo circuit</p>
+            <div className="flex flex-col items-center gap-2 mt-3">
+              <img
+                src="/board-fully-assembled-front.jpg"
+                alt="The demo circuit built on stripboard"
+                loading="lazy"
+                className="w-56 sm:w-72 max-w-full rounded-lg border-2 border-neutral-200 dark:border-neutral-700 group-hover:border-[var(--copper)] dark:group-hover:border-[var(--copper)] shadow-sm dark:shadow-neutral-900/30 transition-colors"
+              />
+              <p className="font-mono text-xs text-neutral-500 dark:text-neutral-400">click to open this demo circuit</p>
+            </div>
           </Link>
         </div>
 
@@ -287,6 +303,36 @@ export default function HomeClient({
             className="rounded-lg border-2 border-neutral-200 dark:border-neutral-700 shadow-sm dark:shadow-neutral-900/30 w-full"
           />
           <p className="font-mono text-xs text-neutral-500 dark:text-neutral-400 mt-2 text-center">lay it on the board, push parts through the paper. mirrored cut guide + BOM optional.</p>
+
+          {/* The same circuit, built from that printout */}
+          <div className="mt-6 grid grid-cols-2 gap-3">
+            {buildShots.map((shot) => (
+              <figure key={shot.src}>
+                <img
+                  src={shot.src}
+                  alt={shot.alt}
+                  loading="lazy"
+                  decoding="async"
+                  className="w-full aspect-[4/3] object-cover rounded-lg border border-neutral-200 dark:border-neutral-700"
+                />
+                <figcaption className="font-mono text-[11px] text-neutral-500 dark:text-neutral-400 mt-1.5 text-center">
+                  {shot.caption}
+                </figcaption>
+              </figure>
+            ))}
+          </div>
+          <figure className="mt-3">
+            <img
+              src="/board-fully-assembled-front.jpg"
+              alt="Finished stripboard with every component soldered in place"
+              loading="lazy"
+              decoding="async"
+              className="w-full aspect-[3/2] object-cover rounded-lg border border-neutral-200 dark:border-neutral-700"
+            />
+            <figcaption className="font-mono text-xs text-neutral-500 dark:text-neutral-400 mt-2 text-center">
+              done. the demo circuit above.
+            </figcaption>
+          </figure>
         </div>
 
 

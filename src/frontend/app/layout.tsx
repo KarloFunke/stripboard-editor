@@ -58,8 +58,8 @@ export const metadata: Metadata = {
     images: [
       {
         url: "/demo-circuit.png",
-        width: 1920,
-        height: 963,
+        width: 3831,
+        height: 2037,
         alt: "Stripboard Editor showing schematic and board layout side by side",
       },
     ],
