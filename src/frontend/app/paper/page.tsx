@@ -5,7 +5,7 @@ import SiteFooter from "@/components/SiteFooter";
 import "katex/dist/katex.min.css";
 import { Section, Sub, P, Eq, M, Figure, Table, Th, Td, Note, Code } from "./Prose";
 import { FigPipeline } from "./figures";
-import { EVALUATED, CORPUS, HUMAN, FREE, SINGLE, PORTFOLIO, LOCKED, SIZE_BANDS, JOIN_BANDS, PORTFOLIO_AB, VS_HUMAN, PHYSICS, RELAXED, BEAM, RUNTIME, PEDAL, CONSTANTS } from "./data";
+import { EVALUATED, CORPUS, HUMAN, FREE, SINGLE, PORTFOLIO, DRILLED, STACKS, LOCKED, SIZE_BANDS, JOIN_BANDS, PORTFOLIO_AB, VS_HUMAN, PHYSICS, RELAXED, BEAM, RUNTIME, PEDAL, CONSTANTS } from "./data";
 
 export const metadata: Metadata = {
   title: "Automatic Stripboard Layout: A Staged Constructive Solver",
@@ -79,8 +79,8 @@ export default function PaperPage() {
               under physical constraints a real builder has to satisfy with real parts. This report describes a staged
               constructive solver that treats the assignment of nets to copper strips as the primary decision, derives
               cuts and wires from the resulting geometry, improves the board by local search under an explicit
-              price list calibrated against hand-built work, and by default runs a portfolio of deterministic input
-              orderings inside a small time budget. Over a corpus of {CORPUS.projects} circuits with a finished
+              price list calibrated against hand-built work, and by default runs a fixed portfolio of deterministic
+              input orderings and keeps the best finished board. Over a corpus of {CORPUS.projects} circuits with a finished
               hand-built layout to compare against, it lays out every one completely and without conflicts, at a median{" "}
               {PORTFOLIO.areaRatio}&times; the human board area, with {PORTFOLIO.offAxis} off-axis wires (wires with any
               horizontal travel) and {PORTFOLIO.crossings} wire-over-part crossings against {HUMAN.offAxis} and{" "}
@@ -144,11 +144,15 @@ export default function PaperPage() {
               </P>
               <P>
                 Physical feasibility is not a formality here, because unlike a printed circuit board the parts stand on
-                the same surface they connect through. Bodies may not overlap, and each part type carries a clearance
-                halo, by default {CONSTANTS.defaultClearance} of a hole pitch on each side, so that two through-hole
-                resistors do not end up shoulder to shoulder in adjacent columns. Users may relax the halo per part type
-                when they intend a tight build. Every candidate the solver considers satisfies these constraints; they
-                are never traded against quality.
+                the same surface they connect through. Bodies may not overlap, and each flexible part type carries a{" "}
+                <em>clearance</em>: a whole number of free board lines, by default {CONSTANTS.defaultClearance}, that
+                its body keeps to any neighbour, so that two through-hole resistors do not end up shoulder to shoulder
+                in adjacent columns and a resistor does not hug the flank of a connector. A pair shares the moat — the
+                requirement between two parts is the larger of their two clearances, not the sum — and rigid parts
+                demand none of their own: their footprint is taken as their true body, so two footprints may abut, and
+                a part whose plastic outgrows its pin field is the footprint definition&apos;s problem, not the
+                solver&apos;s. Users may set a type&apos;s clearance to 0 when they intend a tight build. Every
+                candidate the solver considers satisfies these constraints; they are never traded against quality.
               </P>
             </Sub>
 
@@ -380,6 +384,22 @@ export default function PaperPage() {
                 number of distinct cut columns by a quarter; the resulting partition of the board into segments was
                 verified identical on every project, so the pass is cosmetic by construction.
               </P>
+              <P>
+                A project option pushes the drill preference to its limit. In <em>drilled-cuts-only</em> mode the
+                router also severs donated relay tails by sacrificing a tail hole rather than knifing the copper
+                beside it, and every between-cut the upgrade cannot absorb is priced like an off-axis wire (Section
+                5.3), so layouts that leave room to drill win. Between-cuts that no placement can remove — two
+                directly adjacent pins of one footprint force a knife cut between them — are exempt from the price,
+                since charging the unavoidable would only distort every comparison. Over the corpus the mode cuts
+                knife cuts from {DRILLED.betweenCutsNormal} to {DRILLED.betweenCuts} at a median area of{" "}
+                {DRILLED.areaRatio}&times; the human board against the normal mode&apos;s {PORTFOLIO.areaRatio}
+                &times;, with wire tidiness essentially unchanged ({DRILLED.cleanBoards} boards free of wire defects,
+                the same count as the normal mode). One design lesson is recorded here because it was measured both
+                ways: upgrading cuts to drills <em>before</em> routing, so endpoints could never box a cut in, saved
+                a third of a knife cut per board and paid 26 off-axis wires and 16 crossings for it — every early
+                drill destroys a hole a link wire might have used. The upgrade therefore stays where it always was,
+                after routing, where it can only take holes that are provably surplus.
+              </P>
             </Sub>
 
             <Sub n="4.5" title="Refinement">
@@ -429,9 +449,14 @@ export default function PaperPage() {
               </P>
               <P>
                 Acceptance is guarded. A variant replaces the base result only when it is complete, within its cap and
-                growth allowance, has no more part crossings, and has strictly lower wire mess. The crossing guard is not
-                redundant: without it the search happily trades long off-axis wires for wires running over component
-                bodies, which is legal under the score and wrong to the eye.
+                growth allowance, has no more part crossings, has strictly lower wire mess, and is no worse than the
+                base on the overall rating of equation (16). The crossing guard is not redundant: without it the
+                search happily trades long off-axis wires for wires running over component bodies, which is legal
+                under the score and wrong to the eye. The rating guard earns its place the same way: the growth
+                allowance is unlimited by default, and before the guard existed a variant could buy the removal of a
+                single slanted wire with nineteen extra board rows — strictly tidier, and plainly not worth it. Under
+                the guard the variant&apos;s extra board must pay for its mess win at the same exchange rate as every
+                other decision.
               </P>
             </Sub>
           </Section>
@@ -471,45 +496,63 @@ export default function PaperPage() {
                 detour of similar length wins.
               </P>
               <P>
-                While routing, a candidate additionally pays {CONSTANTS.overlapRate} for every already-routed wire it
-                lies collinearly on top of. That is cheaper than any off-axis wire of two holes or more and dearer than a free
-                column, which is precisely the trade a builder makes.
+                Wires may also run collinearly on top of one another — physically fine under insulation, and a
+                standard human technique for parallel runs sharing a column. A candidate additionally pays a{" "}
+                <em>stacking charge</em> <M tex="\tau(w)" /> set by the deepest pile it would join at any point of its
+                run: becoming the second wire in a channel costs {CONSTANTS.stackSecond}, still cheaper than a slant
+                of a few holes; becoming the third costs {CONSTANTS.stackThird}, so only a real detour loses to it;
+                and a fourth wire in one channel is barred outright, softening to a price of{" "}
+                {CONSTANTS.stackRescue} per extra lane only when a net cannot complete any other way, so the cap can
+                never starve a board that the flat rule would have finished. Under the k = 10 portfolio only{" "}
+                {STACKS.atCap} of the {CORPUS.projects} boards contain a channel at the three-wire cap and none
+                exceed it.
               </P>
               <Note>
-                That last term replaced an outright ban, and it was the largest single quality improvement in the
-                project&apos;s history: total off-axis wires over the corpus fell 55% and part crossings 41%, while
-                the boards got <em>smaller</em>. Stacking several parallel wires down one column is a standard human
-                technique, and it had been the solver&apos;s last resort. Pricing it correctly let the solver discover
-                it independently.
+                Stacking was once banned outright, and replacing the ban by a price was the largest single quality
+                improvement in the project&apos;s history: total off-axis wires over the corpus fell 55% and part
+                crossings 41%, while the boards got <em>smaller</em>. The escalating schedule above came later, after
+                a real build: an unbounded flat rate let three and four wires pile into one channel, which is exactly
+                as unpleasant to solder as it sounds.
               </Note>
               <P>
-                The <em>wire mess</em> of a finished board sums the per-wire price together with a flat charge per
-                off-axis wire,
+                The <em>wire mess</em> of a finished board sums the per-wire price and stacking charge together with
+                a flat charge per off-axis wire,
               </P>
-              <Eq tex="M(L) \;=\; \sum_{w \in W} \Bigl( \mathbb{1}[\Delta c \neq 0] + x(w) \Bigr)." n={12} />
+              <Eq tex="M(L) \;=\; \sum_{w \in W} \Bigl( \mathbb{1}[\Delta c \neq 0] + x(w) + \tau(w) \Bigr)." n={12} />
             </Sub>
 
             <Sub n="5.3" title="Candidate cost">
               <P>
                 Among candidates with equal defect count, the chooser minimises
               </P>
-              <Eq tex="\mathrm{cost}(L) \;=\; \tilde{R}\tilde{C} \;+\; \sum_{w} x(w) \;+\; \sum_{w} \lVert w \rVert_2 \;+\; A(R,C) \;+\; \max(R,C)\cdot s(L)" n={13} />
+              <Eq tex="\mathrm{cost}(L) \;=\; \lambda_A\,\tilde{R}\tilde{C} \;+\; \sum_{w} \bigl(x(w) + \tau(w)\bigr) \;+\; \sum_{w} \lVert w \rVert_2 \;+\; A(R,C) \;+\; \max(R,C)\cdot s(L)" n={13} />
               <P>
-                where <M tex="s(L)" /> is the number of off-axis wires and the aspect penalty is
+                where <M tex="s(L)" /> is the number of off-axis wires, <M tex="\lambda_A = " />
+                {CONSTANTS.areaWeight} is the price of a board cell, and the aspect penalty is
               </P>
               <Eq tex="A(R,C) \;=\; \max\bigl(0,\; \max(R,C) - 2\min(R,C)\bigr)\cdot\min(R,C)," n={14} />
               <P>
-                zero when the user has locked a dimension, since the shape is then their choice. Everything is measured
-                in the same unit. A cell of board, a hole of wire and a hole of wire mess weigh exactly the same, which
-                is the claim that density must not be allowed to buy ugly or long wires.
+                zero when the user has locked a dimension, since the shape is then their choice. Everything is
+                measured in one currency, holes of wire, and <M tex="\lambda_A" /> is the exchange rate against board
+                area. It stood at 1 for most of the project&apos;s history — a cell of board and a hole of wire
+                weighing exactly the same is the claim that density must not buy ugly or long wires — and was lowered
+                after building a board by hand made the direction of the remaining error obvious: on the bench, extra
+                board is nearly free and every awkward wire costs real attention. The final value came from a ladder
+                of corpus runs. Halving the cell price to 0.5 removed a fifth of the remaining wire defects for one
+                percentage point of median area; 0.35 removed another quarter for three more points; 0.25 bought
+                nothing further — the defects merely shuffled while one board grew by 372 cells — so the price stopped
+                being the binding constraint there, and {CONSTANTS.areaWeight} is where the calibration settled:
+                board space is cheapened exactly until cheapening it stops making boards tidier.
               </P>
               <P>
-                The last term is the one that took longest to find. An off-axis wire costs a whole board line. The
+                The last term is the one that took longest to find. An off-axis wire costs a whole board line. That
                 exchange rate came from an experiment on myself: I took a messy solver output and cleaned it up by hand
                 until it looked right, inserting bus rows and blank columns, and ended with a board that was noticeably
                 larger and plainly better. Priced back, the trade I had been making was roughly one board line per
                 straightened wire. Before the term existed, channel insertion and off-axis repair were proposals that
-                could essentially never pay for themselves, and the passes ran without ever firing.
+                could essentially never pay for themselves, and the passes ran without ever firing. In drilled-cuts
+                mode (Section 4.4) each avoidable between-cut joins <M tex="s(L)" /> in this term, priced like a
+                slanted wire.
               </P>
             </Sub>
           </Section>
@@ -567,16 +610,19 @@ export default function PaperPage() {
               Each ordering is solved through the complete pipeline, tidy pass included, and the finished boards compete
               on the rating
             </P>
-            <Eq tex="S(L) \;=\; RC \;+\; M(L) \;+\; \sum_{w} \lVert w \rVert_2 \;+\; \max(R,C)\cdot s(L)," n={16} />
+            <Eq tex="S(L) \;=\; \lambda_A\,RC \;+\; M(L) \;+\; \sum_{w} \lVert w \rVert_2 \;+\; \max(R,C)\cdot s(L)," n={16} />
             <P>
               which restates (13) on the trimmed final board, with the wire mess <M tex="M(L)" /> of (12) standing in
               for the raw per-wire prices and the aspect penalty dropped. The penalty is a steering term for
               construction, and every finished candidate has already been shaped by it during its own solve; charging
               shape again at selection time would only trade it against area a second time. The winner is the
-              lexicographic minimum of{" "}
-              <M tex="(q, S, i)" />; including the index makes ties resolve to the earliest ordering. Since{" "}
-              <M tex="\sigma_0" /> is the caller&apos;s own ordering and wins ties, a portfolio of any size can never
-              score worse than the single solve it replaces.
+              lexicographic minimum of <M tex="(q, c, S, i)" />, where <M tex="c" /> is the count of wire-over-part
+              crossings: crossings may never trade up between finished candidates, the same guard the tidy pass
+              enforces internally. This <em>guarded pick</em> was measured before it was adopted (Appendix C): on the
+              plain portfolio it changes only a handful of boards, each growing to remove its crossings outright.
+              Including the index makes ties resolve to the earliest ordering, and since <M tex="\sigma_0" /> is the
+              caller&apos;s own ordering and wins ties, a portfolio of any size can never score worse than the single
+              solve it replaces.
             </P>
             <Note>
               Rating the <em>finished</em> board matters. An earlier version picked a winner from the first-pass results
@@ -585,13 +631,15 @@ export default function PaperPage() {
               be best after it. The pipeline was restructured so that every ordering runs end to end.
             </Note>
             <P>
-              Orderings are independent, so the editor runs them in parallel web workers against a time budget, by
-              default {CONSTANTS.permBudgetSeconds} seconds on half of the machine&apos;s cores: workers pull ordering
-              indices from a shared counter, every worker gets at least one ordering regardless of the clock, and new
-              orderings are dispatched only while time remains. The result is determined by which orderings completed,
-              so it is reproducible on the same machine and settings, and degrades gracefully into a smaller portfolio
-              on a slower one. This budgeted portfolio is the shipped default; the fixed ordering counts reported in
-              Section 7 bracket what the budget reaches, depending on hardware and board size.
+              Orderings are independent, so the editor runs them in parallel web workers, by default on three
+              quarters of the machine&apos;s cores, with workers pulling ordering indices from a shared counter. The
+              portfolio size is a fixed count rather than a time budget — an earlier revision shipped a
+              five-second budget, which made the result depend on the machine that computed it — so the shipped
+              default is exactly reproducible everywhere: k = {CONSTANTS.permBoards} orderings, reduced to{" "}
+              {CONSTANTS.permBoardsMid} on projects above {CONSTANTS.permBoardsMidAbove} parts and to a single solve
+              above {CONSTANTS.permBoardsSingleAbove}, where one solve alone runs tens of seconds on an average
+              machine and the larger portfolio should be the user&apos;s explicit choice. The k = 10 row of Table 2
+              is therefore the shipped default for the bulk of the corpus, not an idealised configuration.
             </P>
 
             <P>
@@ -670,7 +718,7 @@ export default function PaperPage() {
             </Sub>
 
             <Sub n="7.2" title="Results">
-              <Table n={2} caption={`Unconstrained runs over the ${CORPUS.projects} circuits: the solver chooses the board size and nothing is locked. Row 1 is the staged pipeline as it stood before the wire-tidiness work, included to show what the price list bought; row 2 disables the tidy pass; row 3 solves one input ordering; rows 4 and 5 run the portfolio at fixed ordering counts. The editor's default, a ${CONSTANTS.permBudgetSeconds}-second portfolio budget on half the cores, lands between the last two rows depending on hardware. All five lay out every circuit completely, so the table shows only quality. Time is the median solve time per project, measured for rows 2 to 5 in one batch on one machine; row 1 was measured at that earlier revision and its time is not comparable with the rest of the column. The Human row is the same boards as their authors built them.`}>
+              <Table n={2} caption={`Unconstrained runs over the ${CORPUS.projects} circuits: the solver chooses the board size and nothing is locked. Row 1 is the staged pipeline as it stood before the wire-tidiness work, included to show what the price list bought; row 2 disables the tidy pass; row 3 solves one input ordering; rows 4 and 5 run the portfolio at fixed ordering counts. The editor's default is the k = 10 row itself for projects up to ${CONSTANTS.permBoardsMidAbove} parts; larger projects default to k = ${CONSTANTS.permBoardsMid} or a single solve so a first run stays quick. All five lay out every circuit completely, so the table shows only quality. Time is the median solve time per project, measured for rows 2 to 5 in one batch on one machine; row 1 was measured at that earlier revision and its time is not comparable with the rest of the column. The Human row is the same boards as their authors built them.`}>
                 <thead>
                   <tr>
                     <Th>Configuration</Th>
@@ -716,8 +764,8 @@ export default function PaperPage() {
                 conflicts, so the interesting differences are all in the quality columns. The k = 10 portfolio, the
                 reference configuration for the rest of this section, comes out at a median {PORTFOLIO.areaRatio}&times;
                 the human area, with a median aspect ratio of {PORTFOLIO.aspect} against {HUMAN.aspect} for the humans,
-                so the shape distribution now matches the reference exactly rather than producing the long ribbons the
-                early pipeline favoured.
+                so the shape distribution sits where the reference does rather than at the long ribbons the early
+                pipeline favoured.
               </P>
               <P>
                 The median hides a wide spread. Per project, the portfolio is smaller than the human board
@@ -726,9 +774,11 @@ export default function PaperPage() {
                 &times;. Where the human wins on area, it is usually not by finding a better board under the same
                 rules. Auditing every human layout against the solver&apos;s own physical constraints, with the
                 solver&apos;s geometry code, shows {PHYSICS.violating} of the {CORPUS.projects} violating at least one:
-                a flexible part bent tighter than its span minimum on {PHYSICS.spanShort} boards, parallel bodies
-                closer than the clearance halos permit on {PHYSICS.tooClose}. Of the {VS_HUMAN.larger} projects where
-                the human board is smaller, {PHYSICS.humanSmallerViolating} violate a physical rule. Against the{" "}
+                a flexible body inside a footprint&apos;s clearance — a resistor packed against the flank of an IC or
+                connector — on {PHYSICS.onRigid} boards, parallel flexible bodies closer than the clearance permits
+                on {PHYSICS.tooClose}, a flexible part bent tighter than its span minimum on {PHYSICS.spanShort}. Of
+                the {VS_HUMAN.larger} projects where the human board is smaller,{" "}
+                {PHYSICS.humanSmallerViolating} violate a physical rule. Against the{" "}
                 {PHYSICS.cleanN} physically clean human boards the solver&apos;s median area ratio is{" "}
                 {PHYSICS.cleanMedianRatio}&times;, against {PHYSICS.violatingMedianRatio.toFixed(2)}&times; on the
                 violating ones, and only {PHYSICS.cleanHumanSmaller} clean boards are smaller than the solver&apos;s,
@@ -750,19 +800,20 @@ export default function PaperPage() {
               <P>
                 Two further runs, both under the portfolio, test the attribution directly. An <em>adaptive</em>{" "}
                 relaxation grants the solver, per project and per part type, exactly the liberties that project&apos;s
-                human demonstrably took: span ranges widen to cover the spans the human used, and clearance halos drop
+                human demonstrably took: span ranges widen to cover the spans the human used, and clearances drop
                 just far enough that the human&apos;s own placements become legal, never further. Boards whose human
                 broke no rule solve identically, so the runs differ only where a liberty was granted. Every circuit
                 still lays out completely, the median area ratio moves from {PORTFOLIO.areaRatio}&times; to{" "}
                 {RELAXED.adaptive.areaRatio}&times;, and on the {RELAXED.adaptive.touchedN} boards where anything was
                 granted the human&apos;s area wins fall from {RELAXED.adaptive.touchedHumanSmallerBaseline} to{" "}
-                {RELAXED.adaptive.touchedHumanSmaller}. A <em>flat</em> relaxation, halos removed and span minimums
+                {RELAXED.adaptive.touchedHumanSmaller}. A <em>flat</em> relaxation, clearances removed and span minimums
                 cut to one hole, bounds what the physical rulebook costs in total: a median of{" "}
                 {RELAXED.flat.areaRatio}&times;, with {RELAXED.flat.smaller + RELAXED.flat.equal} of the{" "}
-                {CORPUS.projects} boards at or below the human&apos;s area. The portfolio absorbs most of the tidiness
-                cost of building tighter, {RELAXED.adaptive.offAxis} off-axis wires against the reference&apos;s{" "}
-                {PORTFOLIO.offAxis}, and the violations no constant can absolve, bodies crossing and corridors over
-                pins, remain in place, which is part of why some human wins remain.
+                {CORPUS.projects} boards at or below the human&apos;s area. Building tighter does cost tidiness — the
+                relaxed runs end with {RELAXED.adaptive.offAxis} and {RELAXED.flat.offAxis} off-axis wires against
+                the reference&apos;s {PORTFOLIO.offAxis}, since a board packed to the human&apos;s own density leaves
+                the router less room to straighten its wires — and the violations no constant can absolve, bodies
+                crossing and corridors over pins, remain in place, which is part of why some human wins remain.
               </P>
               <P>
                 On wire tidiness the solver has moved past the reference. Across the corpus the humans left{" "}
@@ -807,24 +858,29 @@ export default function PaperPage() {
                 corpus finishes with {FREE[1].offAxis} off-axis wires and {FREE[1].crossings} crossings, against{" "}
                 {SINGLE.offAxis} and {SINGLE.crossings} with it, and{" "}
                 {SINGLE.cleanBoards - FREE[1].cleanBoards} fewer boards end free of wire defects. It is not a trade
-                against size: the median area ratio is {SINGLE.areaRatio}&times; either way, because the pass trims
-                the blank lines its own insertions leave behind at the board edges. What it costs is time, 42% of the
-                corpus-total solve time, concentrated in the largest boards; the median project pays about a tenth
-                extra. This is the single largest quality lever in the pipeline and the reason it is on by default,
-                with a checkbox for users who want the speed.
+                against size: the median area ratio moves by a single point ({FREE[1].areaRatio}&times; to{" "}
+                {SINGLE.areaRatio}&times;), because the pass trims the blank lines its own insertions leave behind at
+                the board edges. What it costs is time, {RUNTIME.tidySharePct}% of the corpus-total solve time,
+                concentrated in the largest boards; the median project pays about a quarter extra. This is the single
+                largest quality lever in the pipeline and the reason it is on by default, with a checkbox for users
+                who want the speed.
               </P>
               <P>
-                The portfolio is the other large lever, and most of it is cheap. Three orderings already improve the
-                median area ratio from {SINGLE.areaRatio} to {FREE[3].areaRatio} and cut wire defects by a third, at
-                roughly twice the median solve time; per project, k = 3 is smaller than the single solve on{" "}
-                {PORTFOLIO_AB.k3vsSingle.better} boards and larger on {PORTFOLIO_AB.k3vsSingle.worse}. Ten orderings
-                reach {PORTFOLIO.areaRatio}, halve wire defects again to {PORTFOLIO.offAxis} off-axis wires and{" "}
-                {PORTFOLIO.crossings} crossings, and are the only step that raises the count of fully clean boards, to{" "}
-                {PORTFOLIO.cleanBoards}. Against the single solve, k = 10 is better on{" "}
-                {PORTFOLIO_AB.k10vsSingle.better} projects, identical on {PORTFOLIO_AB.k10vsSingle.same} and larger on{" "}
-                {PORTFOLIO_AB.k10vsSingle.worse}; every one of those {PORTFOLIO_AB.k10vsSingle.worse} is a deliberate
-                trade the rating prefers, not a regression: the largest, at +96 cells, buys the elimination of all
-                eight off-axis wires and all ten crossings on that board. By construction no project can score worse.
+                The portfolio is the other large lever. Three orderings leave the median area where the single solve
+                puts it and spend their whole advantage on tidiness, cutting wire defects from{" "}
+                {SINGLE.offAxis + SINGLE.crossings} to {FREE[3].offAxis + FREE[3].crossings} at roughly three times
+                the median solve time; per project, k = 3 is smaller on {PORTFOLIO_AB.k3vsSingle.better} boards and
+                larger on {PORTFOLIO_AB.k3vsSingle.worse}. Ten orderings are the step that does both at once: the
+                median area ratio drops to {PORTFOLIO.areaRatio}&times;, wire defects halve again to{" "}
+                {PORTFOLIO.offAxis} off-axis wires and {PORTFOLIO.crossings} crossings, and the count of fully clean
+                boards rises to {PORTFOLIO.cleanBoards}. Against the single solve, k = 10 is smaller on{" "}
+                {PORTFOLIO_AB.k10vsSingle.better} projects, identical on {PORTFOLIO_AB.k10vsSingle.same} and larger
+                on {PORTFOLIO_AB.k10vsSingle.worse}; every one of those {PORTFOLIO_AB.k10vsSingle.worse} is a
+                deliberate trade the rating prefers, not a regression — {PORTFOLIO_AB.k10LargerTidier} of them remove
+                off-axis wires or crossings, and the other {PORTFOLIO_AB.k10LargerOtherGains} buy shorter or fewer
+                wires and emptier channels. The largest, at +{PORTFOLIO_AB.k10LargerWorst.cells} cells, takes a board
+                from {PORTFOLIO_AB.k10LargerWorst.defectsFrom} wire defects to{" "}
+                {PORTFOLIO_AB.k10LargerWorst.defectsTo}. By construction no project can score worse.
               </P>
             </Sub>
 
@@ -840,12 +896,15 @@ export default function PaperPage() {
                 the same anatomy: a run of pins needing a link wire whose segment contained no free hole to solder it
                 to. Enforcing the free hole as a structural invariant in the packer, rather than rescuing it afterwards,
                 brought that to {LOCKED.current.complete}, the whole corpus. At a single ordering, locked runs cost{" "}
-                {LOCKED.current.areaRatio}&times; human area against {SINGLE.areaRatio}&times; unconstrained, so about
-                a third more board than a free run of the same circuit, which is the price of a constraint the
-                solver did not get to choose. The portfolio then buys most of that premium back: under k = 10 the
-                locked runs land at {LOCKED.portfolio.areaRatio}&times; the human area, parity with the reference,
-                with {LOCKED.portfolio.offAxis} off-axis wires and {LOCKED.portfolio.crossings} crossings over the
-                comparison set, still well inside the humans&apos; {HUMAN.offAxis} and {HUMAN.crossings}.
+                {LOCKED.current.areaRatio}&times; human area against {SINGLE.areaRatio}&times; unconstrained, the
+                price of a constraint the solver did not get to choose. The portfolio buys part of that premium back:
+                under k = 10 the locked runs land at {LOCKED.portfolio.areaRatio}&times; the human area, about{" "}
+                {Math.round((LOCKED.portfolio.areaRatio / PORTFOLIO.areaRatio - 1) * 100)}% more board than the same
+                circuits solved free, with {LOCKED.portfolio.offAxis} off-axis wires and{" "}
+                {LOCKED.portfolio.crossings} crossings over the comparison set, still well inside the humans&apos;{" "}
+                {HUMAN.offAxis} and {HUMAN.crossings}. The residual premium is partly the lock itself and partly the
+                physical rulebook: honest clearance bites hardest exactly where the layout cannot move a fixed part
+                out of its own way.
               </P>
             </Sub>
 
@@ -876,7 +935,8 @@ export default function PaperPage() {
               </Table>
               <P>
                 Nearly two thirds of the corpus has <M tex="J = 0" />, and over those {JOIN_BANDS[0].n} projects the solver
-                produces {JOIN_BANDS[0].offAxis} off-axis wires and {JOIN_BANDS[0].crossings} crossings in total.
+                produces a total of {JOIN_BANDS[0].offAxis} off-axis{" "}
+                {JOIN_BANDS[0].offAxis === 1 ? "wire" : "wires"} and {JOIN_BANDS[0].crossings} crossings.
                 Almost everything else sits in the {JOIN_BANDS[3].n} projects
                 with eleven or more rigid joins, which are the IC-to-IC boards: several chips whose pin patterns are
                 fixed, connected to each other by nets no flexible part can absorb by bending. What those boards need is
@@ -907,11 +967,11 @@ export default function PaperPage() {
                 byte-identical.
               </P>
               <P>
-                The portfolio multiplies this by <M tex="k" /> in the worst case, which is why it is exposed as a time
-                budget rather than a fixed count: the user picks the seconds, the workers fit as many orderings into
-                them as they can. Because orderings solve in parallel across the workers, the wall-clock price of the
-                default {CONSTANTS.permBudgetSeconds}-second budget is close to one solve plus the budget rather than{" "}
-                <M tex="k" /> solves.
+                The portfolio multiplies this by <M tex="k" /> in total compute, but orderings solve in parallel
+                across the workers, so the wall-clock price of the default is closer to two solves than ten. The
+                size-aware default of Section 6 exists for the tail: on the largest boards even one solve runs tens
+                of seconds on an average machine, so the first click stays a single solve there and the larger
+                portfolio is the user&apos;s explicit choice.
               </P>
             </Sub>
           </Section>
@@ -983,7 +1043,7 @@ export default function PaperPage() {
               With the portfolio search the solver reaches {PEDAL.runs[1].area} holes against the published{" "}
               {PEDAL.asp.area}, a {Math.round((1 - PEDAL.runs[1].area / PEDAL.asp.area) * 100)}% smaller board, in{" "}
               {PEDAL.runs[1].seconds.toFixed(1)} s of wall clock. A single-ordering solve already produces{" "}
-              {PEDAL.runs[0].area} holes in under a second, below the published board as well.
+              {PEDAL.runs[0].area} holes in about a second, below the published board as well.
             </P>
             <Figure
               n={2}
@@ -992,14 +1052,14 @@ export default function PaperPage() {
               <a href={PEDAL.viewUrl} target="_blank" rel="noopener noreferrer" title="Open the guitar-pedal project in the Stripboard Editor">
                 <img
                   src="/Guitar-Pedal-(arXiv-2512.04910-benchmark).png"
-                  alt="Automatically generated stripboard layout of the guitar-pedal benchmark circuit from arXiv 2512.04910: an 11 by 18 hole stripboard with six strip cuts and five vertical link wires, produced by the Stripboard Editor's layout solver"
+                  alt="Automatically generated stripboard layout of the guitar-pedal benchmark circuit from arXiv 2512.04910: a compact stripboard with drilled strip cuts and only vertical link wires, produced by the Stripboard Editor's layout solver"
                   width={1252}
                   height={798}
                   className="w-full h-auto rounded border border-neutral-200 dark:hidden"
                 />
                 <img
                   src="/Guitar-Pedal-(arXiv-2512.04910-benchmark)-dark.png"
-                  alt="Automatically generated stripboard layout of the guitar-pedal benchmark circuit from arXiv 2512.04910, dark mode: an 11 by 18 hole stripboard with six strip cuts and five vertical link wires, produced by the Stripboard Editor's layout solver"
+                  alt="Automatically generated stripboard layout of the guitar-pedal benchmark circuit from arXiv 2512.04910, dark mode: a compact stripboard with drilled strip cuts and only vertical link wires, produced by the Stripboard Editor's layout solver"
                   width={1252}
                   height={798}
                   className="w-full h-auto rounded border border-neutral-700 hidden dark:block"
@@ -1018,11 +1078,11 @@ export default function PaperPage() {
               </li>
               <li>
                 <strong>The physical models differ.</strong> Their placement allows part spans of ten to eleven hole
-                pitches with no body geometry or clearance. I enforce per-type span ranges and a clearance halo, which
-                is a strictly harder constraint set. As a direct illustration: the published 12&times;18 layout itself
+                pitches with no body geometry or clearance. I enforce per-type span ranges and a clearance moat around
+                every flexible body, which is a strictly harder constraint set. As a direct illustration: the published 12&times;18 layout itself
                 is <em>infeasible</em> under my rules, with parts stretched past the span a real resistor allows; the
-                same area is legally reachable, as the {PEDAL.runs[1].rows}&times;{PEDAL.runs[1].cols} result shows,
-                but only by cutting strips.
+                area below it remains legally reachable, as the {PEDAL.runs[1].rows}&times;{PEDAL.runs[1].cols}{" "}
+                result shows, but only by cutting strips.
               </li>
               <li>
                 <strong>Timings are not comparable.</strong> Their {PEDAL.asp.seconds} s and my sub-second to{" "}
@@ -1148,6 +1208,8 @@ export default function PaperPage() {
                     ["q(L)", "defect count of a finished layout, equation (6)"],
                     ["b(L)", "defect count used during search, equation (10)"],
                     ["x(w)", "extra effective length charged to wire w, equation (11)"],
+                    ["\\tau(w)", "channel stacking charge of wire w (Section 5.2)"],
+                    ["\\lambda_A", "price of one board cell, in holes of wire (Section 5.3)"],
                     ["M(L)", "wire mess, equation (12)"],
                     ["A(R,C)", "aspect penalty, equation (14)"],
                     ["s(L)", "number of off-axis wires"],
@@ -1172,11 +1234,11 @@ export default function PaperPage() {
             <P>
               The solver is open source [2] and runs entirely in the browser. Every configuration in this report runs
               a fixed number of orderings and is therefore deterministic: the same netlist gives the same board. The
-              editor&apos;s default is instead the time budget of Section 6, which is reproducible for a given machine
-              and settings but may complete a different number of orderings elsewhere; to reproduce a table row
-              exactly, set the ordering count rather than the budget. The benchmark harness that produced the corpus
-              tables ships with the source at <Code>tests/solver/sweep.js</Code> and takes the corpus location as an
-              argument.
+              editor&apos;s shipped default is itself a fixed count (Section 6), so it reproduces exactly on any
+              machine — an earlier revision used a time budget, whose results depended on the hardware that computed
+              them. The benchmark harness that produced the corpus tables ships with the source at{" "}
+              <Code>tests/solver/sweep.js</Code>, its aggregation at <Code>tests/solver/paperStats.js</Code>, and
+              takes the corpus location as an argument.
             </P>
             <P>
               The corpus itself is not published and will not be. It consists of projects belonging to the editor&apos;s
@@ -1200,21 +1262,22 @@ export default function PaperPage() {
               This appendix records an alternative to the portfolio of Section 6 that was measured and rejected. The
               ladder of Section 4.3 builds several complete constructions of the same circuit and refines exactly one
               of them. Beam search over constructions refines all of them instead: the ladder&apos;s pool holds{" "}
-              {BEAM.poolMedian} distinct constructions per circuit at the median and never more than {BEAM.poolMax},
-              each is carried through refinement and the tidy pass, and the best finished board is chosen by (16), with
-              the normal path winning ties. It composes with input orderings, so a portfolio of orderings with a full
-              beam on each is also available.
+              {BEAM.poolMedian} distinct constructions per circuit at the median, between {BEAM.poolMin} and{" "}
+              {BEAM.poolMax}, each is carried through refinement and the tidy pass, and the best finished board is
+              chosen by (16), with the normal path winning ties. It composes with input orderings, so a portfolio of
+              orderings with a full beam on each is also available. Every configuration below was measured at the
+              same revision and under the same protocol as Table 2.
             </P>
             <P>
-              The potential is real. On a {BEAM.oracleN}-circuit subsample, refining every construction beats the
-              normal path on {BEAM.oracleImproved} of them, with a median best-case area of {BEAM.oracleAreaRatio}
-              &times; the plain solve, and only {BEAM.convergedPct}% of the alternative starts converge back to the
-              same finished board. The alternatives are therefore genuinely different boards, and some of them are
-              better. Over the full corpus, however, the comparison against the portfolio is one-sided in three
-              separate ways.
+              The alternative constructions are genuinely different boards: refining all of them changes the finished
+              result on {BEAM.vsSingle.smaller + BEAM.vsSingle.larger} of the {CORPUS.projects} circuits against the
+              plain solve of the same ordering, smaller on {BEAM.vsSingle.smaller} and larger on{" "}
+              {BEAM.vsSingle.larger}. What they are not is systematically better: the median area ratio against the
+              plain solve is exactly {BEAM.vsSingleMedianRatio.toFixed(2)}, so the extra four-odd solves buy nothing
+              at the median project. Against the portfolio the comparison is one-sided in three separate ways.
             </P>
 
-            <Table n={6} caption={`Beam search over constructions against the portfolio, over the same ${CORPUS.projects} circuits, protocol and metrics as Section 7. A beam refines every distinct construction of one ordering, about five solves, set by the circuit rather than chosen; the mixed rows run a full beam on each of three orderings. A guarded pick ranks finished candidates by fewest crossings before the rating. Time is the median solve time per project.`}>
+            <Table n={6} caption={`Beam search over constructions against the portfolio, over the same ${CORPUS.projects} circuits, protocol and metrics as Section 7. A beam refines every distinct construction of one ordering, about five solves, set by the circuit rather than chosen; the last row runs a full beam on each of three orderings. Every row uses the shipped guarded pick except "guard off", which ablates it. Time is the median solve time per project.`}>
               <thead>
                 <tr>
                   <Th>Configuration</Th>
@@ -1233,9 +1296,8 @@ export default function PaperPage() {
                   { label: "Beam, full pool", solves: "~5", c: BEAM.pool },
                   { label: "Portfolio, k = 5", solves: "5", c: BEAM.perm5 },
                   { label: "Portfolio, k = 10", solves: "10", c: PORTFOLIO },
-                  { label: "Portfolio, k = 10, guarded pick", solves: "10", c: BEAM.p10Guarded },
+                  { label: "Portfolio, k = 10, guard off", solves: "10", c: BEAM.p10Unguarded },
                   { label: "Portfolio, k = 3, beam each", solves: "~15", c: BEAM.mixed },
-                  { label: "same, guarded pick", solves: "~15", c: BEAM.mixedGuarded },
                 ].map((r) => (
                   <tr key={r.label}>
                     <Td>{r.label}</Td>
@@ -1252,35 +1314,38 @@ export default function PaperPage() {
             </Table>
 
             <P>
-              <strong>Tidiness.</strong> At an equal number of solves the beam matches five orderings exactly on median
-              area and loses everywhere else: {BEAM.pool.offAxis} off-axis wires against {BEAM.perm5.offAxis} and{" "}
-              {BEAM.pool.crossings} crossings against {BEAM.perm5.crossings}. The reason is what each source of variance
-              hands to the tidy pass. A fresh ordering hands it a fresh construction to straighten; a beam survivor
-              re-mines the neighbourhood of one construction, and what it finds there is density, not tidiness.
-              Combining the two does push the area frontier: three orderings with a full beam each reach a median{" "}
-              {BEAM.mixed.areaRatio}&times;, smaller per project on {BEAM.mixedVsPortfolio.smaller} circuits against{" "}
-              {BEAM.mixedVsPortfolio.larger}, but they give back wire tidiness, {BEAM.mixed.offAxis} off-axis wires and{" "}
+              <strong>Tidiness.</strong> At an equal number of solves the beam loses on every column: a median{" "}
+              {BEAM.pool.areaRatio}&times; the human area against the five-ordering portfolio&apos;s{" "}
+              {BEAM.perm5.areaRatio}&times;, {BEAM.pool.offAxis} off-axis wires against {BEAM.perm5.offAxis}, and{" "}
+              {BEAM.pool.crossings} crossings against {BEAM.perm5.crossings} — two and a half times as many. The
+              reason is what each source of variance hands to the tidy pass. A fresh ordering hands it a fresh
+              construction to straighten; a beam survivor re-mines the neighbourhood of one construction, and what it
+              finds there is density, not tidiness. Combining the two does push the area frontier: three orderings
+              with a full beam each reach a median {BEAM.mixed.areaRatio}&times;, smaller per project on{" "}
+              {BEAM.mixedVsPortfolio.smaller} circuits against {BEAM.mixedVsPortfolio.larger}, but they pay for it in
+              exactly the currency this solver spends its effort on, {BEAM.mixed.offAxis} off-axis wires and{" "}
               {BEAM.mixed.crossings} crossings against the portfolio&apos;s {PORTFOLIO.offAxis} and{" "}
-              {PORTFOLIO.crossings}. A guarded final pick recovers most of both sides of that trade: ranking finished
-              candidates by fewest crossings before the rating, the same rule the tidy pass enforces internally, brings
-              the combination to {BEAM.mixedGuarded.areaRatio}&times; with {BEAM.mixedGuarded.crossings} crossings and{" "}
-              {BEAM.mixedGuarded.offAxis} off-axis wires, denser than the plain portfolio and tidier on crossings at
-              once.
+              {PORTFOLIO.crossings}, with {PORTFOLIO.cleanBoards - BEAM.mixed.cleanBoards} fewer boards finishing free
+              of wire defects. An earlier revision of this appendix found the beam and the portfolio tied on area at
+              equal solves; the recalibration of Section 5, which made board area cheap and crowded wiring dear, moved
+              the comparison against the beam on both axes at once.
             </P>
             <P>
-              <strong>Shape.</strong> The density is partly bought with a proportion the rating does not price. Median
-              aspect rises from {PORTFOLIO.aspect} under the portfolio to {BEAM.mixedGuarded.aspect}, and the number of
-              boards longer than three to one rises from {PORTFOLIO.aspectOver3} to {BEAM.mixedGuarded.aspectOver3};{" "}
+              <strong>Shape.</strong> The density is partly bought with a proportion the rating does not price. The
+              number of boards longer than three to one rises from {PORTFOLIO.aspectOver3} under the portfolio to{" "}
+              {BEAM.mixed.aspectOver3} under the mixed beam, and {BEAM.pool.aspectOver3} under a single beamed
+              ordering;{" "}
               {BEAM.squareToStrip} circuits that the portfolio lays out squarely, at an aspect of two or less, come out
               of the beam as strips. The extreme case goes from {BEAM.worstFlip.fromRows}&times;
               {BEAM.worstFlip.fromCols} to {BEAM.worstFlip.toRows}&times;{BEAM.worstFlip.toCols}, saving{" "}
               {BEAM.worstFlip.fromArea - BEAM.worstFlip.toArea} holes for a board that no longer fits a normal
               enclosure. This follows directly from (16), which charges trimmed area and drops the aspect penalty
-              deliberately, so a long thin board that saves a few holes outranks a square one. It is not the beam that
+              deliberately, so a long thin board that saves area outranks a square one. It is not the beam that
               wants strips; the beam merely surfaces constructions extreme enough for the omission to matter, which the
-              ordering portfolio rarely does. The count is not outside human practice, the same corpus has{" "}
-              {HUMAN.aspectOver3} human boards past three to one, but it is a change in the shape of the output that no
-              user asked for.
+              ordering portfolio rarely does. The portfolio itself stays just inside human practice here, at{" "}
+              {PORTFOLIO.aspectOver3} boards past three to one against the corpus&apos;s {HUMAN.aspectOver3} human
+              ones; the beam takes the output past it, which is a change in the shape of the result that no user
+              asked for.
             </P>
             <P>
               <strong>Cost.</strong> One beamed ordering costs a median of {BEAM.msVsSingleMedian}&times; a plain solve,
@@ -1291,25 +1356,27 @@ export default function PaperPage() {
               that gap is an artefact of the implementation, which reruns stages 0 to 3 for each pool entry instead of
               resuming from the stored construction, and could be recovered by caching. The rest is not: the entries
               that survive into the pool are the larger constructions, and refining a larger board costs more. The
-              structural problem is worse than the constant. A portfolio spends exactly the time it is given, because
-              orderings are dispatched only while the budget lasts, whereas a pool&apos;s size is a property of the
-              circuit and every entry must be finished before any of them can be rated. A single beamed ordering
-              already outlasts the shipped {CONSTANTS.permBudgetSeconds}-second budget on {BEAM.overBudget} of the{" "}
-              {CORPUS.projects} circuits, against {BEAM.overBudgetSingle} for a plain solve, and the user has no dial
-              that shortens it.
+              structural problem is worse than the constant. A portfolio spends exactly what the user asked for,
+              because the number of orderings is the setting itself, whereas a pool&apos;s size is a property of the
+              circuit: every entry must be finished before any of them can be rated, so the cost of a beamed solve is
+              neither predictable nor adjustable. The size-aware default of Section 6, which trims the portfolio on
+              large projects precisely to keep a first run quick, has no counterpart a beam could offer.
             </P>
             <P>
               The shipped configuration therefore searches over input orderings only, and the option is not reachable
               from the editor. One piece of the experiment does deserve to outlive it. The guarded pick is independent
-              of the beam, and on the plain portfolio its effect is unusually concentrated: it changes{" "}
-              {BEAM.p10GuardedLarger} of the {CORPUS.projects} boards and leaves the rest untouched. On those seven it
-              removes {PORTFOLIO.crossings - BEAM.p10Guarded.crossings} crossings, and every one of them grows, by{" "}
-              {BEAM.p10GuardedHoles} holes in total. The extreme case goes from {BEAM.p10GuardedWorst.fromRows}&times;
-              {BEAM.p10GuardedWorst.fromCols} to {BEAM.p10GuardedWorst.toRows}&times;{BEAM.p10GuardedWorst.toCols},
-              half again the area, to remove {BEAM.p10GuardedWorst.crossings} crossings. Whether that is a good trade
-              is a judgement about what a builder minds more rather than a measurement, which is precisely why it is a
-              change to the shipped default rather than an addition to it, and why it is left to a later revision with
-              its own soak time.
+              of the beam, and its effect on the plain portfolio is unusually concentrated: turning it off changes
+              only {BEAM.guardChanged} of the {CORPUS.projects} boards and leaves the rest untouched. On those{" "}
+              {BEAM.guardChanged} the guard removes {BEAM.p10Unguarded.crossings - PORTFOLIO.crossings} crossings and{" "}
+              {BEAM.p10Unguarded.offAxis - PORTFOLIO.offAxis} off-axis wires, and every one of them grows, by{" "}
+              {BEAM.guardHoles} holes in total; the median board is untouched, which is why the two rows share an
+              area ratio. The extreme case goes from {BEAM.guardWorst.fromRows}&times;{BEAM.guardWorst.fromCols} to{" "}
+              {BEAM.guardWorst.toRows}&times;{BEAM.guardWorst.toCols}, half again the area, to take that board from{" "}
+              {BEAM.guardWorst.crossingsFrom} crossings to {BEAM.guardWorst.crossingsTo}. Whether that is a good trade
+              is a judgement about what a builder minds more rather than a measurement, and it was initially left on
+              the shelf for exactly that reason. Building a real board from the solver&apos;s output settled the
+              judgement — on the bench a wire over a part costs far more attention than a few spare holes — and the
+              guarded pick is now part of the shipped final pick of Section 6.
             </P>
           </Section>
         </article>
