@@ -26,6 +26,7 @@ def sanitize_name(value: str) -> str:
 class ProjectListSerializer(serializers.ModelSerializer):
     fork_count = serializers.IntegerField(source="forks.count", read_only=True)
     preview_data = serializers.SerializerMethodField()
+    description = serializers.SerializerMethodField()
 
     class Meta:
         model = Project
@@ -33,6 +34,7 @@ class ProjectListSerializer(serializers.ModelSerializer):
             "edit_uuid",
             "view_uuid",
             "name",
+            "description",
             "fork_of",
             "fork_count",
             "created_at",
@@ -40,6 +42,11 @@ class ProjectListSerializer(serializers.ModelSerializer):
             "preview_data",
         ]
         read_only_fields = fields
+
+    def get_description(self, obj):
+        """The project's one-line description, which lives in the project JSON."""
+        value = (obj.data or {}).get("description")
+        return value[:200] if isinstance(value, str) else ""
 
     def get_preview_data(self, obj):
         """Extract minimal data needed for stripboard preview thumbnail."""

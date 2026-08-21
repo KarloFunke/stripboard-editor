@@ -12,6 +12,7 @@ import SplitPane from "@/components/SplitPane";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import ThemeToggle from "@/components/ThemeToggle";
 import PrintPreview from "@/components/print/PrintPreview";
+import ProjectNotesPanel from "@/components/ProjectNotesPanel";
 
 export default function ProjectViewPage() {
   const params = useParams();
@@ -19,6 +20,8 @@ export default function ProjectViewPage() {
   const viewUuid = params.viewUuid as string;
   const loadProject = useProjectStore((s) => s.loadProject);
   const nets = useProjectStore((s) => s.nets);
+  const description = useProjectStore((s) => s.description ?? "");
+  const notes = useProjectStore((s) => s.notes ?? "");
   const highlightedNetId = useProjectStore((s) => s.highlightedNetId);
   const setHighlightedNetId = useProjectStore((s) => s.setHighlightedNetId);
   const isMobile = useIsMobile();
@@ -29,6 +32,7 @@ export default function ProjectViewPage() {
   const [ownerName, setOwnerName] = useState<string | null>(null);
   const [mobileTab, setMobileTab] = useState<"schematic" | "stripboard">("stripboard");
   const [showPrint, setShowPrint] = useState(false);
+  const [showNotes, setShowNotes] = useState(false);
 
   useEffect(() => {
     getProjectView(viewUuid)
@@ -93,7 +97,22 @@ export default function ProjectViewPage() {
             {ownerName && <span>by {ownerName}</span>}
             <span className="opacity-60">(view only)</span>
           </div>
+          {(description || notes) && (
+            <div className="flex items-center gap-2 mt-1 text-xs">
+              <span className="opacity-70 truncate">{description}</span>
+              <button
+                onClick={() => setShowNotes((s) => !s)}
+                className={`px-2 py-0.5 rounded transition-colors flex-shrink-0 ${
+                  showNotes ? "bg-white/25" : "bg-white/10 hover:bg-white/20"
+                }`}
+              >
+                Notes
+              </button>
+            </div>
+          )}
         </div>
+
+        {showNotes && <ProjectNotesPanel readOnly onClose={() => setShowNotes(false)} />}
 
         {/* Tab bar */}
         <div className="flex border-b border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900">
@@ -170,8 +189,24 @@ export default function ProjectViewPage() {
           <span className="font-semibold">{projectName}</span>
           {ownerName && <span className="opacity-70">by {ownerName}</span>}
           <span className="opacity-50">(view only)</span>
+          {description && (
+            <>
+              <span className="opacity-40">|</span>
+              <span className="opacity-70 truncate max-w-md" title={description}>{description}</span>
+            </>
+          )}
         </div>
         <div className="flex items-center gap-2 font-mono">
+          {(description || notes) && (
+            <button
+              onClick={() => setShowNotes((s) => !s)}
+              className={`px-3.5 py-1.5 rounded transition-colors text-sm ${
+                showNotes ? "bg-white/25" : "bg-white/10 hover:bg-white/20"
+              }`}
+            >
+              Description &amp; Notes
+            </button>
+          )}
           <button
             onClick={() => { track("print-open", { source: "view" }); setShowPrint(true); }}
             className="px-3.5 py-1.5 rounded bg-white/10 hover:bg-white/20 transition-colors text-sm"
@@ -187,6 +222,7 @@ export default function ProjectViewPage() {
           <ThemeToggle />
         </div>
       </div>
+      {showNotes && <ProjectNotesPanel readOnly onClose={() => setShowNotes(false)} />}
       <SplitPane
         left={<SchematicEditor readOnly />}
         right={<StripboardEditor readOnly />}

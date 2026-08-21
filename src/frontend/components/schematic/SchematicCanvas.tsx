@@ -859,7 +859,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
           svgRef.current = el;
           panZoom.setTouchTarget(el);
         }}
-        className="font-sans h-full w-full bg-white dark:bg-[#1e1e1e]"
+        className="font-sans h-full w-full bg-[var(--schematic-bg)]"
         viewBox={panZoom.getViewBox(containerSize.width, containerSize.height)}
         style={{ cursor: cursorStyle }}
         onMouseDown={(e) => {

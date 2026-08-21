@@ -135,6 +135,8 @@ interface ProjectActions {
 
   // Project persistence
   setProjectName: (name: string) => void;
+  setProjectDescription: (description: string) => void;
+  setProjectNotes: (notes: string) => void;
   exportProject: () => Project;
   loadProject: (data: Project) => void;
   importProject: (data: Project) => void;
@@ -185,6 +187,8 @@ type ProjectStore = Project & UIState & ProjectActions & HistoryState;
 
 const initialProject: Project = {
   name: "Untitled Project",
+  description: "",
+  notes: "",
   componentDefs: [...DEFAULT_COMPONENTS],
   components: [],
   nets: [],
@@ -301,6 +305,8 @@ function prepareProjectState(data: Project) {
 
   return {
     name: data.name ?? "Untitled Project",
+    description: data.description ?? "",
+    notes: data.notes ?? "",
     componentDefs: mergedDefs,
     components: (data.components ?? []).map((c) => ({
       ...c,
@@ -1320,6 +1326,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   setProjectName: (name) => set({ name }),
 
+  setProjectDescription: (description) => set({ description, isDirty: true }),
+
+  setProjectNotes: (notes) => set({ notes, isDirty: true }),
+
   exportProject: (): Project => {
     const s = get();
     const defaultIds = new Set(DEFAULT_COMPONENTS.map((d) => d.id));
@@ -1327,6 +1337,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     return {
       version: 2,
       name: s.name,
+      description: s.description,
+      notes: s.notes,
       componentDefs: customDefs,
       components: s.components,
       nets: s.nets,
@@ -1369,6 +1381,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   resetProject: () => set({
     name: "Untitled Project",
+    description: "",
+    notes: "",
     componentDefs: [...DEFAULT_COMPONENTS],
     components: [],
     nets: [],

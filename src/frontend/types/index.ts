@@ -142,6 +142,8 @@ export interface Board {
 export interface Project {
   version?: number; // schema version; absent or <CURRENT triggers migration on load
   name: string;
+  description?: string; // one-line summary, shown in project lists and on view links
+  notes?: string; // freeform build notes; URLs render as links
   componentDefs: ComponentDef[];
   components: Component[];
   nets: Net[];

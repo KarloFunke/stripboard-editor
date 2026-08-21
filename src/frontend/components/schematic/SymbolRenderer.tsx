@@ -84,10 +84,11 @@ export function getSymbolBounds(symbolId: string, rotation: 0 | 90 | 180 | 270 =
 
 /** Compute pin label position and anchor dynamically based on stub direction, rotation, and mirror */
 function getPinLabelProps(
-  stubEnd: { x: number; y: number },
+  attachPoint: { x: number; y: number },
   side: "top" | "bottom" | "left" | "right",
   rotation: 0 | 90 | 180 | 270,
   mirrored: boolean = false,
+  offset: number = 8,
 ): { x: number; y: number; anchor: "start" | "middle" | "end"; baseline: "auto" | "hanging" | "central" } {
   // Mirror flips left/right
   let effectiveSide = side;
@@ -101,9 +102,8 @@ function getPinLabelProps(
   const rotSteps = rotation / 90;
   effectiveSide = sideOrder[(sideOrder.indexOf(effectiveSide) + rotSteps) % 4];
 
-  // Transform the stub endpoint
-  const rp = transformPoint(stubEnd.x, stubEnd.y, rotation, mirrored);
-  const offset = 8;
+  // Transform the attach point
+  const rp = transformPoint(attachPoint.x, attachPoint.y, rotation, mirrored);
 
   switch (effectiveSide) {
     case "top":
@@ -230,7 +230,7 @@ export default function SymbolRenderer({
             />
             {/* Pin label — dynamically positioned based on stub direction */}
             {showPinLabels && !def.hidePinLabels && (() => {
-              const lp = getPinLabelProps(pin.stubEnd, pin.side, rotation, mirrored);
+              const lp = getPinLabelProps(pin.labelPos ?? pin.stubEnd, pin.side, rotation, mirrored, def.pinLabelOffset);
               const pinOff = pinLabelOffsets[pin.pinId];
               const lx = lp.x + (pinOff?.x ?? 0);
               const ly = lp.y + (pinOff?.y ?? 0);
@@ -241,7 +241,14 @@ export default function SymbolRenderer({
                   textAnchor={lp.anchor}
                   dominantBaseline={lp.baseline}
                   fill="var(--pin-text)"
-                  style={{ userSelect: "none", cursor: onPinLabelDrag ? "grab" : onPinLabelClick ? "text" : "default" }}
+                  stroke="var(--schematic-bg)"
+                  strokeWidth={3}
+                  strokeLinejoin="round"
+                  style={{
+                    userSelect: "none",
+                    paintOrder: "stroke",
+                    cursor: onPinLabelDrag ? "grab" : onPinLabelClick ? "text" : "default",
+                  }}
                   onClick={(e) => {
                     if (_suppressPinLabelClick) {
                       _suppressPinLabelClick = false;
