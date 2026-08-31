@@ -6,7 +6,13 @@
 // project plus an index. Output contains NO usernames, project names or
 // uuids — numeric project ids only.
 //
-//   node tests/solver/extract.js --db <path-to-db.sqlite3> --out <dir>
+//   node tests/solver/extract.js --db <path-to-db.sqlite3> --out <dir> [--human-only]
+//
+// --human-only keeps only layouts that provably owe nothing to the solver:
+// those last saved before it shipped, and those created after usage
+// tracking went live that never recorded a run. Projects touched in the
+// window between the two are dropped, since a save in that window cannot be
+// told apart from a solved one.
 const { spawnSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
@@ -27,6 +33,22 @@ if (!dbPath || !outDir) {
   console.error("usage: node extract.js --db <path> --out <dir>");
   process.exit(1);
 }
+
+// The auto-layouter shipped 2026-07-16 (see app/updates/page.tsx); the
+// autoLayoutUsed flag went live 2026-07-31 18:11 (first flagged save in
+// prod). Between those points the solver existed but left no trace.
+const SOLVER_RELEASE = "2026-07-16";
+const TRACKING_LIVE = "2026-07-31 18:11:42";
+const humanOnly = args.includes("--human-only");
+// Keep projects whose human never finished placing. Their netlist is still a
+// valid solver input; only the human-side comparison is meaningless.
+const includeUnfinished = args.includes("--include-unfinished");
+
+// The flag is written only when a solved layout is applied, and cleared
+// only by resetProject, which discards the layout too, so its absence on a
+// tracked project is a reliable negative.
+const provablyHuman = (row, data) =>
+  row.updatedAt < SOLVER_RELEASE || (row.createdAt > TRACKING_LIVE && !data.autoLayoutUsed);
 
 function sql(query) {
   const r = spawnSync("sqlite3", ["-json", dbPath, query], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
@@ -139,14 +161,14 @@ function trimBoard(data, defs) {
 }
 
 const rows = sql(
-  "SELECT id, fork_of_id AS forkOf, updated_at AS updatedAt, data FROM projects_project ORDER BY id;"
+  "SELECT id, fork_of_id AS forkOf, created_at AS createdAt, updated_at AS updatedAt, data FROM projects_project ORDER BY id;"
 );
 fs.rmSync(path.join(outDir, "projects"), { recursive: true, force: true });
 fs.mkdirSync(path.join(outDir, "projects"), { recursive: true });
 
 const index = [];
 const byLayoutHash = new Map();
-let noData = 0, empty = 0, unfinished = 0, dupes = 0;
+let noData = 0, empty = 0, unfinished = 0, dupes = 0, solverTouched = 0;
 
 for (const row of rows) {
   let data;
@@ -154,6 +176,10 @@ for (const row of rows) {
     data = JSON.parse(row.data);
   } catch {
     noData++;
+    continue;
+  }
+  if (humanOnly && !provablyHuman(row, data)) {
+    solverTouched++;
     continue;
   }
   const nets = data.nets ?? [];
@@ -176,10 +202,11 @@ for (const row of rows) {
   }
   const placeable = comps.filter((c) => !c.boardExcluded);
   const placed = placeable.filter((c) => c.boardPos);
-  if (placeable.length === 0 || placed.length !== placeable.length) {
+  if (placeable.length === 0 || (!includeUnfinished && placed.length !== placeable.length)) {
     unfinished++;
     continue;
   }
+  const humanFinished = placed.length === placeable.length;
   trimBoard(data, defs);
 
   const layoutHash = layoutHashOf(data, board);
@@ -201,12 +228,31 @@ for (const row of rows) {
     // legacy data the solver modules reject — recorded as -1, kept
   }
   const unresolvedDefs = comps.filter((c) => !defs.find((d) => d.id === c.defId)).length;
+  // Defs with two different-net pins on one hole are unbuildable data, the
+  // same class as a missing def: no layout of any kind can separate them.
+  let shortedDefs = 0;
+  const netByPin = new Map(assignments.map((a) => [`${a.componentId}:${a.pinId}`, a.netId]));
+  for (const c of comps) {
+    const def = defs.find((x) => x.id === c.defId);
+    if (!def || def.flexible) continue;
+    const seen = new Map();
+    for (const p of def.pins ?? []) {
+      const net = netByPin.get(`${c.id}:${p.id}`);
+      if (!net) continue;
+      const hole = `${p.offsetRow},${p.offsetCol}`;
+      if (seen.has(hole) && seen.get(hole) !== net) { shortedDefs++; break; }
+      if (!seen.has(hole)) seen.set(hole, net);
+    }
+  }
 
   const entry = {
     id: row.id,
     forkOf: row.forkOf ?? null,
+    createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    autoLayoutUsed: data.autoLayoutUsed ?? false,
     parts: placeable.length,
+    humanFinished,
     nets: nets.length,
     assignments: assignments.length,
     rows: board.rows,
@@ -216,6 +262,7 @@ for (const row of rows) {
     conflicts,
     incomplete,
     unresolvedDefs,
+    shortedDefs,
     removedParts,
     netlistHash: netlistHashOf(data),
     layoutHash,
@@ -234,11 +281,13 @@ const variantGroups = [...netlistGroups.values()].filter((n) => n > 1).length;
 
 console.log(`total rows        ${rows.length}`);
 console.log(`unparseable       ${noData}`);
+if (humanOnly) console.log(`solver-touched    ${solverTouched}`);
 console.log(`empty (no comp/net/board) ${empty}`);
 console.log(`unfinished layout ${unfinished}`);
 console.log(`identical dupes   ${dupes}`);
 console.log(`extracted         ${index.length}`);
 console.log(`  clean (0 conflicts, 0 incomplete) ${index.filter((e) => e.conflicts === 0 && e.incomplete === 0).length}`);
 console.log(`  with unresolved defs             ${index.filter((e) => e.unresolvedDefs > 0).length}`);
+console.log(`  with shorted defs                ${index.filter((e) => e.shortedDefs > 0).length}`);
 console.log(`  with no-net parts removed        ${index.filter((e) => e.removedParts > 0).length}`);
 console.log(`  same-netlist variant groups      ${variantGroups}`);

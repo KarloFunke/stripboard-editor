@@ -7,49 +7,87 @@
  * reads from it, so no figure can go stale on its own. The corpus itself is
  * user data and never leaves the local machine.
  *
- * ONE set of projects backs every figure here: the 239 whose stored human
- * layout is complete and conflict-free. The extraction yields 306; two
- * reference component definitions that no longer exist and are unsolvable
- * data rather than hard instances; 65 more were saved with a short or an
- * unconnected net. Tuning studies that need no human reference (the
- * cluster-size sweep, runtime profiling) run over the wider set, but no
- * number in the paper mixes the two.
+ * ONE set of projects backs every figure here: the 210 whose author
+ * provably never used the solver (last saved before it shipped, or created
+ * after usage tracking went live with no recorded run) and whose stored
+ * human layout is complete and conflict-free. That extraction yields 273;
+ * two reference component definitions that no longer exist and are
+ * unsolvable data rather than hard instances; 61 more were saved with a
+ * short or an unconnected net. Tuning studies that need no human reference
+ * (the cluster-size sweep, runtime profiling) ran over earlier, wider
+ * extractions, but no number in the paper mixes the two.
  */
 
 export const EVALUATED = {
-  date: "21 August 2026",
-  /** solver source revision the sweeps were verified against — REPIN after
-   * committing this revision */
-  commit: "pending",
+  date: "23 August 2026",
+  /** Solver source revision the sweeps ran at: v2.1.3 plus the broken-def
+   * input validation and the harness lock fix (update this hash after
+   * committing). The k = 10 run reproduced all 244 boards shared with the
+   * previous corpus revision bit-for-bit. Every sweep runs the shipped
+   * configuration, which has the tidy second pass on with an unlimited
+   * growth allowance (sweep.js --tidy unlimited). */
+  commit: "87b7e5c",
   hardware: "Ryzen 7 7800X3D, 12-way parallel sweep",
 };
 
 /** The evaluation corpus: projects whose human layout is a finished board. */
 export const CORPUS = {
-  projects: 239,
-  /** what the extraction produced before the two filters below */
-  extracted: 306,
+  projects: 210,
+  /** stored projects in the prod copy of 22 August 2026 */
+  stored: 796,
+  /** provably solver-free: last saved before the solver shipped (16 July
+   * 2026), or created after usage tracking went live (31 July 2026) with
+   * no recorded run. The rest, uncertain or solver-touched, are dropped. */
+  provable: 523,
+  /** what the extraction of the provable set produced, before the filters */
+  extracted: 273,
   /** dropped: parts naming component definitions that no longer exist */
   unresolvable: 2,
   /** dropped: human board saved with a short or an unconnected net */
-  defective: 65,
+  defective: 61,
   partsMedian: 12,
   partsP90: 31,
   partsMax: 55,
   netsMedian: 10,
-  areaMedian: 240,
+  areaMedian: 239,
+};
+
+/**
+ * The 61 projects the comparison subset drops for a defective human board.
+ * Their netlists are sound; only the stored layout is defective, so the
+ * solver still runs on them. These are the k = 10 portfolio results over
+ * that set, from the same sweep as Table 2 (sweep-p22-perm10). No area
+ * ratio is kept: an unfinished board is not an area reference.
+ */
+export const DEFECTIVE = {
+  /** count is CORPUS.defective; all of them solve */
+  complete: 61,
+  offAxis: 14,
+  crossings: 16,
+  cleanBoards: 57,
+};
+
+/** Every extractable project regardless of provenance, k = 10: the 600
+ * extracted minus the 3 whose data is unsolvable (two with missing
+ * component definitions, one whose custom footprint shorts two nets on one
+ * hole by definition). Includes 149 projects whose human layout was never
+ * finished. The one incomplete result is the 3PDT switch limitation of
+ * Section 9. */
+export const FULLSET = {
+  projects: 597,
+  complete: 596,
 };
 
 /** The same 239 boards as their authors built them. */
 export const HUMAN = {
   aspect: 1.5,
-  aspectOver3: 25,
-  offAxis: 280,
-  crossings: 725,
-  wires: 2550,
-  cuts: 5362,
+  aspectOver3: 22,
+  offAxis: 151,
+  crossings: 521,
+  wires: 2024,
+  cuts: 4331,
   stripCompletePct: 57,
-  cleanBoards: 134,
+  cleanBoards: 131,
 };
 
 export interface Config {
@@ -66,85 +104,73 @@ export interface Config {
   cuts: number;
   stripCompletePct: number;
   cleanBoards: number;
+  /** median wall-clock per project: one circuit at a time, a portfolio's
+   * orderings solved simultaneously in worker threads, as the editor runs
+   * them (tests/solver/timeRun.js; results verified against the sweeps) */
   msMedian: number;
 }
 
 /** Unconstrained runs: solver picks the board size, nothing locked. */
 export const FREE: Config[] = [
   {
-    label: "Stage pipeline only",
-    note: "before the wire-tidiness work",
-    complete: 239,
-    areaRatio: 0.98,
-    aspect: 2.0,
-    aspectOver3: 60,
-    offAxis: 714,
-    crossings: 997,
-    wires: 2187,
-    cuts: 3659,
-    stripCompletePct: 53,
-    cleanBoards: 44,
-    msMedian: 76,
-  },
-  {
     label: "Tidy pass disabled",
     note: "same solver, second pass off",
-    complete: 239,
-    areaRatio: 0.99,
-    aspect: 1.53,
-    aspectOver3: 28,
-    offAxis: 185,
-    crossings: 290,
-    wires: 2940,
-    cuts: 4050,
+    complete: 210,
+    areaRatio: 0.93,
+    aspect: 1.6,
+    aspectOver3: 27,
+    offAxis: 140,
+    crossings: 242,
+    wires: 2423,
+    cuts: 3337,
     stripCompletePct: 50,
-    cleanBoards: 178,
-    msMedian: 750,
+    cleanBoards: 157,
+    msMedian: 272,
   },
   {
     label: "Single ordering",
     note: "tidy pass on, one ordering",
-    complete: 239,
-    areaRatio: 1.0,
-    aspect: 1.4,
-    aspectOver3: 19,
-    offAxis: 79,
-    crossings: 106,
-    wires: 2947,
-    cuts: 3883,
+    complete: 210,
+    areaRatio: 0.96,
+    aspect: 1.47,
+    aspectOver3: 18,
+    offAxis: 62,
+    crossings: 101,
+    wires: 2430,
+    cuts: 3186,
     stripCompletePct: 50,
-    cleanBoards: 210,
-    msMedian: 1151,
+    cleanBoards: 188,
+    msMedian: 407,
   },
   {
     label: "Portfolio, k = 3",
     note: "three orderings, best kept",
-    complete: 239,
-    areaRatio: 1.0,
-    aspect: 1.42,
-    aspectOver3: 20,
-    offAxis: 52,
-    crossings: 51,
-    wires: 2852,
-    cuts: 3807,
+    complete: 210,
+    areaRatio: 0.93,
+    aspect: 1.47,
+    aspectOver3: 18,
+    offAxis: 54,
+    crossings: 64,
+    wires: 2328,
+    cuts: 3107,
     stripCompletePct: 50,
-    cleanBoards: 218,
-    msMedian: 3318,
+    cleanBoards: 194,
+    msMedian: 586,
   },
   {
     label: "Portfolio, k = 10",
     note: "ten orderings, best kept",
-    complete: 239,
-    areaRatio: 0.93,
-    aspect: 1.47,
-    aspectOver3: 23,
-    offAxis: 24,
-    crossings: 27,
-    wires: 2805,
-    cuts: 3847,
+    complete: 210,
+    areaRatio: 0.84,
+    aspect: 1.5,
+    aspectOver3: 19,
+    offAxis: 31,
+    crossings: 44,
+    wires: 2287,
+    cuts: 3137,
     stripCompletePct: 50,
-    cleanBoards: 225,
-    msMedian: 12190,
+    cleanBoards: 197,
+    msMedian: 1209,
   },
 ];
 
@@ -153,107 +179,120 @@ export const FREE: Config[] = [
  * 30 parts; larger projects default to k = 3 (31-40 parts) or a single
  * solve (above 40) so a first run stays quick, and the user can raise the
  * count. */
-export const SINGLE = FREE[2];
-export const PORTFOLIO = FREE[4];
+export const SINGLE = FREE[1];
+export const PORTFOLIO = FREE[3];
 
 /** Drilled-cuts-only mode, same protocol, k = 10. */
 export const DRILLED = {
-  complete: 239,
-  areaRatio: 0.97,
-  offAxis: 35,
-  crossings: 24,
-  cleanBoards: 225,
+  complete: 210,
+  areaRatio: 0.89,
+  offAxis: 33,
+  crossings: 32,
+  cleanBoards: 199,
   /** between-hole (knife) cuts left over the corpus, vs the normal mode */
-  betweenCuts: 352,
-  betweenCutsNormal: 867,
-  cuts: 3673,
+  betweenCuts: 307,
+  betweenCutsNormal: 749,
+  cuts: 2939,
 };
 
 /** Channel stacking under the depth cap, k = 10. */
 export const STACKS = {
   /** boards whose deepest channel reaches the cap of three wires */
-  atCap: 8,
-  /** boards past the cap (the completeness rescue) */
-  overCap: 0,
+  atCap: 4,
+  /** boards past the cap: the completeness rescue fired once, on a
+   * nine-part board that finishes complete with one four-wire channel */
+  overCap: 1,
 };
 
 /** Two parts pinned at their human positions; the rest is the solver's. */
 export const LOCKED = {
-  baseline: { complete: 202, areaRatio: 1.38, aspectOver3: 37, offAxis: 656, crossings: 826 },
-  current: { complete: 239, areaRatio: 1.23, aspectOver3: 10, offAxis: 139, crossings: 204 },
+  /** historical: an earlier solver revision on the corpus of 239 as it
+   * stood then, kept for the free-hole-invariant narrative of Section 7.4 */
+  baseline: { complete: 202, of: 239, areaRatio: 1.38 },
+  current: { complete: 210, areaRatio: 1.14, aspectOver3: 11, offAxis: 102, crossings: 160 },
   /** same protocol under the k = 10 portfolio */
-  portfolio: { complete: 239, areaRatio: 1.12, offAxis: 100, crossings: 106, cleanBoards: 201 },
+  portfolio: { complete: 210, areaRatio: 1.09, offAxis: 62, crossings: 64, cleanBoards: 180 },
 };
 
 /** Median area relative to the human board, by project size. */
 export const SIZE_BANDS = [
-  { band: "2-5", n: 26, baseline: 0.84, current: 0.81, portfolio: 0.81 },
-  { band: "6-10", n: 72, baseline: 0.8, current: 0.81, portfolio: 0.75 },
-  { band: "11-15", n: 54, baseline: 1.04, current: 1.18, portfolio: 1.0 },
-  { band: "16-25", n: 47, baseline: 1.0, current: 1.12, portfolio: 0.99 },
-  { band: "26-60", n: 39, baseline: 1.38, current: 1.22, portfolio: 1.12 },
+  { band: "2-5", n: 20, current: 0.74, portfolio: 0.74 },
+  { band: "6-10", n: 71, current: 0.77, portfolio: 0.71 },
+  { band: "11-15", n: 45, current: 1.11, portfolio: 0.97 },
+  { band: "16-25", n: 41, current: 1.1, portfolio: 0.9 },
+  { band: "26-60", n: 32, current: 1.04, portfolio: 1.04 },
 ];
 
 /** Residual wire defects grouped by the rigid-join count of the netlist,
  * k = 10 portfolio. */
 export const JOIN_BANDS = [
-  { band: "0", n: 150, offAxis: 1, crossings: 0 },
-  { band: "1-4", n: 40, offAxis: 2, crossings: 2 },
-  { band: "5-10", n: 23, offAxis: 1, crossings: 1 },
-  { band: "11+", n: 26, offAxis: 20, crossings: 24 },
+  { band: "0", n: 133, offAxis: 9, crossings: 24 },
+  { band: "1-4", n: 41, offAxis: 7, crossings: 3 },
+  { band: "5-10", n: 22, offAxis: 1, crossings: 1 },
+  { band: "11+", n: 14, offAxis: 14, crossings: 16 },
 ];
+
+/** The J = 0 band's defects are almost one board: a single 27-part project
+ * carries 8 of its 9 off-axis wires and all 24 crossings, one other board
+ * has one off-axis wire, and the remaining 131 finish perfect. */
+export const J0_OUTLIER = {
+  offAxis: 8,
+  crossings: 24,
+  parts: 27,
+  perfect: 131,
+};
 
 /** Per-project trimmed-area A/B along the portfolio ladder. */
 export const PORTFOLIO_AB = {
-  k3vsSingle: { better: 80, same: 131, worse: 28 },
-  k10vsK3: { better: 82, same: 141, worse: 16 },
-  k10vsSingle: { better: 129, same: 84, worse: 26 },
+  k3vsSingle: { better: 70, same: 118, worse: 22 },
+  k10vsK3: { better: 73, same: 123, worse: 14 },
+  k10vsSingle: { better: 111, same: 77, worse: 22 },
   /** of the k10-larger boards: how many remove off-axis wires or crossings,
    * and how many instead buy shorter or fewer wires and emptier channels */
-  k10LargerTidier: 10,
-  k10LargerOtherGains: 16,
-  k10LargerWorst: { cells: 252, defectsFrom: 12, defectsTo: 2 },
+  k10LargerTidier: 7,
+  k10LargerOtherGains: 15,
+  k10LargerWorst: { cells: 220, defectsFrom: 18, defectsTo: 4 },
 };
 
 /** The k = 10 portfolio versus the human board, per project, on trimmed
  * area. */
 export const VS_HUMAN = {
-  smaller: 130,
-  equal: 8,
-  larger: 101,
+  smaller: 125,
+  equal: 5,
+  larger: 80,
   /** quartiles of the per-project area ratio (median is PORTFOLIO.areaRatio) */
-  q1: 0.63,
-  q3: 1.32,
+  q1: 0.58,
+  q3: 1.31,
 };
 
 /**
  * Human layouts audited against the solver's own physical rules (span
  * limits, clearances, corridor and footprint overlaps), using the solver's
  * geometry code on each stored human board. Produced, together with
- * VS_HUMAN, by tests/solver/humanPhysics.js --sweep sweep-aw035-perm10;
+ * VS_HUMAN, by tests/solver/humanPhysics.js --sweep sweep-p22-perm10;
  * area splits are against the k = 10 portfolio.
  */
 export const PHYSICS = {
   /** projects whose human board has at least one violation */
-  violating: 193,
+  violating: 171,
   /** flexible part bent tighter than its span minimum */
-  spanShort: 138,
+  spanShort: 128,
   /** flexible part stretched past its span maximum */
   spanLong: 15,
   /** parallel flexible bodies closer than the clearance permits */
-  tooClose: 146,
+  tooClose: 132,
   /** flexible body inside a footprint's clearance (adjacent-column packing) */
-  onRigid: 159,
+  onRigid: 136,
   /** of the VS_HUMAN.larger projects, how many violate */
-  humanSmallerViolating: 94,
-  violatingMedianRatio: 1.0,
-  cleanN: 46,
-  cleanMedianRatio: 0.67,
-  cleanHumanSmaller: 7,
+  humanSmallerViolating: 74,
+  violatingMedianRatio: 0.95,
+  cleanN: 39,
+  cleanMedianRatio: 0.63,
+  cleanHumanSmaller: 6,
   /** worst per-project ratio among clean human-smaller boards */
   cleanWorstRatio: 2.0,
   /** 6-10 part band, clean references only: median ratio, human-smaller count */
-  band6to10CleanMedian: 0.5,
+  band6to10CleanMedian: 0.44,
   band6to10CleanHumanSmaller: 0,
 };
 
@@ -263,44 +302,44 @@ export const PHYSICS = {
  * part type, exactly the liberties that human's layout demonstrably took
  * (spans widened to observed, clearances lowered until the human's
  * placements are legal); flat removes clearances and span minimums
- * outright. Both complete all 239 circuits.
+ * outright. Both complete all 210 circuits.
  */
 export const RELAXED = {
   adaptive: {
-    areaRatio: 0.79,
-    q1: 0.55,
-    q3: 1.04,
-    smaller: 166,
-    equal: 9,
-    larger: 64,
+    areaRatio: 0.73,
+    q1: 0.49,
+    q3: 1.0,
+    smaller: 157,
+    equal: 4,
+    larger: 49,
     /** projects where any def was actually relaxed */
-    touchedN: 192,
-    touchedMedian: 0.81,
-    touchedMedianBaseline: 1.0,
-    touchedHumanSmaller: 56,
-    touchedHumanSmallerBaseline: 93,
-    offAxis: 43,
-    crossings: 34,
-    cleanBoards: 220,
+    touchedN: 171,
+    touchedMedian: 0.75,
+    touchedMedianBaseline: 0.95,
+    touchedHumanSmaller: 43,
+    touchedHumanSmallerBaseline: 74,
+    offAxis: 42,
+    crossings: 49,
+    cleanBoards: 196,
   },
   flat: {
-    areaRatio: 0.67,
-    q1: 0.44,
-    q3: 0.95,
-    smaller: 187,
-    equal: 8,
-    larger: 44,
-    offAxis: 46,
-    crossings: 34,
-    cleanBoards: 216,
+    areaRatio: 0.62,
+    q1: 0.37,
+    q3: 0.87,
+    smaller: 174,
+    equal: 1,
+    larger: 35,
+    offAxis: 40,
+    crossings: 51,
+    cleanBoards: 192,
   },
 };
 
 /**
  * Beam-search experiment: refine every distinct stage-2 construction
  * instead of (or in addition to) varying input orderings. Sources:
- * sweep-ac-beam-pool / sweep-ac-perm5 / sweep-ac-perm10-unguarded /
- * sweep-ac-beam-perm3 on the 239 subset, same protocol and revision as
+ * sweep-p22-beam / sweep-p22-perm5 / sweep-p22-perm10-unguarded /
+ * sweep-p22-beam-perm3 on the 210 subset, same protocol and revision as
  * Table 2, every row using the shipped guarded pick except the row that
  * ablates it. Kept in the solver behind an option; not a production
  * setting.
@@ -312,67 +351,90 @@ export const BEAM = {
   /** full-pool beam against the plain solve of the same ordering, per
    * project on trimmed area: the alternatives are genuinely different
    * boards, but no denser at the median */
-  vsSingle: { smaller: 88, same: 125, larger: 26 },
+  vsSingle: { smaller: 83, same: 103, larger: 24 },
   vsSingleMedianRatio: 1.0,
   /** full-pool beam, single ordering */
-  pool: { areaRatio: 0.97, aspect: 1.55, aspectOver3: 35, offAxis: 67, crossings: 85, cleanBoards: 218, msMedian: 6241 },
+  pool: { areaRatio: 0.9, aspect: 1.59, aspectOver3: 36, offAxis: 41, crossings: 60, cleanBoards: 196, msMedian: 2701 },
   /** five orderings: the equal-solve-count portfolio comparison */
-  perm5: { areaRatio: 0.95, aspect: 1.4, aspectOver3: 19, offAxis: 38, crossings: 33, cleanBoards: 223, msMedian: 5301 },
+  perm5: { areaRatio: 0.9, aspect: 1.5, aspectOver3: 18, offAxis: 39, crossings: 46, cleanBoards: 198, msMedian: 754 },
   /** three orderings x full beam (~15 solves) */
-  mixed: { areaRatio: 0.9, aspect: 1.46, aspectOver3: 34, offAxis: 40, crossings: 42, cleanBoards: 220, msMedian: 20190 },
-  mixedVsPortfolio: { smaller: 86, same: 77, larger: 76 },
+  mixed: { areaRatio: 0.86, aspect: 1.56, aspectOver3: 35, offAxis: 36, crossings: 34, cleanBoards: 196, msMedian: 3431 },
+  mixedVsPortfolio: { smaller: 77, same: 65, larger: 68 },
   /** the shipped k = 10 portfolio with the crossings guard turned off */
-  p10Unguarded: { areaRatio: 0.93, aspect: 1.47, aspectOver3: 23, offAxis: 29, crossings: 41, cleanBoards: 221, msMedian: 10984 },
+  /** its solves are the portfolio's own; the pick is free, so its time is
+   * the k = 10 row's */
+  p10Unguarded: { areaRatio: 0.83, aspect: 1.5, aspectOver3: 19, offAxis: 31, crossings: 55, cleanBoards: 194, msMedian: 1209 },
   /** what the guard costs on the plain portfolio: the boards it changes,
    * all of which grow, against the crossings it removes */
-  guardChanged: 8,
-  guardHoles: 812,
-  guardWorst: { fromRows: 21, fromCols: 18, fromArea: 378, toRows: 27, toCols: 22, toArea: 594, crossingsFrom: 6, crossingsTo: 2 },
+  guardChanged: 7,
+  guardHoles: 591,
+  guardWorst: { fromRows: 22, fromCols: 29, fromArea: 638, toRows: 23, toCols: 35, toArea: 805, crossingsFrom: 10, crossingsTo: 8 },
   /** squarish under k = 10 (aspect <= 2), a strip under the mixed beam (> 3) */
-  squareToStrip: 15,
+  squareToStrip: 16,
   worstFlip: { fromRows: 17, fromCols: 31, fromArea: 527, toRows: 10, toCols: 40, toArea: 400 },
-  /** per-project solve-time ratio, beam-pool vs perms-5 */
-  msVsPerm5Median: 1.11,
-  msVsPerm5P90: 1.81,
-  msVsPerm5Over2x: 13,
-  /** cost of one beamed ordering against one plain solve */
-  msVsSingleMedian: 4.95,
-  msVsSingleP90: 9.42,
-  msVsSingleMax: 37.3,
+  /** per-project WALL-CLOCK ratio, beam-pool (one thread; the pool refines
+   * sequentially) vs perms-5 (five parallel workers) */
+  msVsPerm5Median: 3.49,
+  msVsPerm5P90: 5.64,
+  msVsPerm5Over2x: 178,
+  /** compute cost of one beamed ordering against one plain solve, both on
+   * one thread */
+  msVsSingleMedian: 5.25,
+  msVsSingleP90: 9.5,
+  msVsSingleMax: 25.2,
   /** slowest single beamed ordering in the corpus, seconds */
-  slowestOrderingSeconds: 326,
+  slowestOrderingSeconds: 138,
 };
 
-/** Solve time of the single-ordering configuration over the corpus. */
+/** Solve time of the single-ordering configuration over the corpus.
+ * Wall-clock, one circuit at a time, nothing else on the machine. */
 export const RUNTIME = {
-  medianMs: 1151,
-  p90Ms: 12997,
-  maxMs: 61010,
-  /** same solves re-run one at a time: how much the 12-way sweep inflates
-   * them (measured 5 August 2026; a property of the machine, not the solver) */
-  contentionMedian: 3.2,
-  contentionSampleN: 20,
+  medianMs: 407,
+  p90Ms: 5792,
+  maxMs: 30701,
+  /** per-project wall-clock of the k = 10 portfolio over the single solve,
+   * orderings in ten parallel workers */
+  k10OverSingleMedian: 2.5,
   /** tidy pass share of corpus-total solve time, and the median project's
-   * extra cost (Table 2 rows 2 vs 3) */
-  tidySharePct: 63,
-  tidyMedianExtraPct: 26,
+   * extra cost (Table 2 rows 1 vs 2) */
+  tidySharePct: 64,
+  tidyMedianExtraPct: 8,
 };
+
+/** Fig 2: single-ordering wall-clock by project size, parts rounded to the
+ * nearest multiple of 5 (the 2-7 part projects land in the 5 band). All in
+ * milliseconds, quartiles interpolated; same timing protocol as the Time
+ * column of Table 2. */
+export const RUNTIME_BANDS = [
+  { band: 5, n: 39, min: 2, q1: 24, med: 44, q3: 83, max: 1377 },
+  { band: 10, n: 74, min: 60, q1: 131, med: 227, q3: 588, max: 2113 },
+  { band: 15, n: 35, min: 137, q1: 299, med: 507, q3: 1967, max: 10515 },
+  { band: 20, n: 21, min: 315, q1: 422, med: 784, q3: 1356, max: 30701 },
+  { band: 25, n: 12, min: 660, q1: 1282, med: 3187, q3: 5915, max: 23893 },
+  { band: 30, n: 13, min: 813, q1: 2192, med: 3892, q3: 8122, max: 17742 },
+  { band: 35, n: 4, min: 1260, q1: 1656, med: 1948, q3: 2193, max: 2450 },
+  { band: 40, n: 4, min: 1761, q1: 2811, med: 14834, q3: 26769, max: 27555 },
+  { band: 45, n: 5, min: 2529, q1: 2700, med: 3128, q3: 9238, max: 24090 },
+  { band: 50, n: 2, min: 6848, q1: 8724, med: 10599, q3: 12475, max: 14350 },
+  { band: 55, n: 1, min: 18460, q1: 18460, med: 18460, q3: 18460, max: 18460 },
+];
 
 /**
  * The guitar-pedal benchmark published with the ASP formulation, measured
  * on the hand-rebuilt reconstruction that is publicly viewable at viewUrl.
- * NOTE: the public project's board and the Fig 2 screenshots still show the
- * previous revision's 11x18 result; regenerate both from the k = 10 run
- * below before publishing.
+ * The public project and the Fig 2 screenshots show the k = 10 run below.
  */
 export const PEDAL = {
   parts: 18,
   nets: 12,
   viewUrl: "https://stripboard-editor.com/view/78705b4e-1da6-49ac-8e07-7d6f45ae11c9",
   asp: { rows: 12, cols: 18, area: 216, seconds: 11.92, cuts: 0, wires: 0, strips: 12 },
+  /** seconds are wall-clock under the timing protocol of Section 7.6
+   * (k = 10 solves its orderings in ten parallel workers), median of three
+   * runs */
   runs: [
-    { label: "Single ordering", rows: 10, cols: 21, area: 210, cuts: 11, wires: 9, offAxis: 0, crossings: 0, seconds: 1.03 },
-    { label: "Portfolio, k = 10", rows: 11, cols: 19, area: 209, cuts: 9, wires: 8, offAxis: 0, crossings: 0, seconds: 7.95 },
+    { label: "Single ordering", rows: 10, cols: 21, area: 210, cuts: 11, wires: 9, offAxis: 0, crossings: 0, seconds: 0.55 },
+    { label: "Portfolio, k = 10", rows: 11, cols: 19, area: 209, cuts: 9, wires: 8, offAxis: 0, crossings: 0, seconds: 1.71 },
   ],
   /** Same netlist, ten seeded input orderings, each solved to completion. */
   orderings: [

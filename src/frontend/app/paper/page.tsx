@@ -4,13 +4,13 @@ import SiteHeader from "@/components/SiteHeader";
 import SiteFooter from "@/components/SiteFooter";
 import "katex/dist/katex.min.css";
 import { Section, Sub, P, Eq, M, Figure, Table, Th, Td, Note, Code } from "./Prose";
-import { FigPipeline } from "./figures";
-import { EVALUATED, CORPUS, HUMAN, FREE, SINGLE, PORTFOLIO, DRILLED, STACKS, LOCKED, SIZE_BANDS, JOIN_BANDS, PORTFOLIO_AB, VS_HUMAN, PHYSICS, RELAXED, BEAM, RUNTIME, PEDAL, CONSTANTS } from "./data";
+import { FigPipeline, FigRuntime, FigClusters } from "./figures";
+import { EVALUATED, CORPUS, DEFECTIVE, FULLSET, HUMAN, FREE, J0_OUTLIER, SINGLE, PORTFOLIO, DRILLED, STACKS, LOCKED, SIZE_BANDS, JOIN_BANDS, PORTFOLIO_AB, VS_HUMAN, PHYSICS, RELAXED, BEAM, RUNTIME, PEDAL, CONSTANTS } from "./data";
 
 export const metadata: Metadata = {
   title: "Automatic Stripboard Layout: A Staged Constructive Solver",
   description:
-    "Technical description of the Stripboard Editor's layout solver: problem formulation, the staged pipeline, the objective function, a portfolio search over input orderings, and an evaluation against 239 hand-built boards and the 2025 ASP formulation.",
+    "Technical description of the Stripboard Editor's layout solver: problem formulation, the staged pipeline, the objective function, a portfolio search over input orderings, and an evaluation against 210 hand-built boards and the 2025 ASP formulation.",
   alternates: { canonical: "https://stripboard-editor.com/paper" },
 };
 
@@ -76,15 +76,15 @@ export default function PaperPage() {
             <p className="font-serif text-[15px] leading-[1.75] text-neutral-700 dark:text-neutral-300">
               Stripboard is a prototyping board on which every hole in a row already shares copper. Designing a circuit
               means deciding where parts sit, where the copper must be severed, and which connections need a link wire,
-              under physical constraints a real builder has to satisfy with real parts. This report describes a staged
+              under the physical constraints a real builder faces. This report describes a staged
               constructive solver that treats the assignment of nets to copper strips as the primary decision, derives
-              cuts and wires from the resulting geometry, improves the board by local search under an explicit
-              price list calibrated against hand-built work, and by default runs a fixed portfolio of deterministic
-              input orderings and keeps the best finished board. Over a corpus of {CORPUS.projects} circuits with a finished
-              hand-built layout to compare against, it lays out every one completely and without conflicts, at a median{" "}
-              {PORTFOLIO.areaRatio}&times; the human board area, with {PORTFOLIO.offAxis} off-axis wires (wires with any
-              horizontal travel) and {PORTFOLIO.crossings} wire-over-part crossings against {HUMAN.offAxis} and{" "}
-              {HUMAN.crossings} for the humans. On the guitar-pedal benchmark published with a 2025 Answer Set Programming formulation of the same
+              cuts and wires from the resulting geometry, and improves the board by local search under a
+              price list calibrated against hand-built work. Over a corpus of {CORPUS.projects} circuits
+              hand-built by real users, it lays out every one completely and without conflicts, at a median{" "}
+              {PORTFOLIO.areaRatio}&times; the human board area, leaving {PORTFOLIO.offAxis} off-axis wires (wires
+              that leave the vertical) and {PORTFOLIO.crossings} wire-over-part crossings where the humans left{" "}
+              {HUMAN.offAxis} and{" "}
+              {HUMAN.crossings}. On the guitar-pedal benchmark published with a 2025 Answer Set Programming formulation of the same
               problem, it reaches {PEDAL.runs[1].rows}&times;{PEDAL.runs[1].cols} = {PEDAL.runs[1].area} holes against
               that work&apos;s {PEDAL.asp.rows}&times;{PEDAL.asp.cols} = {PEDAL.asp.area}, while additionally modelling
               strip cuts and body clearance.
@@ -95,7 +95,7 @@ export default function PaperPage() {
             <P>
               Stripboard, sometimes called Veroboard, is a perforated board whose holes are joined into parallel copper
               strips. The copper that makes it convenient is also what makes laying out a
-              circuit on it awkward. On a bare printed circuit board, two pins are unconnected until you route a track
+              circuit on it difficult. On a bare printed circuit board, two pins are unconnected until you route a track
               between them. On stripboard, two pins on the same strip are connected whether you wanted that or not.
             </P>
             <P>
@@ -109,9 +109,11 @@ export default function PaperPage() {
               This report describes the solver used by the Stripboard Editor, a browser-based schematic and stripboard
               tool I built. The design goal was never optimality in a formal sense, but a board an experienced builder
               would accept, produced in the seconds a user is willing to wait inside a web page. It contributes a staged
-              constructive pipeline in which strip assignment rather than free 2D placement is the primary decision, a price list
-              over area, wire length, off-axis wires, part crossings and board shape whose exchange rates were calibrated
-              against hand-built boards rather than chosen a priori; and an evaluation against {CORPUS.projects} boards
+              constructive pipeline in which strip assignment rather than free 2D placement is the primary decision; a price list
+              over area, wire length, off-axis wires, part crossings and board shape, calibrated
+              against hand-built boards rather than chosen a priori; a deterministic portfolio search over input
+              orderings; and an
+              evaluation against {CORPUS.projects} boards
               laid out by hand by the tool&apos;s own users, alongside the benchmark published with a recent declarative
               formulation of the same problem.
             </P>
@@ -123,14 +125,14 @@ export default function PaperPage() {
                 A board is a grid of <M tex="R" /> rows and <M tex="C" /> columns of holes,{" "}
                 <M tex="H = \{(r,c) : 1 \le r \le R,\; 1 \le c \le C\}" />. Row <M tex="r" /> is one copper strip. Two
                 kinds of cut sever it: a <em>between-cut</em> removes the copper between two neighbouring holes, and a{" "}
-                <em>drilled cut</em> destroys a hole itself, which is what most builders actually do because a drill bit
+                <em>drilled cut</em> destroys a hole itself; most builders prefer it because a drill bit
                 is easier to aim than a knife.
               </P>
               <P>
                 A cut set <M tex="K" /> partitions each row into maximal runs of holes with no cut between them. I call
                 these runs <em>segments</em> and write <M tex="\sigma(h)" /> for the segment containing hole{" "}
                 <M tex="h" />. Two holes share copper exactly when they lie in the same segment. This is the only
-                conduction the board itself provides; every further connection is made with solder and wire.
+                conduction the board itself provides; every further connection is made with wires.
               </P>
             </Sub>
 
@@ -143,15 +145,15 @@ export default function PaperPage() {
                 apart. A placement <M tex="\pi" /> induces a pin map <M tex="\varphi : V \to H" /> from pins to holes.
               </P>
               <P>
-                Physical feasibility is not a formality here, because unlike a printed circuit board the parts stand on
-                the same surface they connect through. Bodies may not overlap, and each flexible part type carries a{" "}
+                Physical feasibility is not a formality here: the parts stand on the same surface they connect
+                through. Bodies may not overlap, and each flexible part type carries a{" "}
                 <em>clearance</em>: a whole number of free board lines, by default {CONSTANTS.defaultClearance}, that
-                its body keeps to any neighbour, so that two through-hole resistors do not end up shoulder to shoulder
-                in adjacent columns and a resistor does not hug the flank of a connector. A pair shares the moat — the
-                requirement between two parts is the larger of their two clearances, not the sum — and rigid parts
+                its body keeps to any neighbour. The default is what a standard half-watt through-hole resistor
+                needs: its body is wider than the single line of holes it sits on, so two such bodies in directly
+                adjacent lines would collide. A pair shares the moat; the
+                requirement between two parts is the larger of their two clearances, not the sum. Rigid parts
                 demand none of their own: their footprint is taken as their true body, so two footprints may abut, and
-                a part whose plastic outgrows its pin field is the footprint definition&apos;s problem, not the
-                solver&apos;s. Users may set a type&apos;s clearance to 0 when they intend a tight build. Every
+                a body that outgrows its footprint is the parts definition&apos;s problem, not the solver&apos;s. Users may change a type&apos;s clearance to fit their needs. Every
                 candidate the solver considers satisfies these constraints; they are never traded against quality.
               </P>
             </Sub>
@@ -175,6 +177,12 @@ export default function PaperPage() {
                 completeness condition and is what forces wires.
               </P>
               <P>
+                One modelling restriction runs through everything that follows: a link wire is a straight segment
+                between its two end holes. Real builders routinely bend a wire around an obstacle mid-run; the
+                editor does not model bent wires yet, so neither does this solver. This is a known limitation
+                (Section 9) and a good point of future work.
+              </P>
+              <P>
                 (F2) has an immediate consequence that shaped the whole design. Since wires are only useful when they
                 join two groups of the same net, connecting a net needs a spanning tree over its groups, so
               </P>
@@ -185,7 +193,9 @@ export default function PaperPage() {
                 the parts are placed, and the only way to need fewer wires is to put more of each net onto shared
                 copper. This is why the solver spends its effort on strip assignment rather than on clever routing. The
                 one thing the router may do is spend above the bound deliberately, replacing one awkward wire by two
-                tidy ones through an intermediate strip (Section 4.4).
+                tidy ones through an intermediate strip (Section 4.4). All of this assumes insulated wires, which may
+                share the space above the board and never block one another; where wires are bare, routes compete for
+                that space, and reaching the bound stops being a matter of choosing endpoints (Section 3).
               </P>
             </Sub>
 
@@ -205,8 +215,7 @@ export default function PaperPage() {
               <P>
                 The weight this report puts on wire defects deserves a reason, since nothing electrical is wrong with
                 an off-axis wire. The reason is the builder&apos;s eye. A wire that leaves the vertical is much harder
-                to follow across a crowded board, and several of them in close proximity, which is where early versions
-                of this solver concentrated them, around the pin fields of ICs and larger connectors, get messy enough
+                to follow across a crowded board, and several of them in close proximity get messy enough
                 that soldering the board up without a mistake becomes a genuine challenge. A wire crossing a component
                 body is the same problem in a worse form: the wire obscures the part and the part obscures where the
                 wire lands. Eliminating both is much of what separates a layout that is merely correct from one a
@@ -221,7 +230,7 @@ export default function PaperPage() {
               circuit board placement and routing assumes an empty conductive plane on which tracks are created where
               wanted; the stripboard problem starts from a surface that is already fully connected in one direction and
               asks where to break it. Classical floorplanning contributes the packing machinery this solver uses in stage 2, but
-              its objective, area and interconnect length, ignores the constraint that dominates here: which module
+              it optimises area and interconnect length and ignores the constraint that dominates here: which module
               lands on which row decides whether a connection is free or costs a wire.
             </P>
             <P>
@@ -234,7 +243,39 @@ export default function PaperPage() {
               so a resistor may stretch across ten or eleven hole pitches without a clearance model.
             </P>
             <P>
-              My approach is the opposite in method. Rather than describing the constraints and asking a solver for a
+              A second line of work automates the other half of the problem. Dahl&apos;s stripboard autorouter [3]
+              takes the component positions as given and searches for the wires and cuts that realise the netlist.
+              A single connection is routed by uniform-cost search, alternating runs along the copper with jumper
+              hops across the strips. What makes the search hard is that the jumpers are bare
+              wire: a finished route permanently occupies the space it crosses, component footprints are
+              closed to wires outright, and a connection routed late can fail for want of room. Route order therefore
+              decides the outcome, and the algorithm is a genetic search over route orders, rating each by the
+              connections it leaves unrouted. Placement
+              is out of scope by design; the project&apos;s own documentation lists automatic component placement,
+              and support for parts with variable lead span, as future work.
+            </P>
+            <P>
+              VeroRoute [4], the most developed interactive stripboard editor I know of, draws the boundary in the
+              same place. It takes its netlist imported from a schematic tool or painted directly
+              onto component pins by the user, and its auto-router draws tracks between the pins, re-running as the
+              layout is edited. Its own
+              documentation states the division plainly: the program prevents short circuits and checks for
+              open circuits, while it is up to the user to decide how to lay out the circuit.
+            </P>
+            <P>
+              Prior work thus leaves placement to the person twice over. For the autorouter the reason is
+              structural, and it is insulation: bare wire makes routing
+              a competition for the space above the board, hard enough to absorb the whole of the effort, while
+              insulated wire, which may share that space, makes routing nearly
+              forced once the parts are placed (Section 2.3) and moves the difficulty into placement instead.
+              Neither assumption is more correct than the other, but they decide what is left worth
+              automating. This is also why Section 8 compares against Li&apos;s ASP formulation and against neither
+              tool: with placement, board size and lead spans all supplied by the user, the tools solve as their
+              problem what this solver takes as its input. As far as I have been able to find, automatic placement
+              for stripboard has been attempted only by Li&apos;s formulation and by the solver described here.
+            </P>
+            <P>
+              Against Li&apos;s ASP formulation my approach is the opposite in method. Rather than describing the constraints and asking a solver for a
               model, it constructs a layout in stages and repairs it, keeping a single explicit cost that decides every
               adoption. This gives up completeness and any optimality certificate. In exchange it handles the parts of
               the problem that are awkward to encode declaratively, in particular parts locked at user-chosen positions,
@@ -248,7 +289,7 @@ export default function PaperPage() {
               answer each; everything after them produces <em>candidates</em>. A candidate is always a complete board,
               a placement of every part with the cuts and wires of Section 4.4 re-derived for it, so alternatives are
               compared as finished boards rather than as promises. Candidates come from two kinds of source:
-              construction choices with no reliable a-priori winner, which the pipeline simply builds in every
+              construction choices with no reliable a priori winner, which the pipeline simply builds in every
               variant, and local modifications proposed against the current incumbent. Either way, every candidate
               passes through one chooser (Section 5.3), which adopts it only if it strictly improves on the incumbent,
               so no stage can make the result worse than the stage before it.
@@ -259,6 +300,24 @@ export default function PaperPage() {
             >
               <FigPipeline />
             </Figure>
+            <P>
+              The stages below are illustrated on a running example: the guitar-pedal benchmark of Section 8, an
+              18-part, 12-net circuit, solved with the input ordering that produced the published board. Figure 2
+              shows the circuit as drawn in the editor; the figures that follow show the state each stage hands to
+              the next.
+            </P>
+            <Figure
+              n={2}
+              caption="The running example: the guitar-pedal circuit of Section 8, 18 parts and 12 nets, as drawn in the editor. The jacks and supply rails are schematic-only pins excluded from the board."
+            >
+              <img
+                src="/Guitar-Pedal-(arXiv-2512.04910-benchmark)-dark-schematic.png"
+                alt="Schematic of the guitar-pedal benchmark circuit in the Stripboard Editor"
+                width={1954}
+                height={1099}
+                className="w-full h-auto rounded border border-neutral-700"
+              />
+            </Figure>
 
             <Sub n="4.1" title="Stage 0: clustering the netlist">
               <P>
@@ -268,22 +327,35 @@ export default function PaperPage() {
               </P>
               <Eq tex="w_{ij} \;=\; \sum_{n \,\ni\, i,\,j} \frac{1}{k_n - 1}." n={7} />
               <P>
-                The normalisation matters more than it looks. Power and ground nets touch nearly everything, and under
+                This is the standard clique net model of the partitioning literature ([5], Section 2.2). The
+                normalisation matters more than it looks. Power and ground nets touch nearly everything, and under
                 uniform weights they fuse the whole circuit into one blob; at <M tex="1/(k-1)" /> a twenty-member supply
                 net contributes about five percent of what a two-member signal net does, so supply rails neutralise
                 themselves structurally without anyone having to identify them by name or colour. Names and colours are
                 unreliable in user data, so this is worth having for free.
               </P>
               <P>
-                Grouping is deterministic size-capped average-linkage agglomeration. Modularity-based community
+                Grouping is agglomerative clustering ([5], Section 6.2) in its plainest form: every part starts as
+                its own cluster, and the most strongly connected pair of clusters is merged repeatedly. Connection
+                strength is average linkage, the total edge weight between two clusters divided by the product of
+                their sizes, so a pair of small, densely wired clusters outranks a pair of large ones that merely
+                touch often. Merges that would exceed the size cap are skipped, the process stops when no
+                positive-weight merge remains, and ties resolve by smallest merged size and then lowest part index,
+                which keeps stage 0 deterministic. Modularity-based community
                 detection was tried and abandoned: series signal chains, which is what audio circuits are, collapse into
                 a single community. The size cap is small, six parts for projects up to ten parts and five above that.
                 That is counter-intuitive, since small groups fragment the board, and it is the outcome of a study over
                 twenty-one cap values across the full project extraction: once the refinement of Section 4.5 can fuse adjacent
                 groups, many small placement problems beat few large ones, and the effect is strongest on the largest
-                boards. Clustering itself is deterministic and offers the chooser nothing: one grouping feeds
+                boards. Clustering offers the chooser nothing: one grouping feeds
                 everything downstream.
               </P>
+              <Figure
+                n={3}
+                caption="The running example as stage 0 sees it. Nodes are parts, edge thickness and darkness the pair weight of equation (7), dashed circles the five clusters agglomeration returns under the size cap. The faint web is the ground net: nine placed members put its pair weight at one eighth of a two-part signal net's, so it never pulls a cluster together on its own."
+              >
+                <FigClusters />
+              </Figure>
             </Sub>
 
             <Sub n="4.2" title="Stage 1: strip assignment inside a group">
@@ -292,8 +364,9 @@ export default function PaperPage() {
                 are assigned to strip rows. The multi-pin rigid parts of the group are placed first, by beam search over
                 rotations and relative row offsets, because their pin patterns are what pin nets to rows. A rotation is
                 admissible only if the assigned pins in each footprint row form at most two same-net blocks, so that one
-                cut under the body separates them, and only if every assigned pin can reach open board sideways: laying
-                a DIP along a strip rather than across it puts all sixteen of its pins on one strip, which forces a cut
+                cut under the body separates them (a part with no admissible rotation at all stays unplaced, the
+                limitation of Section 9), and only if every assigned pin can reach open board sideways: laying
+                a DIP along a strip rather than across it puts half its pins on one strip, which forces a cut
                 lattice that walls every pin into a one-hole segment with nowhere to attach a wire.
               </P>
               <P>
@@ -311,11 +384,27 @@ export default function PaperPage() {
                 Stage 1, too, commits to one tile per group; the alternatives the chooser will judge arise downstream,
                 from how the finished tiles are placed, compacted and repaired.
               </P>
+              <Figure
+                n={4}
+                caption="Stage 1's five tiles for the running example, each sized to its content, before any cuts or wires exist; border colors match the cluster hulls of Figure 3 and the boxes of Figure 5. Strips carrying pins of more than one net show as conflicts; deriving the cuts that separate them is stage 3's job. The two potentiometers, the transistor and the two effect chips anchor their tiles as the rigid parts whose pin patterns pin nets to rows."
+              >
+                <div className="space-y-2">
+                  <div className="flex items-start gap-2">
+                    <img src="/stage1-t1-dark.png" alt="Stage 1 tile with Tone1, Volume1, C5, D1, D2" width={1000} height={325} className="h-auto rounded border-2" style={{ width: "52%", borderColor: "#f59e0b" }} />
+                    <img src="/stage1-t2-dark.png" alt="Stage 1 tile with Q1, Gain1, R3, C4" width={903} height={465} className="h-auto rounded border-2" style={{ width: "46%", borderColor: "#22d3ee" }} />
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <img src="/stage1-t4-dark.png" alt="Stage 1 tile with Boost1, R1, C3" width={750} height={396} className="h-auto rounded border-2" style={{ width: "46%", borderColor: "#e879f9" }} />
+                    <img src="/stage1-t3-dark.png" alt="Stage 1 tile with R5, R6, C2" width={477} height={537} className="h-auto rounded border-2" style={{ width: "25%", borderColor: "#a3e635" }} />
+                    <img src="/stage1-t5-dark.png" alt="Stage 1 tile with C1, R2, R4" width={466} height={525} className="h-auto rounded border-2" style={{ width: "25%", borderColor: "#f43f5e" }} />
+                  </div>
+                </div>
+              </Figure>
             </Sub>
 
             <Sub n="4.3" title="Stage 2: floorplanning the tiles">
               <P>
-                Finished tiles are placed on the board. Tiles are placed individually into the absolute frame, so a tile
+                Finished tiles are placed individually into the absolute frame, so a tile
                 may nest into the unused interior of another, with candidate positions drawn from adjacency plus{" "}
                 <em>row-alignment</em> spots where a tile&apos;s net row lands on the same absolute row as another
                 tile&apos;s pin of the same net. That alignment is the whole point: it turns a link wire into bare
@@ -348,6 +437,33 @@ export default function PaperPage() {
                 predict, and building all of them and letting the price list decide turned out to be both simpler and
                 better than being clever.
               </P>
+              <Figure
+                n={5}
+                caption="The adopted stage-2 construction of the running example: the five tiles of Figure 4 composed at 11×21, outlined in their cluster colors as the packer placed them, with cuts and wires already derived, since every candidate is judged as a finished board. The long vertical wires are inter-tile connections the composition could not turn into shared copper. Refinement shaves this board to the 11×19 of Figure 6, breaking the tile boundaries up in the process."
+              >
+                <div className="relative">
+                  <img
+                    src="/stage2-dark.png"
+                    alt="The composed stage-2 construction of the guitar-pedal example at 11 by 21 holes"
+                    width={1788}
+                    height={973}
+                    className="w-full h-auto rounded border border-neutral-700"
+                  />
+                  {/* tile footprints as placed, in the cluster colors; grid mapping
+                      measured from the screenshot (origin 129,130, pitch 79) */}
+                  <svg viewBox="0 0 1788 973" className="absolute inset-0 w-full h-full" aria-hidden="true">
+                    {[
+                      { x: 178, y: 179, w: 692, h: 218, c: "#f59e0b" },
+                      { x: 178, y: 495, w: 613, h: 376, c: "#22d3ee" },
+                      { x: 889, y: 495, w: 376, h: 455, c: "#a3e635" },
+                      { x: 968, y: 100, w: 692, h: 297, c: "#e879f9" },
+                      { x: 1363, y: 495, w: 376, h: 455, c: "#f43f5e" },
+                    ].map((r, i) => (
+                      <rect key={i} x={r.x} y={r.y} width={r.w} height={r.h} rx={14} fill="none" stroke={r.c} strokeWidth={5} />
+                    ))}
+                  </svg>
+                </div>
+              </Figure>
             </Sub>
 
             <Sub n="4.4" title="Stage 3: completion, cuts and wires">
@@ -388,15 +504,15 @@ export default function PaperPage() {
                 A project option pushes the drill preference to its limit. In <em>drilled-cuts-only</em> mode the
                 router also severs donated relay tails by sacrificing a tail hole rather than knifing the copper
                 beside it, and every between-cut the upgrade cannot absorb is priced like an off-axis wire (Section
-                5.3), so layouts that leave room to drill win. Between-cuts that no placement can remove — two
-                directly adjacent pins of one footprint force a knife cut between them — are exempt from the price,
-                since charging the unavoidable would only distort every comparison. Over the corpus the mode cuts
+                5.3), so layouts that leave room to drill win. Between-cuts that no placement can remove are exempt
+                from the price; two directly adjacent pins of one footprint force a knife cut between them, and
+                charging the unavoidable would only distort every comparison. Over the corpus the mode cuts
                 knife cuts from {DRILLED.betweenCutsNormal} to {DRILLED.betweenCuts} at a median area of{" "}
                 {DRILLED.areaRatio}&times; the human board against the normal mode&apos;s {PORTFOLIO.areaRatio}
-                &times;, with wire tidiness essentially unchanged ({DRILLED.cleanBoards} boards free of wire defects,
-                the same count as the normal mode). One design lesson is recorded here because it was measured both
+                &times;, with wire tidiness essentially unchanged ({DRILLED.cleanBoards} boards free of wire defects
+                against the normal mode&apos;s {PORTFOLIO.cleanBoards}). One design lesson is recorded here because it was measured both
                 ways: upgrading cuts to drills <em>before</em> routing, so endpoints could never box a cut in, saved
-                a third of a knife cut per board and paid 26 off-axis wires and 16 crossings for it — every early
+                a third of a knife cut per board and paid 26 off-axis wires and 16 crossings for it; every early
                 drill destroys a hole a link wire might have used. The upgrade therefore stays where it always was,
                 after routing, where it can only take holes that are provably surplus.
               </P>
@@ -421,6 +537,18 @@ export default function PaperPage() {
                 clear an approach for a vertical wire. Both are proposals only; they cost real board area and are
                 adopted only when the pricing says the area is worth it.
               </P>
+              <Figure
+                n={6}
+                caption="The running example after refinement: compaction and the tile polish shave two columns from the construction of Figure 5, reaching the 11×19 of the published board. On this ordering the tidy pass of Section 4.6 finds the result already free of wire defects and adopts nothing, so this is the finished layout up to cut alignment."
+              >
+                <img
+                  src="/stage-5-dark.png"
+                  alt="The guitar-pedal example after refinement at 11 by 19 holes"
+                  width={1651}
+                  height={982}
+                  className="w-full h-auto rounded border border-neutral-700"
+                />
+              </Figure>
             </Sub>
 
             <Sub n="4.6" title="The tidy pass">
@@ -454,7 +582,8 @@ export default function PaperPage() {
                 search happily trades long off-axis wires for wires running over component bodies, which is legal
                 under the score and wrong to the eye. The rating guard earns its place the same way: the growth
                 allowance is unlimited by default, and before the guard existed a variant could buy the removal of a
-                single slanted wire with nineteen extra board rows — strictly tidier, and plainly not worth it. Under
+                single slanted wire with nineteen extra board rows; that is strictly tidier, and plainly not worth it.
+                Under
                 the guard the variant&apos;s extra board must pay for its mess win at the same exchange rate as every
                 other decision.
               </P>
@@ -496,7 +625,7 @@ export default function PaperPage() {
                 detour of similar length wins.
               </P>
               <P>
-                Wires may also run collinearly on top of one another — physically fine under insulation, and a
+                Wires may also run collinearly on top of one another; this is physically fine under insulation, and a
                 standard human technique for parallel runs sharing a column. A candidate additionally pays a{" "}
                 <em>stacking charge</em> <M tex="\tau(w)" /> set by the deepest pile it would join at any point of its
                 run: becoming the second wire in a channel costs {CONSTANTS.stackSecond}, still cheaper than a slant
@@ -504,8 +633,9 @@ export default function PaperPage() {
                 and a fourth wire in one channel is barred outright, softening to a price of{" "}
                 {CONSTANTS.stackRescue} per extra lane only when a net cannot complete any other way, so the cap can
                 never starve a board that the flat rule would have finished. Under the k = 10 portfolio only{" "}
-                {STACKS.atCap} of the {CORPUS.projects} boards contain a channel at the three-wire cap and none
-                exceed it.
+                {STACKS.atCap} of the {CORPUS.projects} boards contain a channel at the three-wire cap, and the
+                rescue has fired exactly once: one nine-part board completes with a single four-wire channel that
+                the flat ban would have starved.
               </P>
               <Note>
                 Stacking was once banned outright, and replacing the ban by a price was the largest single quality
@@ -514,6 +644,13 @@ export default function PaperPage() {
                 a real build: an unbounded flat rate let three and four wires pile into one channel, which is exactly
                 as unpleasant to solder as it sounds.
               </Note>
+              <P>
+                None of the rates in this section was calibrated the way <M tex="\lambda_A" /> of Section 5.3 was.{" "}
+                <M tex="\rho" /> and <M tex="\kappa" /> are judgements about what a builder minds when reading a
+                finished board, and the stacking schedule came from the build the note describes; none of them was
+                swept over the corpus. They are reported as what the shipped solver uses rather than as tuned values,
+                and a ladder like the one behind <M tex="\lambda_A" /> could well move them.
+              </P>
               <P>
                 The <em>wire mess</em> of a finished board sums the per-wire price and stacking charge together with
                 a flat charge per off-axis wire,
@@ -534,13 +671,13 @@ export default function PaperPage() {
               <P>
                 zero when the user has locked a dimension, since the shape is then their choice. Everything is
                 measured in one currency, holes of wire, and <M tex="\lambda_A" /> is the exchange rate against board
-                area. It stood at 1 for most of the project&apos;s history — a cell of board and a hole of wire
-                weighing exactly the same is the claim that density must not buy ugly or long wires — and was lowered
+                area. It stood at 1 for most of the project&apos;s history; a cell of board and a hole of wire
+                weighing exactly the same is the claim that density must not buy ugly or long wires. It was lowered
                 after building a board by hand made the direction of the remaining error obvious: on the bench, extra
                 board is nearly free and every awkward wire costs real attention. The final value came from a ladder
                 of corpus runs. Halving the cell price to 0.5 removed a fifth of the remaining wire defects for one
                 percentage point of median area; 0.35 removed another quarter for three more points; 0.25 bought
-                nothing further — the defects merely shuffled while one board grew by 372 cells — so the price stopped
+                nothing further; the defects merely shuffled while one board grew by 372 cells, so the price stopped
                 being the binding constraint there, and {CONSTANTS.areaWeight} is where the calibration settled:
                 board space is cheapened exactly until cheapening it stops making boards tidier.
               </P>
@@ -633,9 +770,10 @@ export default function PaperPage() {
             <P>
               Orderings are independent, so the editor runs them in parallel web workers, by default on three
               quarters of the machine&apos;s cores, with workers pulling ordering indices from a shared counter. The
-              portfolio size is a fixed count rather than a time budget — an earlier revision shipped a
-              five-second budget, which made the result depend on the machine that computed it — so the shipped
-              default is exactly reproducible everywhere: k = {CONSTANTS.permBoards} orderings, reduced to{" "}
+              portfolio size is a fixed count rather than a time budget; an earlier revision shipped a
+              five-second budget, which made the result depend on the machine that computed it. The fixed count
+              makes the shipped default exactly reproducible everywhere: k = {CONSTANTS.permBoards} orderings,
+              reduced to{" "}
               {CONSTANTS.permBoardsMid} on projects above {CONSTANTS.permBoardsMidAbove} parts and to a single solve
               above {CONSTANTS.permBoardsSingleAbove}, where one solve alone runs tens of seconds on an average
               machine and the larger portfolio should be the user&apos;s explicit choice. The k = 10 row of Table 2
@@ -657,15 +795,22 @@ export default function PaperPage() {
             <Sub n="7.1" title="Corpus and protocol">
               <P>
                 Every figure in this section rests on one set of {CORPUS.projects} circuits, and nothing below ever
-                switches to a different one. The set is built as follows. Extracting the editor&apos;s stored projects
-                yields {CORPUS.extracted} usable layouts: those where every non-excluded part is placed, deduplicated by
+                switches to a different one. The set is built as follows. Provenance comes first: of the{" "}
+                {CORPUS.stored} projects stored at extraction time, only those that provably owe nothing to the solver
+                are considered, namely the ones last saved before the first solver release (16 July 2026) and the ones
+                created after the editor began recording solver usage (31 July 2026) that never recorded a run.
+                Projects touched in the window between the two, where the solver existed but its use went unrecorded,
+                are dropped outright, since a board saved there cannot be told apart from a solved one. That leaves{" "}
+                {CORPUS.provable} projects whose layouts are hand-built by construction. Extracting these yields{" "}
+                {CORPUS.extracted} usable layouts: those where every non-excluded part is placed, deduplicated by
                 a content hash of the layout, and trimmed to their content, since users commonly oversize a board and
                 use the empty border as scratch space. From these, {CORPUS.unresolvable} projects are dropped because their parts
                 name component definitions that no longer exist, which makes them invisible to the solver and to the
                 editor alike: unsolvable data rather than hard instances. A further {CORPUS.defective} are dropped
                 because the stored human board contains a short or an unconnected net, and an unfinished board is not a
                 fair thing to measure a finished one against. That leaves {CORPUS.projects} circuits, each with a
-                complete hand-built layout to compare against. Median size is {CORPUS.partsMedian} parts and{" "}
+                complete hand-built layout that the solver demonstrably played no part in. Median size is{" "}
+                {CORPUS.partsMedian} parts and{" "}
                 {CORPUS.netsMedian} nets, with a 90th percentile of {CORPUS.partsP90} and a maximum of{" "}
                 {CORPUS.partsMax} parts.
               </P>
@@ -681,13 +826,31 @@ export default function PaperPage() {
                 found hardest.
               </P>
               <P>
+                The second half of that worry is testable. The {CORPUS.defective} projects dropped for a defective human
+                board have sound netlists; it is the stored layout that is unfinished, not the circuit. Solved under
+                the same k = {CONSTANTS.permBoards} portfolio they all complete, leaving {DEFECTIVE.offAxis} off-axis
+                wires and {DEFECTIVE.crossings} crossings over the set, with {DEFECTIVE.cleanBoards} of{" "}
+                {CORPUS.defective} free of wire defects; that is a defect rate no worse than on the {CORPUS.projects}{" "}
+                finished boards. No area ratio is quoted for them, since a board its author did not finish is not
+                something to measure area against. This does not establish that these were the hard circuits, as a
+                board saved with an open net may simply be work in progress, but it does rule out the reverse
+                reading: the filter that produces the comparison subset hides no class of circuit the solver cannot
+                do. Counted in, the solver lays out all {CORPUS.extracted - CORPUS.unresolvable} circuits the
+                extraction could resolve. Widening once more to every extractable project regardless of provenance,
+                including boards their authors never finished placing, the same configuration completes{" "}
+                {FULLSET.complete} of {FULLSET.projects}; the one exception is a switch whose 3&times;3 pin grid the
+                strip-assignment model cannot represent, discussed in Section 9.
+              </P>
+              <P>
                 A second caveat concerns tuning. The solver was developed against this corpus: the price list of
                 Section 5 and most heuristic choices were made while watching these numbers, so every figure in this
                 section is in-sample, and there is no held-out set. Comparisons between configurations remain fair,
                 since all of them run on the same data, but the absolute margins over the human reference should be
-                read with that in mind. A clean holdout is accumulating on its own: since July 2026, saved projects
-                carry provenance fields that separate hand-built layouts from solver output, so boards built after the
-                solver&apos;s development can support an out-of-sample evaluation later.
+                read with that in mind. The provenance filter above already
+                guarantees no reference board was made with the solver; it cannot guarantee the solver was not tuned
+                toward these boards, since most of them were in the wider extraction the price list was developed
+                against. A clean holdout is accumulating on its own: hand-built boards saved since usage tracking began
+                are identifiable as such, and enough of them will support an out-of-sample evaluation later.
               </P>
               <P>Metrics, all measured by one harness on both sides:</P>
               <ul className="font-serif text-[15px] leading-[1.75] text-neutral-700 dark:text-neutral-300 space-y-1.5 mb-3 list-disc pl-5">
@@ -718,7 +881,7 @@ export default function PaperPage() {
             </Sub>
 
             <Sub n="7.2" title="Results">
-              <Table n={2} caption={`Unconstrained runs over the ${CORPUS.projects} circuits: the solver chooses the board size and nothing is locked. Row 1 is the staged pipeline as it stood before the wire-tidiness work, included to show what the price list bought; row 2 disables the tidy pass; row 3 solves one input ordering; rows 4 and 5 run the portfolio at fixed ordering counts. The editor's default is the k = 10 row itself for projects up to ${CONSTANTS.permBoardsMidAbove} parts; larger projects default to k = ${CONSTANTS.permBoardsMid} or a single solve so a first run stays quick. All five lay out every circuit completely, so the table shows only quality. Time is the median solve time per project, measured for rows 2 to 5 in one batch on one machine; row 1 was measured at that earlier revision and its time is not comparable with the rest of the column. The Human row is the same boards as their authors built them.`}>
+              <Table n={2} caption={`Unconstrained runs over the ${CORPUS.projects} circuits: the solver chooses the board size and nothing is locked. Row 1 disables the tidy pass; row 2 solves one input ordering; rows 3 and 4 run the portfolio at fixed ordering counts. The editor's default is the k = 10 row itself for projects up to ${CONSTANTS.permBoardsMidAbove} parts; larger projects default to k = ${CONSTANTS.permBoardsMid} or a single solve so a first run stays quick. All four lay out every circuit completely, so the table shows only quality. Time is the median wall-clock per project as a user experiences it: one circuit at a time on an otherwise idle machine, with a portfolio's orderings solved simultaneously in parallel workers, the way the editor runs them. Figure 7 breaks the single-ordering time down by project size. The Human row is the same boards as their authors built them.`}>
                 <thead>
                   <tr>
                     <Th>Configuration</Th>
@@ -764,8 +927,8 @@ export default function PaperPage() {
                 conflicts, so the interesting differences are all in the quality columns. The k = 10 portfolio, the
                 reference configuration for the rest of this section, comes out at a median {PORTFOLIO.areaRatio}&times;
                 the human area, with a median aspect ratio of {PORTFOLIO.aspect} against {HUMAN.aspect} for the humans,
-                so the shape distribution sits where the reference does rather than at the long ribbons the early
-                pipeline favoured.
+                so the shape distribution sits where the reference does; the long ribbons the
+                early staged pipeline favoured, before the aspect penalty and the tidy pass existed, are gone.
               </P>
               <P>
                 The median hides a wide spread. Per project, the portfolio is smaller than the human board
@@ -774,8 +937,8 @@ export default function PaperPage() {
                 &times;. Where the human wins on area, it is usually not by finding a better board under the same
                 rules. Auditing every human layout against the solver&apos;s own physical constraints, with the
                 solver&apos;s geometry code, shows {PHYSICS.violating} of the {CORPUS.projects} violating at least one:
-                a flexible body inside a footprint&apos;s clearance — a resistor packed against the flank of an IC or
-                connector — on {PHYSICS.onRigid} boards, parallel flexible bodies closer than the clearance permits
+                a flexible body inside a footprint&apos;s clearance (a resistor packed against the flank of an IC or
+                connector) on {PHYSICS.onRigid} boards, parallel flexible bodies closer than the clearance permits
                 on {PHYSICS.tooClose}, a flexible part bent tighter than its span minimum on {PHYSICS.spanShort}. Of
                 the {VS_HUMAN.larger} projects where the human board is smaller,{" "}
                 {PHYSICS.humanSmallerViolating} violate a physical rule. Against the{" "}
@@ -790,8 +953,9 @@ export default function PaperPage() {
                 {PHYSICS.spanLong} boards stretching a part past its definition&apos;s span maximum are the visible
                 cases, and on any such board the solver&apos;s tighter layout might not fit the real part. The stored
                 data cannot distinguish a big part from a convenient layout of a small one, in either direction.
-                Second, large projects nearly always contain at least one tight part, and no human board above 25
-                parts is free of violations, so for the largest circuits the two explanations cannot be separated. In
+                Second, large projects nearly always contain at least one tight part; a single human board above 25
+                parts is free of violations, so for the largest circuits the two explanations can barely be
+                separated. In
                 the small and mid
                 bands, where both kinds of reference exist, the pattern holds clearly; in the 6 to 10 part band the
                 solver&apos;s median is {PHYSICS.band6to10CleanMedian}&times; against clean references, and not one
@@ -809,11 +973,11 @@ export default function PaperPage() {
                 {RELAXED.adaptive.touchedHumanSmaller}. A <em>flat</em> relaxation, clearances removed and span minimums
                 cut to one hole, bounds what the physical rulebook costs in total: a median of{" "}
                 {RELAXED.flat.areaRatio}&times;, with {RELAXED.flat.smaller + RELAXED.flat.equal} of the{" "}
-                {CORPUS.projects} boards at or below the human&apos;s area. Building tighter does cost tidiness — the
+                {CORPUS.projects} boards at or below the human&apos;s area. Building tighter does cost tidiness; the
                 relaxed runs end with {RELAXED.adaptive.offAxis} and {RELAXED.flat.offAxis} off-axis wires against
                 the reference&apos;s {PORTFOLIO.offAxis}, since a board packed to the human&apos;s own density leaves
-                the router less room to straighten its wires — and the violations no constant can absolve, bodies
-                crossing and corridors over pins, remain in place, which is part of why some human wins remain.
+                the router less room to straighten its wires. The violations no constant can absolve, bodies
+                crossing and corridors over pins, also remain in place, which is part of why some human wins remain.
               </P>
               <P>
                 On wire tidiness the solver has moved past the reference. Across the corpus the humans left{" "}
@@ -828,12 +992,11 @@ export default function PaperPage() {
                 {HUMAN.stripCompletePct}%. That is the clearest remaining structural difference between the two.
               </P>
 
-              <Table n={3} caption="Median area relative to the human board, by project size. The early pipeline degraded steadily as circuits grew; the refinement stage and the portfolio search are what pulled the largest band back.">
+              <Table n={3} caption="Median area relative to the human board, by project size. Small circuits come out well under the human's area; the mid bands are where honest clearance costs the most, and the portfolio is what pulls them back.">
                 <thead>
                   <tr>
                     <Th>Parts</Th>
                     <Th right>n</Th>
-                    <Th right>Staged only</Th>
                     <Th right>Single</Th>
                     <Th right>Portfolio</Th>
                   </tr>
@@ -843,7 +1006,6 @@ export default function PaperPage() {
                     <tr key={b.band}>
                       <Td strong>{b.band}</Td>
                       <Td right>{b.n}</Td>
-                      <Td right>{b.baseline.toFixed(2)}&times;</Td>
                       <Td right>{b.current.toFixed(2)}&times;</Td>
                       <Td right>{b.portfolio.toFixed(2)}&times;</Td>
                     </tr>
@@ -854,29 +1016,29 @@ export default function PaperPage() {
 
             <Sub n="7.3" title="Ablations">
               <P>
-                The tidy pass is measured on single-ordering runs, rows 2 and 3 of Table 2. With it disabled the
-                corpus finishes with {FREE[1].offAxis} off-axis wires and {FREE[1].crossings} crossings, against{" "}
+                The tidy pass is measured on single-ordering runs, rows 1 and 2 of Table 2. With it disabled the
+                corpus finishes with {FREE[0].offAxis} off-axis wires and {FREE[0].crossings} crossings, against{" "}
                 {SINGLE.offAxis} and {SINGLE.crossings} with it, and{" "}
-                {SINGLE.cleanBoards - FREE[1].cleanBoards} fewer boards end free of wire defects. It is not a trade
-                against size: the median area ratio moves by a single point ({FREE[1].areaRatio}&times; to{" "}
+                {SINGLE.cleanBoards - FREE[0].cleanBoards} fewer boards end free of wire defects. The trade against
+                size is small: the median area ratio moves three points ({FREE[0].areaRatio}&times; to{" "}
                 {SINGLE.areaRatio}&times;), because the pass trims the blank lines its own insertions leave behind at
-                the board edges. What it costs is time, {RUNTIME.tidySharePct}% of the corpus-total solve time,
+                the board edges and pays only for the room its channels actually use. What it costs is time, {RUNTIME.tidySharePct}% of the corpus-total solve time,
                 concentrated in the largest boards; the median project pays about a quarter extra. This is the single
                 largest quality lever in the pipeline and the reason it is on by default, with a checkbox for users
                 who want the speed.
               </P>
               <P>
-                The portfolio is the other large lever. Three orderings leave the median area where the single solve
-                puts it and spend their whole advantage on tidiness, cutting wire defects from{" "}
-                {SINGLE.offAxis + SINGLE.crossings} to {FREE[3].offAxis + FREE[3].crossings} at roughly three times
+                The portfolio is the other large lever. Three orderings already buy back the tidy pass&apos;s area
+                cost ({SINGLE.areaRatio}&times; to {FREE[2].areaRatio}&times;) while cutting wire defects from{" "}
+                {SINGLE.offAxis + SINGLE.crossings} to {FREE[2].offAxis + FREE[2].crossings} at roughly three times
                 the median solve time; per project, k = 3 is smaller on {PORTFOLIO_AB.k3vsSingle.better} boards and
-                larger on {PORTFOLIO_AB.k3vsSingle.worse}. Ten orderings are the step that does both at once: the
-                median area ratio drops to {PORTFOLIO.areaRatio}&times;, wire defects halve again to{" "}
+                larger on {PORTFOLIO_AB.k3vsSingle.worse}. Ten orderings push both further: the
+                median area ratio drops to {PORTFOLIO.areaRatio}&times;, wire defects fall again to{" "}
                 {PORTFOLIO.offAxis} off-axis wires and {PORTFOLIO.crossings} crossings, and the count of fully clean
                 boards rises to {PORTFOLIO.cleanBoards}. Against the single solve, k = 10 is smaller on{" "}
                 {PORTFOLIO_AB.k10vsSingle.better} projects, identical on {PORTFOLIO_AB.k10vsSingle.same} and larger
                 on {PORTFOLIO_AB.k10vsSingle.worse}; every one of those {PORTFOLIO_AB.k10vsSingle.worse} is a
-                deliberate trade the rating prefers, not a regression — {PORTFOLIO_AB.k10LargerTidier} of them remove
+                deliberate trade the rating prefers, not a regression; {PORTFOLIO_AB.k10LargerTidier} of them remove
                 off-axis wires or crossings, and the other {PORTFOLIO_AB.k10LargerOtherGains} buy shorter or fewer
                 wires and emptier channels. The largest, at +{PORTFOLIO_AB.k10LargerWorst.cells} cells, takes a board
                 from {PORTFOLIO_AB.k10LargerWorst.defectsFrom} wire defects to{" "}
@@ -891,8 +1053,9 @@ export default function PaperPage() {
                 must conform to a position it did not choose.
               </P>
               <P>
-                Early in the project this configuration completed only {LOCKED.baseline.complete} of{" "}
-                {CORPUS.projects} circuits, at {LOCKED.baseline.areaRatio}&times; human area. Every single failure had
+                Early in the project this configuration completed only {LOCKED.baseline.complete} of the{" "}
+                {LOCKED.baseline.of} circuits the corpus then contained, at {LOCKED.baseline.areaRatio}&times; human
+                area. Every single failure had
                 the same anatomy: a run of pins needing a link wire whose segment contained no free hole to solder it
                 to. Enforcing the free hole as a structural invariant in the packer, rather than rescuing it afterwards,
                 brought that to {LOCKED.current.complete}, the whole corpus. At a single ordering, locked runs cost{" "}
@@ -913,7 +1076,7 @@ export default function PaperPage() {
                 Residual wire defects are not spread evenly. Grouping projects by the rigid-join count <M tex="J" /> of
                 equation (9) accounts for nearly all of them.
               </P>
-              <Table n={4} caption="Residual wire defects by rigid-join count of the netlist, k = 10 portfolio. Boards whose ICs do not talk to each other come out essentially perfect; the remaining defects are concentrated in the top band.">
+              <Table n={4} caption="Residual wire defects by rigid-join count of the netlist, k = 10 portfolio. Boards whose ICs do not talk to each other come out almost universally perfect, with one outlier holding nearly all of that band's defects; the rest concentrate in the top band.">
                 <thead>
                   <tr>
                     <Th>Rigid joins J</Th>
@@ -934,10 +1097,12 @@ export default function PaperPage() {
                 </tbody>
               </Table>
               <P>
-                Nearly two thirds of the corpus has <M tex="J = 0" />, and over those {JOIN_BANDS[0].n} projects the solver
-                produces a total of {JOIN_BANDS[0].offAxis} off-axis{" "}
-                {JOIN_BANDS[0].offAxis === 1 ? "wire" : "wires"} and {JOIN_BANDS[0].crossings} crossings.
-                Almost everything else sits in the {JOIN_BANDS[3].n} projects
+                Nearly two thirds of the corpus has <M tex="J = 0" />, and of those {JOIN_BANDS[0].n} projects,{" "}
+                {J0_OUTLIER.perfect} finish perfect and one more carries a single off-axis wire. The band&apos;s
+                remaining defects, {J0_OUTLIER.offAxis} off-axis wires and all {J0_OUTLIER.crossings} of its
+                crossings, belong to one {J0_OUTLIER.parts}-part outlier, a connector-dense board the solver clearly
+                mishandles and which is worth a study of its own. Beyond that band, the defects sit in the{" "}
+                {JOIN_BANDS[3].n} projects
                 with eleven or more rigid joins, which are the IC-to-IC boards: several chips whose pin patterns are
                 fixed, connected to each other by nets no flexible part can absorb by bending. What those boards need is
                 horizontal transport, and a board with no pin-free copper spanning the required columns has nowhere to
@@ -948,12 +1113,26 @@ export default function PaperPage() {
 
             <Sub n="7.6" title="Runtime">
               <P>
-                Median solve time for a single ordering is {(RUNTIME.medianMs / 1000).toFixed(1)} s, with a
-                90th percentile of {Math.round(RUNTIME.p90Ms / 1000)} s and a worst case of{" "}
-                {Math.round(RUNTIME.maxMs / 1000)} s, measured on {EVALUATED.hardware}. Solving twelve circuits at
-                once inflates each of them: re-run one at a time, a {RUNTIME.contentionSampleN}-circuit sample
-                finished a median {RUNTIME.contentionMedian} times faster for identical boards. A typical desktop
-                should be assumed several times slower.
+                Times here and in Table 2 are wall-clock under the editor&apos;s own execution model: one circuit
+                at a time on an otherwise idle machine, a portfolio&apos;s orderings running simultaneously in
+                parallel worker threads, and every timed run verified to pick the same board as the corpus sweeps.
+                Median time for a single ordering is {(RUNTIME.medianMs / 1000).toFixed(1)} s, with a
+                90th percentile of {(RUNTIME.p90Ms / 1000).toFixed(1)} s and a worst case of{" "}
+                {Math.round(RUNTIME.maxMs / 1000)} s, measured on {EVALUATED.hardware}. A typical desktop
+                should be assumed a few times slower.
+              </P>
+              <Figure
+                n={7}
+                caption="Single-ordering wall-clock by project size, parts rounded to the nearest multiple of 5, over the corpus. Boxes span the interquartile range with a tick at the median; whiskers reach the extremes. The vertical scale is logarithmic: the medians climb from tens of milliseconds to tens of seconds across the bands, but the spread inside a band is itself one to two decades, so component count alone is a poor predictor of an individual circuit's solve time."
+              >
+                <FigRuntime />
+              </Figure>
+              <P>
+                The figure explains why the median in Table 2 undersells the tail. Within every band the slowest
+                project runs one to two orders of magnitude past the median, and the worst cases in the corpus are
+                mid-sized boards of twenty-odd parts rather than the largest ones: what drives the annealing and
+                routing cost is not the part count but how contested the board is, and a dense 20-part board with a
+                large connector can cost more than a sparse 45-part one.
               </P>
               <P>
                 Most of that time is candidate evaluation, not construction: the annealing refinement of Section 4.5
@@ -968,7 +1147,9 @@ export default function PaperPage() {
               </P>
               <P>
                 The portfolio multiplies this by <M tex="k" /> in total compute, but orderings solve in parallel
-                across the workers, so the wall-clock price of the default is closer to two solves than ten. The
+                across the workers, and the measurement above prices that directly: per project, the k = 10
+                portfolio costs a median {RUNTIME.k10OverSingleMedian} times the single solve in wall-clock, not
+                ten. The
                 size-aware default of Section 6 exists for the tail: on the largest boards even one solve runs tens
                 of seconds on an average machine, so the first click stays a single solve there and the larger
                 portfolio is the user&apos;s explicit choice.
@@ -1043,10 +1224,10 @@ export default function PaperPage() {
               With the portfolio search the solver reaches {PEDAL.runs[1].area} holes against the published{" "}
               {PEDAL.asp.area}, a {Math.round((1 - PEDAL.runs[1].area / PEDAL.asp.area) * 100)}% smaller board, in{" "}
               {PEDAL.runs[1].seconds.toFixed(1)} s of wall clock. A single-ordering solve already produces{" "}
-              {PEDAL.runs[0].area} holes in about a second, below the published board as well.
+              {PEDAL.runs[0].area} holes in about half a second, below the published board as well.
             </P>
             <Figure
-              n={2}
+              n={8}
               caption={`The portfolio result on the reconstructed guitar-pedal netlist, as published in the editor: ${PEDAL.runs[1].rows}×${PEDAL.runs[1].cols} holes, twelve nets on ${PEDAL.runs[1].rows} strips through ${PEDAL.runs[1].cuts} cuts, ${PEDAL.runs[1].wires} link wires, every one vertical, none crossing a part. Click the board to open the live project.`}
             >
               <a href={PEDAL.viewUrl} target="_blank" rel="noopener noreferrer" title="Open the guitar-pedal project in the Stripboard Editor">
@@ -1118,11 +1299,29 @@ export default function PaperPage() {
             </P>
             <ul className="font-serif text-[15px] leading-[1.75] text-neutral-700 dark:text-neutral-300 space-y-2 mb-3 list-disc pl-5">
               <li>
-                <strong>IC-to-IC boards.</strong> The {JOIN_BANDS[3].n} projects with eleven or more rigid joins hold
-                nearly all remaining wire defects. Humans solve these with dedicated bus rows, one net per blank row,
+                <strong>IC-to-IC boards.</strong> The {JOIN_BANDS[3].n} projects with eleven or more rigid joins
+                hold most of the remaining wire defects outside the single outlier of Section 7.5. Humans solve these
+                with dedicated bus rows, one net per blank row,
                 and with generous pitch between chips. The solver provisions bus rows opportunistically but does not
                 plan them; doing so during stage 1, and biasing the packer towards wider IC pitch, is the clearest next
                 lever.
+              </li>
+              <li>
+                <strong>Pin grids the row model cannot represent.</strong> Stage 1 admits a rigid rotation only if
+                each footprint row splits into at most two same-net blocks, one cut&apos;s worth. A part with three or
+                more pin columns carrying three different nets in every rotation, the 3PDT stomp switch being the
+                canonical case, has no admissible rotation at all and is left unplaced; it is the one incompletion in
+                the full extraction of Section 7.1. The limitation is partly honest: such a switch&apos;s centre pin
+                sits walled inside its own footprint, and even a human builds it by soldering a wire directly to the
+                lug, which the solver only permits itself for user-locked parts. Representing multi-cut rows, and
+                pricing lug-soldering instead of forbidding it, would close this class.
+              </li>
+              <li>
+                <strong>Wires are straight.</strong> A link wire is a straight segment between its end holes
+                (Section 2.3); the bent runs real builders use to slip past an obstacle exist neither in the editor
+                nor in the solver. A bend is the wire-layer analogue of the relay of Section 4.4, one solder joint
+                cheaper, so supporting it would give the router a better tool exactly where off-axis wires arise;
+                but it starts in the editor&apos;s data model, not the solver.
               </li>
               <li>
                 <strong>Locked parts disable channel insertion.</strong> Inserting a row or column shifts coordinates,
@@ -1190,6 +1389,40 @@ export default function PaperPage() {
                   github.com/KarloFunke/stripboard-editor
                 </a>
               </li>
+              <li>
+                [3] Roger Dahl. <em>Stripboard Autorouter.</em> MIT licence, 2016 to 2022.{" "}
+                <a
+                  href="https://github.com/rogerdahl/striprouter-cpp"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[var(--copper)] hover:underline"
+                >
+                  github.com/rogerdahl/striprouter-cpp
+                </a>
+              </li>
+              <li>
+                [4] Alex Lawrow. <em>VeroRoute.</em> GPLv3, version 2.40, 2017 to 2026.{" "}
+                <a
+                  href="https://sourceforge.net/projects/veroroute/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[var(--copper)] hover:underline"
+                >
+                  sourceforge.net/projects/veroroute
+                </a>
+              </li>
+              <li>
+                [5] Charles J. Alpert and Andrew B. Kahng. <em>Recent directions in netlist partitioning: a
+                survey.</em> Integration, the VLSI Journal 19 (1995), 1&ndash;81.{" "}
+                <a
+                  href="https://doi.org/10.1016/0167-9260(95)00008-4"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[var(--copper)] hover:underline"
+                >
+                  doi.org/10.1016/0167-9260(95)00008-4
+                </a>
+              </li>
             </ol>
           </section>
 
@@ -1235,7 +1468,7 @@ export default function PaperPage() {
               The solver is open source [2] and runs entirely in the browser. Every configuration in this report runs
               a fixed number of orderings and is therefore deterministic: the same netlist gives the same board. The
               editor&apos;s shipped default is itself a fixed count (Section 6), so it reproduces exactly on any
-              machine — an earlier revision used a time budget, whose results depended on the hardware that computed
+              machine; an earlier revision used a time budget, whose results depended on the hardware that computed
               them. The benchmark harness that produced the corpus tables ships with the source at{" "}
               <Code>tests/solver/sweep.js</Code>, its aggregation at <Code>tests/solver/paperStats.js</Code>, and
               takes the corpus location as an argument.
@@ -1277,7 +1510,7 @@ export default function PaperPage() {
               at the median project. Against the portfolio the comparison is one-sided in three separate ways.
             </P>
 
-            <Table n={6} caption={`Beam search over constructions against the portfolio, over the same ${CORPUS.projects} circuits, protocol and metrics as Section 7. A beam refines every distinct construction of one ordering, about five solves, set by the circuit rather than chosen; the last row runs a full beam on each of three orderings. Every row uses the shipped guarded pick except "guard off", which ablates it. Time is the median solve time per project.`}>
+            <Table n={6} caption={`Beam search over constructions against the portfolio, over the same ${CORPUS.projects} circuits, protocol and metrics as Section 7. A beam refines every distinct construction of one ordering, about five solves, set by the circuit rather than chosen; the last row runs a full beam on each of three orderings. Every row uses the shipped guarded pick except "guard off", which ablates it (its solves are the k = 10 row's own, so its time is too). Time is the median wall-clock per project under the protocol of Section 7.6: orderings run in parallel workers, while a beamed solve refines its pool sequentially, as shipped.`}>
               <thead>
                 <tr>
                   <Th>Configuration</Th>
@@ -1314,21 +1547,22 @@ export default function PaperPage() {
             </Table>
 
             <P>
-              <strong>Tidiness.</strong> At an equal number of solves the beam loses on every column: a median{" "}
-              {BEAM.pool.areaRatio}&times; the human area against the five-ordering portfolio&apos;s{" "}
-              {BEAM.perm5.areaRatio}&times;, {BEAM.pool.offAxis} off-axis wires against {BEAM.perm5.offAxis}, and{" "}
-              {BEAM.pool.crossings} crossings against {BEAM.perm5.crossings} — two and a half times as many. The
+              <strong>Tidiness.</strong> At an equal number of solves the beam matches the five-ordering
+              portfolio on area, {BEAM.pool.areaRatio}&times; the human board for both, and loses everywhere else:{" "}
+              {BEAM.pool.offAxis} off-axis wires against {BEAM.perm5.offAxis}, {BEAM.pool.crossings} crossings
+              against {BEAM.perm5.crossings}, and twice the boards stretched past three to one. The
               reason is what each source of variance hands to the tidy pass. A fresh ordering hands it a fresh
               construction to straighten; a beam survivor re-mines the neighbourhood of one construction, and what it
-              finds there is density, not tidiness. Combining the two does push the area frontier: three orderings
-              with a full beam each reach a median {BEAM.mixed.areaRatio}&times;, smaller per project on{" "}
-              {BEAM.mixedVsPortfolio.smaller} circuits against {BEAM.mixedVsPortfolio.larger}, but they pay for it in
-              exactly the currency this solver spends its effort on, {BEAM.mixed.offAxis} off-axis wires and{" "}
+              finds there is density, not tidiness. Nor does combining the two buy anything: three orderings
+              with a full beam each land at a median {BEAM.mixed.areaRatio}&times; against the plain ten-ordering
+              portfolio&apos;s {PORTFOLIO.areaRatio}&times;, split roughly evenly per project ({BEAM.mixedVsPortfolio.smaller}{" "}
+              smaller against {BEAM.mixedVsPortfolio.larger} larger), while still paying in
+              exactly the currency this solver spends its effort on: {BEAM.mixed.offAxis} off-axis wires and{" "}
               {BEAM.mixed.crossings} crossings against the portfolio&apos;s {PORTFOLIO.offAxis} and{" "}
-              {PORTFOLIO.crossings}, with {PORTFOLIO.cleanBoards - BEAM.mixed.cleanBoards} fewer boards finishing free
-              of wire defects. An earlier revision of this appendix found the beam and the portfolio tied on area at
-              equal solves; the recalibration of Section 5, which made board area cheap and crowded wiring dear, moved
-              the comparison against the beam on both axes at once.
+              {PORTFOLIO.crossings}, with {PORTFOLIO.cleanBoards - BEAM.mixed.cleanBoards} more boards losing their
+              freedom from wire defects, and a shape distribution the next paragraph takes up. An earlier revision of
+              this appendix, on an earlier corpus revision, still found the mixed beam ahead on area; with the
+              possibly-solver-aided boards removed from the reference set, even that advantage is gone.
             </P>
             <P>
               <strong>Shape.</strong> The density is partly bought with a proportion the rating does not price. The
@@ -1348,14 +1582,20 @@ export default function PaperPage() {
               asked for.
             </P>
             <P>
-              <strong>Cost.</strong> One beamed ordering costs a median of {BEAM.msVsSingleMedian}&times; a plain solve,
+              <strong>Cost.</strong> One beamed ordering costs a median of {BEAM.msVsSingleMedian}&times; the
+              compute of a plain solve,
               a P90 of {BEAM.msVsSingleP90}&times; and up to {BEAM.msVsSingleMax}&times;, with the slowest single
-              beamed ordering in the corpus taking {BEAM.slowestOrderingSeconds} seconds. Even at matched solve counts
-              the beam is the slower of the two, a median {BEAM.msVsPerm5Median}&times; the five-ordering portfolio, a
-              P90 of {BEAM.msVsPerm5P90}&times; and more than twice as slow on {BEAM.msVsPerm5Over2x} circuits. Part of
-              that gap is an artefact of the implementation, which reruns stages 0 to 3 for each pool entry instead of
-              resuming from the stored construction, and could be recovered by caching. The rest is not: the entries
-              that survive into the pool are the larger constructions, and refining a larger board costs more. The
+              beamed ordering in the corpus taking {BEAM.slowestOrderingSeconds} seconds. In the wall-clock a user
+              feels the gap is larger still, because orderings spread over parallel workers while the shipped beam
+              refines its pool one entry after another: at matched solve counts the beam takes a median{" "}
+              {BEAM.msVsPerm5Median}&times; as long as the five-ordering portfolio, a
+              P90 of {BEAM.msVsPerm5P90}&times;, and is more than twice as slow on {BEAM.msVsPerm5Over2x} of the{" "}
+              {CORPUS.projects} circuits. Part of
+              that gap is an artefact of the implementation: pool entries are independent and could spread over
+              workers too, and the beam reruns stages 0 to 3 for each entry instead of
+              resuming from the stored construction, both recoverable. The rest is not: the entries
+              that survive into the pool are the larger constructions, and refining a larger board costs more, so
+              even a parallel beam would be paced by its slowest entry. The
               structural problem is worse than the constant. A portfolio spends exactly what the user asked for,
               because the number of orderings is the setting itself, whereas a pool&apos;s size is a property of the
               circuit: every entry must be finished before any of them can be rated, so the cost of a beamed solve is
@@ -1367,15 +1607,15 @@ export default function PaperPage() {
               from the editor. One piece of the experiment does deserve to outlive it. The guarded pick is independent
               of the beam, and its effect on the plain portfolio is unusually concentrated: turning it off changes
               only {BEAM.guardChanged} of the {CORPUS.projects} boards and leaves the rest untouched. On those{" "}
-              {BEAM.guardChanged} the guard removes {BEAM.p10Unguarded.crossings - PORTFOLIO.crossings} crossings and{" "}
-              {BEAM.p10Unguarded.offAxis - PORTFOLIO.offAxis} off-axis wires, and every one of them grows, by{" "}
-              {BEAM.guardHoles} holes in total; the median board is untouched, which is why the two rows share an
-              area ratio. The extreme case goes from {BEAM.guardWorst.fromRows}&times;{BEAM.guardWorst.fromCols} to{" "}
-              {BEAM.guardWorst.toRows}&times;{BEAM.guardWorst.toCols}, half again the area, to take that board from{" "}
+              {BEAM.guardChanged} the guard removes {BEAM.p10Unguarded.crossings - PORTFOLIO.crossings} crossings,
+              and every one of them grows, by{" "}
+              {BEAM.guardHoles} holes in total; the median board is untouched, so the two rows&apos; area ratios
+              differ by a single point. The extreme case goes from {BEAM.guardWorst.fromRows}&times;{BEAM.guardWorst.fromCols} to{" "}
+              {BEAM.guardWorst.toRows}&times;{BEAM.guardWorst.toCols}, a quarter more area, to take that board from{" "}
               {BEAM.guardWorst.crossingsFrom} crossings to {BEAM.guardWorst.crossingsTo}. Whether that is a good trade
               is a judgement about what a builder minds more rather than a measurement, and it was initially left on
               the shelf for exactly that reason. Building a real board from the solver&apos;s output settled the
-              judgement — on the bench a wire over a part costs far more attention than a few spare holes — and the
+              judgement; on the bench a wire over a part costs far more attention than a few spare holes. The
               guarded pick is now part of the shipped final pick of Section 6.
             </P>
           </Section>
