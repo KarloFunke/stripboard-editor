@@ -97,6 +97,11 @@ export interface AutoLayout2Options {
   // between-cuts, and any the drill upgrade cannot absorb are priced like a
   // slanted wire so roomier layouts win.
   drilledCutsOnly?: boolean;
+  // Harness-only observation hook: called with intermediate pipeline states
+  // ("tiles" after stage 1, "construction" after stage 2 adoption, "base"
+  // after refinement, "tidy" with the variant decision). Pure callback; the
+  // solve is unaffected.
+  onStage?: (stage: string, data: unknown) => void;
   // Attach the ladder's candidate pool to the result (beamPool) without
   // changing the solve.
   beamStats?: boolean;
@@ -224,14 +229,57 @@ function solvePipeline(
   const noNet = inputs.components.filter(
     (c) => !c.boardExcluded && !assignedIds.has(c.id) && !(c.locked && c.boardPos)
   );
-  if (noNet.length === 0) return solvePipelineInner(board, inputs, componentDefs, onProgress, options);
-  const skip = new Set(noNet.map((c) => c.id));
+  // A definition whose pins share one hole while carrying different nets can
+  // never be built: no cut separates two nets on one solder joint. Solving
+  // around it would emit a board with a guaranteed short and a message
+  // blaming the placement, so name the broken footprint instead, leave the
+  // part off the board, and charge the defect to quality.
+  const netByPin = new Map<string, string>();
+  for (const a of inputs.netAssignments) netByPin.set(pinKey(a.componentId, a.pinId), a.netId);
+  const defIssues: string[] = [];
+  const brokenIds = new Set<string>();
+  for (const c of inputs.components) {
+    if (c.boardExcluded) continue;
+    const def = resolveComponentDef(c, componentDefs);
+    if (!def || def.flexible) continue;
+    const seen = new Map<string, { pin: string; net: string }>();
+    for (const p of def.pins) {
+      const net = netByPin.get(pinKey(c.id, p.id));
+      if (!net) continue;
+      const hole = `${p.offsetRow},${p.offsetCol}`;
+      const prev = seen.get(hole);
+      if (prev && prev.net !== net) {
+        defIssues.push(
+          `${c.label}: pins ${prev.pin} and ${p.name || p.id} of its definition share one hole but belong to different nets; the footprint cannot be built`
+        );
+        brokenIds.add(c.id);
+        break;
+      }
+      if (!prev) seen.set(hole, { pin: p.name || p.id, net });
+    }
+  }
+  if (noNet.length === 0 && brokenIds.size === 0) {
+    return solvePipelineInner(board, inputs, componentDefs, onProgress, options);
+  }
+  const skip = new Set([...noNet.map((c) => c.id), ...brokenIds]);
   const res = solvePipelineInner(
     board,
-    { ...inputs, components: inputs.components.filter((c) => !skip.has(c.id)) },
+    {
+      ...inputs,
+      components: inputs.components.filter((c) => !skip.has(c.id)),
+      netAssignments: inputs.netAssignments.filter((a) => !brokenIds.has(a.componentId)),
+    },
     componentDefs, onProgress, options
   );
-  return { ...res, unplaceIds: [...(res.unplaceIds ?? []), ...noNet.map((c) => c.id)] };
+  // The nets the broken part belonged to cannot complete without it.
+  const brokenNets = new Set<string>();
+  for (const a of inputs.netAssignments) if (brokenIds.has(a.componentId)) brokenNets.add(a.netId);
+  return {
+    ...res,
+    issues: [...defIssues, ...res.issues],
+    quality: res.quality + brokenIds.size * 2 + brokenNets.size,
+    unplaceIds: [...(res.unplaceIds ?? []), ...skip],
+  };
 }
 
 function solvePipelineInner(
@@ -258,6 +306,7 @@ function solvePipelineInner(
 
   const hasLockedParts = components.some((c) => c.locked && c.boardPos && !c.boardExcluded);
   const base = layoutOnce(board, components, componentDefs, nets, netAssignments, slice(...spans[0]), options);
+  options?.onStage?.("base", base);
 
   // The beam fork applies to the base construction only; the tidy pass's
   // internal re-solves always take their own best. The base's pool rides
@@ -347,6 +396,7 @@ function solvePipelineInner(
         (best.score.crossings === score.crossings && best.score.mess <= score.mess))) return;
     best = { result: finished, score };
   });
+  options?.onStage?.("tidy", { adopted: !!best, result: best ? (best as { result: AutoLayoutResult }).result : null });
   return carry(aligned(best ? (best as { result: AutoLayoutResult }).result : finishedBase));
 }
 
@@ -500,6 +550,7 @@ function layoutOnce(
       }
     }
     for (const t of tiles) t.flipped = flipTile(t, componentDefs);
+    options?.onStage?.("tiles", tiles);
   };
   computeFixed();
 
@@ -870,6 +921,8 @@ function layoutOnce(
   // construction instead of the incumbent. k = 0 (or absent) changes nothing.
   chooser.freezePool();
   if ((options?.beamIndex ?? 0) > 0) chooser.install(chooser.poolEntry(options!.beamIndex!));
+  options?.onStage?.("construction", chooser.chosen);
+
   // ── V1 polish: re-anneal each tile in place ──────────
   // A tile is a small local problem — the regime where the v1 optimizer
   // produces human-density results (its weakness, global structure, is
