@@ -176,6 +176,8 @@ export interface Project {
   // portfolio off (single solve).
   permBoards?: number;
   permWorkers?: number;
+  // v5 beta: anneal moves per seed (undefined = size-scaled default)
+  v5Moves?: number;
   // Legacy portfolio config (seconds of solve time); read once on load and
   // mapped onto permBoards, never written back.
   permTimeBudget?: number;

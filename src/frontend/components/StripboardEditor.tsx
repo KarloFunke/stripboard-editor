@@ -33,6 +33,7 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
   const tidyWires = useProjectStore((s) => s.tidyWires);
   const drilledCutsOnly = useProjectStore((s) => s.drilledCutsOnly);
   const permBoards = useProjectStore((s) => s.permBoards);
+  const v5Moves = useProjectStore((s) => s.v5Moves);
   const permWorkers = useProjectStore((s) => s.permWorkers);
   const isActive = useProjectStore((s) => s.activeEditor === "stripboard");
   const setActiveEditor = useProjectStore((s) => s.setActiveEditor);
@@ -100,13 +101,13 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
   // configured, several workers solve that many deterministic input
   // orderings of the same circuit and the best finished board (quality,
   // then guarded crossings, then score) wins.
-  const handleAutoLayout = (onlyIds?: string[]) => {
+  const handleAutoLayout = (onlyIds?: string[], engine?: "v5") => {
     if (autoWorkersRef.current.length > 0) {
       stopAutoWorkers();
       showAutoMsg("Auto-layout cancelled", []);
       return;
     }
-    track("auto-layout-run", { engine: onlyIds ? "selection" : "full" });
+    track("auto-layout-run", { engine: onlyIds ? "selection" : engine ?? "full" });
     const runId = ++autoRunIdRef.current;
     const inputs = { board, components, componentDefs, nets, netAssignments, spanOverrides, clearanceOverrides, tidyWires, drilledCutsOnly };
 
@@ -135,14 +136,17 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
     };
     const request: AutoLayoutRequest = {
       ...inputs,
-      engine: onlyIds ? "v1" : "v2",
+      engine: onlyIds ? "v1" : engine ?? "v2",
       options: onlyIds ? { onlyIds } : undefined,
       tidyGrowth: tidyWires === false ? undefined : Infinity,
+      ...(engine === "v5" && v5Moves ? { v5Moves } : {}),
     };
 
-    const boards = !onlyIds
-      ? Math.max(1, permBoards ?? defaultPermBoards(components.filter((c) => !c.boardExcluded).length))
-      : 1;
+    // v5 spreads its seeds over the same worker pool (worker._idx = seed)
+    const nPlaceable = components.filter((c) => !c.boardExcluded).length;
+    const boards = onlyIds ? 1
+      : engine === "v5" ? Math.max(4, permBoards ?? defaultPermBoards(nPlaceable))
+      : Math.max(1, permBoards ?? defaultPermBoards(nPlaceable));
     if (boards > 1) {
       const cores = typeof navigator !== "undefined" ? navigator.hardwareConcurrency || 4 : 4;
       const nWorkers = Math.max(1, Math.min(permWorkers ?? defaultPermWorkers(cores), cores, boards));
@@ -293,6 +297,15 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
                 className="border border-neutral-300 dark:border-neutral-600 rounded px-2 py-1 text-sm text-neutral-900 dark:text-neutral-100 dark:bg-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-700 transition-colors"
               >
                 {autoProgress ? "Cancel" : "Auto-layout"}
+              </button>
+              <button
+                onClick={() => handleAutoLayout(undefined, "v5")}
+                title={autoProgress
+                  ? "Cancel the running auto-layout"
+                  : "Experimental annealed layouter (v5 beta): same job as Auto-layout, different engine — run both to compare."}
+                className="border border-dashed border-neutral-300 dark:border-neutral-600 rounded px-2 py-1 text-sm text-neutral-600 dark:text-neutral-300 dark:bg-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-700 transition-colors"
+              >
+                {autoProgress ? "Cancel" : "v5 beta"}
               </button>
               <div className="relative">
                 <button

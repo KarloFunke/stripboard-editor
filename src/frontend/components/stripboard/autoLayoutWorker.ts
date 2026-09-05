@@ -2,6 +2,7 @@ import { Board, Component, ComponentDef, Net, NetAssignment } from "@/types";
 import { AutoLayoutOptions, computeAutoLayout } from "./autoLayout";
 import { AutoLayoutProgress, AutoLayoutResult } from "./layoutTypes";
 import { computeAutoLayout2, rateResult } from "./autoLayout2";
+import { computeAutoLayout5 } from "./autoLayout5";
 import { wireMessScore } from "./layout2/tidyScore";
 
 export interface AutoLayoutRequest {
@@ -13,7 +14,8 @@ export interface AutoLayoutRequest {
   // "v2" (default) = strip-first layouter, chooses its own board size.
   // "v1" = the classic optimizer; still used for scoped re-layouts, which
   // must keep everything else (and the board size) fixed.
-  engine?: "v1" | "v2";
+  // "v5" = the annealed skeleton layouter (beta), for direct comparison.
+  engine?: "v1" | "v2" | "v5";
   options?: AutoLayoutOptions;
   // Per-def-id span ranges for flexible parts (project auto-layout config)
   spanOverrides?: Record<string, { min: number; max: number }>;
@@ -26,7 +28,10 @@ export interface AutoLayoutRequest {
   // Solve exactly this input ordering (parallel permutation search): the
   // editor spreads indices over several workers and compares the returned
   // scores. Undefined = plain single solve of the caller's own ordering.
+  // For engine "v5" this is the seed index instead.
   permutationIndex?: number;
+  // v5: anneal budget per seed (undefined = size-scaled default)
+  v5Moves?: number;
 }
 
 export type AutoLayoutWorkerMessage =
@@ -43,7 +48,7 @@ const ctx = self as unknown as {
 };
 
 ctx.onmessage = (e) => {
-  const { board, components, componentDefs, nets, netAssignments, engine, options, spanOverrides, clearanceOverrides, tidyGrowth, drilledCutsOnly, permutationIndex } = e.data;
+  const { board, components, componentDefs, nets, netAssignments, engine, options, spanOverrides, clearanceOverrides, tidyGrowth, drilledCutsOnly, permutationIndex, v5Moves } = e.data;
   const onProgress = (progress: AutoLayoutProgress) => {
     ctx.postMessage({ type: "progress", progress });
   };
@@ -66,6 +71,22 @@ ctx.onmessage = (e) => {
       ...(drilledCutsOnly ? { drilledCutsOnly: true } : {}),
     });
     ctx.postMessage({ type: "done", result });
+    return;
+  }
+  if (engine === "v5") {
+    const result = computeAutoLayout5(board, components, defs, nets, netAssignments, onProgress, {
+      ...(permutationIndex !== undefined ? { seedIndex: permutationIndex } : {}),
+      ...(v5Moves !== undefined ? { moves: v5Moves } : {}),
+    });
+    // the guard metric for v5 is total wire mess: off-axis wires count like
+    // crossings (presentation-clean first)
+    const offAxis = result.wires.filter((w) => w.from.col !== w.to.col).length;
+    ctx.postMessage({
+      type: "done",
+      result,
+      score: rateResult(result, board, components, defs, drilledCutsOnly),
+      crossings: wireMessScore(result, components, defs).crossings + offAxis,
+    });
     return;
   }
   const result = computeAutoLayout2(board, components, defs, nets, netAssignments, onProgress, {

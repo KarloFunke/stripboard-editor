@@ -109,6 +109,8 @@ interface ProjectActions {
   setDrilledCutsOnly: (value: boolean) => void;
   setPermBoards: (n: number) => void;
   setPermWorkers: (n: number) => void;
+  // v5 beta anneal budget per seed (0 = back to the size-scaled default)
+  setV5Moves: (n: number) => void;
   // Insert a blank row/column at `at` (0-based): everything at or beyond it
   // shifts by one line. A rigid part whose footprint straddles the line
   // cannot be split and stays put — may break its nets; a manual-cleanup
@@ -347,6 +349,7 @@ function prepareProjectState(data: Project) {
     // to the shipped default count.
     permBoards: data.permBoards ?? (data.permTimeBudget === 0 ? 1 : undefined),
     permWorkers: data.permWorkers,
+    v5Moves: data.v5Moves,
     autoLayoutUsed: data.autoLayoutUsed,
     boardEditsSinceAutoLayout: data.boardEditsSinceAutoLayout,
     autoLayoutRuns: data.autoLayoutRuns,
@@ -1048,6 +1051,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set({ permWorkers: Math.max(1, Math.round(n)), isDirty: true });
   },
 
+  setV5Moves: (n) => {
+    set({ v5Moves: n > 0 ? Math.round(n) : undefined, isDirty: true });
+  },
+
   insertBoardLine: (axis, at) => {
     get().pushSnapshot();
     set((s) => {
@@ -1378,6 +1385,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       drilledCutsOnly: s.drilledCutsOnly,
       permBoards: s.permBoards,
       permWorkers: s.permWorkers,
+      v5Moves: s.v5Moves,
       autoLayoutUsed: s.autoLayoutUsed,
       boardEditsSinceAutoLayout: s.boardEditsSinceAutoLayout,
       autoLayoutRuns: s.autoLayoutRuns,
@@ -1425,6 +1433,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     drilledCutsOnly: undefined,
     permBoards: undefined,
     permWorkers: undefined,
+    v5Moves: undefined,
     autoLayoutUsed: undefined,
     boardEditsSinceAutoLayout: undefined,
     autoLayoutRuns: undefined,

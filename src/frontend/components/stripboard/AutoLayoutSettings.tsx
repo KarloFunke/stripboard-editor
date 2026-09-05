@@ -26,11 +26,15 @@ export default function AutoLayoutSettings({ onClose }: { onClose: () => void })
   const setPermBoards = useProjectStore((s) => s.setPermBoards);
   const permWorkers = useProjectStore((s) => s.permWorkers);
   const setPermWorkers = useProjectStore((s) => s.setPermWorkers);
+  const v5Moves = useProjectStore((s) => s.v5Moves);
+  const setV5Moves = useProjectStore((s) => s.setV5Moves);
   const cores = Math.max(1, typeof navigator !== "undefined" ? navigator.hardwareConcurrency || 4 : 4);
   const workers = Math.min(permWorkers ?? defaultPermWorkers(cores), cores);
   const boards = permBoards ?? defaultPermBoards(components.filter((c) => !c.boardExcluded).length);
   // Slider stops for the portfolio size; 1 = off (single solve)
   const BOARD_STOPS = [1, 3, 10, 25, 50, 100, 250];
+  // v5 anneal budget stops; 0 = auto (size-scaled default)
+  const V5_MOVE_STOPS = [0, 60000, 120000, 200000, 320000];
   const boardIdx = BOARD_STOPS.findIndex((s) => s >= boards);
 
   // The editor panes clip absolutely-positioned children (overflow-hidden),
@@ -230,6 +234,27 @@ export default function AutoLayoutSettings({ onClose }: { onClose: () => void })
               </p>
             </div>
           )}
+          <div className="mt-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm text-neutral-700 dark:text-neutral-200">v5 anneal effort</span>
+              <span className="text-sm text-neutral-500 dark:text-neutral-400 w-14 text-right">
+                {v5Moves ? `${Math.round(v5Moves / 1000)}k` : "auto"}
+              </span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={V5_MOVE_STOPS.length - 1}
+              step={1}
+              value={Math.max(0, V5_MOVE_STOPS.indexOf(v5Moves ?? 0))}
+              onChange={(e) => setV5Moves(V5_MOVE_STOPS[parseInt(e.target.value)])}
+              className="w-full mt-1 accent-blue-500"
+            />
+            <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 leading-snug">
+              Annealing moves per attempt for the v5 beta engine. Auto scales with the
+              part count; higher settings search longer and usually pack tighter.
+            </p>
+          </div>
         </div>
       </div>
     </>
