@@ -1,5 +1,8 @@
-import { Board, Component, ComponentDef, Net, NetAssignment } from "@/types";
+import { Board, BoardPosition, Component, ComponentDef, Net, NetAssignment } from "@/types";
 import { CompletionPlan, deriveCompletion } from "../autoFinish";
+import { resolveComponentDef } from "@/utils/resolveComponentDef";
+import { getComponentBounds } from "../boardLayout";
+import { FootprintRect, segmentIntersectsRect, segmentsIntersect } from "../flexGeometry";
 import { AREA_WEIGHT, avoidableBetweenCuts } from "./tidyScore";
 import { DimLimits } from "./tileModel";
 
@@ -12,6 +15,8 @@ export interface Candidate {
   movedIds: Set<string>;
   plan: CompletionPlan;
   bad: number;
+  // strict mode: off-axis wires plus crossings (0 otherwise)
+  mess: number;
 }
 
 /**
@@ -49,8 +54,31 @@ export class Chooser {
     // Drilled-cuts-only preference: each cut the drill upgrade could not
     // absorb is priced like a slanted wire (one board line), so layouts
     // that leave room to drill win without making between-cuts a defect.
-    private drilledCutsOnly = false
+    private drilledCutsOnly = false,
+    // Hard zero-mess rule: candidates rank on (bad, mess, cost) and the
+    // router prices mess as a last resort, so a line that removes an
+    // off-axis or crossing wire is adopted whatever it costs in area.
+    private strict = false
   ) {}
+
+  private messOf(virtual: Component[], plan: CompletionPlan): number {
+    const rects: FootprintRect[] = [];
+    const bodies: { p1: BoardPosition; p2: BoardPosition }[] = [];
+    for (const c of virtual) {
+      if (!c.boardPos || c.boardExcluded) continue;
+      const def = resolveComponentDef(c, this.componentDefs);
+      if (!def) continue;
+      if (def.flexible) bodies.push({ p1: c.boardPos, p2: c.flexibleEndPos ?? c.boardPos });
+      else rects.push(getComponentBounds(def, c.boardPos, c.rotation));
+    }
+    let mess = 0;
+    for (const w of plan.wires) {
+      if (w.from.col !== w.to.col) mess++;
+      for (const r of rects) if (segmentIntersectsRect(w.from, w.to, r)) mess++;
+      for (const b of bodies) if (segmentsIntersect(w.from, w.to, b.p1, b.p2)) mess++;
+    }
+    return mess;
+  }
 
   // Ribbon boards read badly even at equal area: beyond maxDim = 2·minDim,
   // each extra length unit is priced like a row of cells. A user-locked
@@ -139,12 +167,14 @@ export class Chooser {
       allowSharedJoints: this.allowSharedJoints,
       ...(repair ? { repairSlants: true } : {}),
       ...(this.drilledCutsOnly ? { drilledCutsOnly: true } : {}),
+      ...(this.strict ? { strictWires: true } : {}),
     });
     const overCap =
       (this.limits.maxRows ? Math.max(0, rows - this.limits.maxRows) : 0) +
       (this.limits.maxCols ? Math.max(0, cols - this.limits.maxCols) : 0);
     const bad = plan.unresolvedConflicts * 100 + 40 * overCap + plan.starvedNetIds.length;
-    const cand: Candidate = { virtual, rows, cols, movedIds, plan, bad };
+    const mess = this.strict ? this.messOf(virtual, plan) : 0;
+    const cand: Candidate = { virtual, rows, cols, movedIds, plan, bad, mess };
     if (this.poolActive) {
       const sig = this.signatureOf(cand);
       if (!this.poolSigs.has(sig)) {
@@ -152,7 +182,11 @@ export class Chooser {
         this.pool.push({ cand, cost: this.cost(cand), label });
       }
     }
-    if (!this.chosen || bad < this.chosen.bad || (bad === this.chosen.bad && this.cost(cand) < this.cost(this.chosen))) {
+    if (
+      !this.chosen ||
+      bad < this.chosen.bad ||
+      (bad === this.chosen.bad && (mess < this.chosen.mess || (mess === this.chosen.mess && this.cost(cand) < this.cost(this.chosen))))
+    ) {
       this.chosen = cand;
     }
     return cand;

@@ -5,6 +5,7 @@ import { BoardPin } from "./boardPins";
 import {
   WIRE_OFFAXIS_FREE,
   WIRE_OFFAXIS_RATE,
+  WIRE_STRICT_MESS,
   WireObstacleIndex,
   wireStackDepth,
   wireStackPenalty,
@@ -186,6 +187,8 @@ export function deriveWires(
     donorGroup?: number;
     donorNet?: string;
     donorNeedy?: boolean;
+    // strict bus rows: remainders already offered
+    split?: boolean;
   }
   const pinHoles = new Set(pins.map((p) => holeKey(p.row, p.col)));
   const relayCands: RelayCand[] = [];
@@ -286,7 +289,8 @@ export function deriveWires(
   // for slanted pairs, the unavoidable off-axis penalty.
   const slantLowerBound = (dr: number, dc: number): number => {
     const dist = Math.hypot(dr, dc);
-    return dc !== 0 ? dist + WIRE_OFFAXIS_RATE * Math.max(0, dist - WIRE_OFFAXIS_FREE) : dist;
+    if (dc === 0) return dist;
+    return dist + (obstacleIndex.strict ? WIRE_STRICT_MESS : WIRE_OFFAXIS_RATE * Math.max(0, dist - WIRE_OFFAXIS_FREE));
   };
 
   const routeAll = (order: Net[]): RoutePass => {
@@ -498,7 +502,8 @@ export function deriveWires(
         // worse build than the slant (with no direct option, anything goes).
         const search = (): { best: WireChoice | null; relay: RelayChoice | null } => {
           const best = findBest();
-          const maxHops = best
+          // Strict mode: a clean relay of any length beats a messy wire.
+          const maxHops = best && !obstacleIndex.strict
             ? Math.hypot(best.from.row - best.to.row, best.from.col - best.to.col) * 1.5 + 4
             : Infinity;
           const relay = !best || best.mess > 0.25 ? findRelayBest(maxHops) : null;
@@ -553,6 +558,54 @@ export function deriveWires(
         remaining.delete(best!.group);
         // Endpoints stay available: further wires of this net may chain there
         for (const h of passEndpoints(best!.group)) addConnected(h);
+      }
+
+      // Strict mode bus rows: a blank strip this net claimed keeps only the
+      // span its wires use; the copper beyond either end is cut off and
+      // offered to later nets as relay tails, so one blank row serves
+      // several nets the way a human bus row does.
+      if (obstacleIndex.strict) {
+        for (const [ci, owner] of relayOwner) {
+          const cand = relayCands[ci];
+          if (owner !== net.id || cand.cut || cand.split) continue;
+          cand.split = true;
+          const row = cand.holes[0].row;
+          if (!cand.holes.every((h) => h.row === row)) continue;
+          let minC = Infinity;
+          let maxC = -Infinity;
+          for (const w of pass.wires) {
+            for (const p of [w.from, w.to]) {
+              if (!cand.holeSet.has(holeKey(p.row, p.col))) continue;
+              if (p.col < minC) minC = p.col;
+              if (p.col > maxC) maxC = p.col;
+            }
+          }
+          if (!isFinite(minC)) continue;
+          for (const side of ["L", "R"] as const) {
+            // knife cut in the gap beside the used span; drilled mode
+            // sacrifices the hole beside it instead
+            const sacrificed = side === "L" ? minC - 1 : maxC + 1;
+            const tail = cand.holes.filter((h) =>
+              drillTailRelays
+                ? (side === "L" ? h.col < sacrificed : h.col > sacrificed)
+                : (side === "L" ? h.col < minC : h.col > maxC)
+            );
+            if (new Set(tail.map((h) => h.col)).size < 2) continue;
+            if (drillTailRelays && !cand.holeSet.has(holeKey(row, sacrificed))) continue;
+            const holeSet = new Set(tail.map((h) => holeKey(h.row, h.col)));
+            if (drillTailRelays) holeSet.add(holeKey(row, sacrificed));
+            relayCands.push({
+              holes: tail,
+              holeSet,
+              byCol: byColOf(tail),
+              cut: drillTailRelays
+                ? { row, col: sacrificed, kind: "hole" as const }
+                : { row, col: side === "L" ? minC - 1 : maxC },
+              donorNet: net.id,
+              donorNeedy: false,
+            });
+          }
+        }
       }
 
       // Nets that still await unplaced components must keep a free hole, or

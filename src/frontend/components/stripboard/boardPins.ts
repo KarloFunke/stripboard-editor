@@ -62,6 +62,23 @@ function standsOnHeaders(def: ComponentDef): boolean {
 }
 
 /**
+ * Holes under header-mounted modules: reachable for a wire endpoint, but a
+ * wire attached there runs under the module and counts as crossing it.
+ */
+export function collectHeaderBodyHoles(components: Component[], componentDefs: ComponentDef[]): Set<string> {
+  const holes = new Set<string>();
+  for (const comp of components) {
+    if (!comp.boardPos || comp.boardExcluded) continue;
+    const def = resolveComponentDef(comp, componentDefs);
+    if (!def || def.flexible || !standsOnHeaders(def)) continue;
+    for (const cell of getRotatedBodyCells(def, comp.boardPos, comp.rotation)) {
+      holes.add(holeKey(cell.row, cell.col));
+    }
+  }
+  return holes;
+}
+
+/**
  * Holes that cannot take a jumper endpoint: component pins, body cells
  * (including everything under an IC), flexible-component body corridors,
  * and drilled-out holes. Wire endpoints do NOT block: several wires may

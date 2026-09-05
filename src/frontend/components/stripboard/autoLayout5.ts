@@ -46,6 +46,7 @@ const W_WLEN = 0.4;     // per row of wire length
 const W_CUT = 0.05;     // cuts are nearly free
 const W_BCUT = 2;       // between-holes cuts stay visibly priced
 const W_MESS = 400;     // final price per off-axis or crossing wire
+const W_TALL = 2;       // rows of cells each row beyond the board width costs
 const RAMP_START = 25;  // their price while the skeleton forms
 const W_LOCKOVER = 150; // per line over a locked dimension
 const ROTS: Rot[] = [0, 90, 180, 270];
@@ -236,12 +237,24 @@ export function computeAutoLayout5(
   const flexBit = (arr: number[], pi: number) => arr[flexIdx.indexOf(pi)];
 
   // ── decoder ──
+  // constraint-graph edge buffers, sized for the largest graph a decode
+  // can build (every ordered pair at most once, plus source, span and
+  // locked-pin edges); reused across decodes
+  const maxE = nP + flexIdx.length + 1 + 2 * flexIdx.length + Math.ceil((nP * nP) / 2) + 2 * nP + 8;
+  const eU = new Int32Array(maxE), eV = new Int32Array(maxE), eW = new Float64Array(maxE);
+  const rU = new Int32Array(maxE), rV = new Int32Array(maxE), rW = new Float64Array(maxE), rRank = new Int32Array(maxE);
+  const ordBuf = new Int32Array(maxE), rankCnt = new Int32Array(2 * nP + 4);
+  const xU = new Int32Array(maxE), xV = new Int32Array(maxE), xW = new Float64Array(maxE);
+  const vBotArr = new Int32Array(nP);
+  // Prim key buffers: a net has at most one segment per pin
+  const maxK = Math.max(1, ...netPins.map((pins) => pins.length));
+  const kTotal = new Float64Array(maxK), kA = new Int32Array(maxK), kCross = new Int32Array(maxK);
+  const kLen = new Int32Array(maxK), kCol = new Int32Array(maxK), kOff = new Uint8Array(maxK);
+  const linkCount = new Int32Array(maxK), inTree = new Uint8Array(maxK);
   function decode(g: Genome): Decoded | null {
     const posP = new Int32Array(nP), posN = new Int32Array(nP);
     g.gp.forEach((p, i) => (posP[p] = i));
     g.gn.forEach((p, i) => (posN[p] = i));
-    const leftOf = (i: number, j: number) => posP[i] < posP[j] && posN[i] < posN[j];
-    const above = (i: number, j: number) => posP[i] < posP[j] && posN[i] > posN[j];
 
     const geo = parts.map((p, pi) => {
       if (p.kind === "rigid") {
@@ -273,8 +286,13 @@ export function computeAutoLayout5(
     // decoded coordinates (bodiesTooClose/bodyIntersectsRect) and priced
     const vgapOf = (_i: number, _j: number) => 1;
 
-    const edges: { u: number; v: number; w: number }[] = [];
-    const addE = (u: number, v: number, w: number) => edges.push({ u, v, w });
+    let nE = 0;
+    const addE = (u: number, v: number, w: number) => {
+      eU[nE] = u;
+      eV[nE] = v;
+      eW[nE] = w;
+      nE++;
+    };
     for (let i = 0; i < nNode - 1; i++) addE(SRC, i, 0);
     for (const pi of flexIdx) {
       if (geo[pi].mode !== "V") continue;
@@ -283,14 +301,19 @@ export function computeAutoLayout5(
       addE(pi, b, p.minS);
       addE(b, pi, -p.maxS);
     }
-    const botExpr = (pi: number): [number, number] =>
-      geo[pi].mode === "V" ? [vBot.get(pi)!, 0] : [pi, geo[pi].h - 1];
+    vBotArr.fill(-1);
+    for (const [pi, b2] of vBot) vBotArr[pi] = b2;
     for (let i = 0; i < nP; i++) {
+      if (parts[i].locked) continue;
+      // the part's bottom node and its offset: a V flex ends at its bottom
+      // pin node, anything else at its own node plus its height
+      const bu = vBotArr[i] >= 0 ? vBotArr[i] : i;
+      const w0 = (vBotArr[i] >= 0 ? 0 : geo[i].h - 1) + vgapOf(i, 0);
+      const pi_ = posP[i], ni = posN[i];
       for (let j = 0; j < nP; j++) {
-        if (i === j || !above(i, j)) continue;
-        if (parts[i].locked || parts[j].locked) continue;
-        const [bu, bo] = botExpr(i);
-        addE(bu, j, bo + vgapOf(i, j));
+        if (i === j || !(pi_ < posP[j] && ni > posN[j])) continue;
+        if (parts[j].locked) continue;
+        addE(bu, j, w0);
       }
     }
     const lockedY = new Map<number, number>();
@@ -314,7 +337,14 @@ export function computeAutoLayout5(
 
     // group equalities via weighted union-find; conflicts split the pin out
     // of its group persistently (genotype write-back)
+    // node rank along the first sequence (source first, a flex part's
+    // bottom right after its top): the relaxation order of the y-solve
+    const rankOf = new Int32Array(nNode);
+    for (let pi = 0; pi < nP; pi++) rankOf[pi] = 2 * posP[pi] + 1;
+    for (const [pi, b2] of vBot) rankOf[b2] = 2 * posP[pi] + 2;
     const dist = new Float64Array(nNode).fill(-1e18);
+    const walkSeen = new Int32Array(nNode);
+    let walkStamp = 0;
     let solved = false;
     for (let attempt = 0; attempt < 400 && !solved; attempt++) {
       const parent = new Int32Array(nNode);
@@ -365,10 +395,10 @@ export function computeAutoLayout5(
         rootArr[v] = r;
         offArr[v] = o;
       }
-      const redges: { u: number; v: number; w: number }[] = [];
-      for (const e of edges) {
-        const ru = rootArr[e.u], rv = rootArr[e.v];
-        const w = e.w + offArr[e.u] - offArr[e.v];
+      let nR = 0;
+      for (let ei = 0; ei < nE; ei++) {
+        const ru = rootArr[eU[ei]], rv = rootArr[eV[ei]];
+        const w = eW[ei] + offArr[eU[ei]] - offArr[eV[ei]];
         if (ru === rv) {
           if (w > 0 && !conflict) {
             const mm = members.get(ru);
@@ -376,40 +406,69 @@ export function computeAutoLayout5(
           }
           continue;
         }
-        redges.push({ u: ru, v: rv, w });
+        rU[nR] = ru;
+        rV[nR] = rv;
+        rW[nR] = w;
+        rRank[nR] = rankOf[eU[ei]];
+        nR++;
       }
       if (conflict) {
         if (conflict === "hard") return null;
         g.grp[conflict.net][conflict.k] = Math.max(...g.grp[conflict.net]) + 1;
         continue;
       }
+      // relax in first-sequence order: every SP edge points down that
+      // sequence, so a feasible graph settles in a few sweeps
+      const ord = ordBuf, cnt = rankCnt;
+      cnt.fill(0);
+      for (let ei = 0; ei < nR; ei++) cnt[rRank[ei] + 1]++;
+      for (let b2 = 1; b2 < cnt.length; b2++) cnt[b2] += cnt[b2 - 1];
+      for (let ei = 0; ei < nR; ei++) ord[cnt[rRank[ei]]++] = ei;
       dist.fill(-1e18);
       dist[SRC] = 0;
       const pred = new Int32Array(nNode).fill(-1);
-      let changed = false, lastEdge = -1;
+      let changed = false, lastEdge = -1, cycleAt = -1;
       for (let it = 0; it < nNode + 2; it++) {
         changed = false;
-        for (let ei = 0; ei < redges.length; ei++) {
-          const e = redges[ei];
-          if (dist[e.u] + e.w > dist[e.v] + 1e-9) {
-            dist[e.v] = dist[e.u] + e.w;
-            pred[e.v] = ei;
+        for (let k = 0; k < nR; k++) {
+          const ei = ord[k];
+          const u = rU[ei], v = rV[ei];
+          if (dist[u] + rW[ei] > dist[v] + 1e-9) {
+            dist[v] = dist[u] + rW[ei];
+            pred[v] = ei;
             changed = true;
             lastEdge = ei;
           }
         }
         if (!changed) break;
+        // a positive cycle closes the predecessor walk long before the
+        // round bound would prove it: stop at the first closed walk
+        if (it >= 2) {
+          walkStamp++;
+          let cur = rV[lastEdge];
+          for (let s2 = 0; s2 <= nNode; s2++) {
+            if (walkSeen[cur] === walkStamp) {
+              cycleAt = cur;
+              break;
+            }
+            walkSeen[cur] = walkStamp;
+            const ei = pred[cur];
+            if (ei < 0) break;
+            cur = rU[ei];
+          }
+          if (cycleAt >= 0) break;
+        }
       }
       if (!changed) {
         for (let v = 0; v < nNode; v++) dist[v] = dist[rootArr[v]] + offArr[v];
         solved = true;
         break;
       }
-      let cur = redges[lastEdge].v;
+      let cur = cycleAt >= 0 ? cycleAt : rV[lastEdge];
       for (let s = 0; s < nNode + 2; s++) {
         const ei = pred[cur];
         if (ei < 0) break;
-        cur = redges[ei].u;
+        cur = rU[ei];
       }
       let fixed = false;
       const start = cur;
@@ -423,7 +482,7 @@ export function computeAutoLayout5(
         }
         const ei = pred[cur];
         if (ei < 0) break;
-        cur = redges[ei].u;
+        cur = rU[ei];
         if (cur === start) break;
       }
       if (!fixed) return null;
@@ -433,8 +492,14 @@ export function computeAutoLayout5(
 
     // x: SP left edges + locked pins; longest path
     const XS = nP;
-    const xe: { u: number; v: number; w: number }[] = [];
-    for (let i = 0; i < nP; i++) xe.push({ u: XS, v: i, w: 0 });
+    let nX = 0;
+    const addX = (u: number, v: number, w: number) => {
+      xU[nX] = u;
+      xV[nX] = v;
+      xW[nX] = w;
+      nX++;
+    };
+    for (let i = 0; i < nP; i++) addX(XS, i, 0);
     const hgap = (i: number, j: number) => {
       const fi = parts[i].kind === "flex", fj = parts[j].kind === "flex";
       if (fi && fj) return 2;
@@ -449,19 +514,18 @@ export function computeAutoLayout5(
       const f = fi ? i : j;
       return geo[f].mode === "V" ? 2 : 1;
     };
-    if (options?.debugSeeds) {
-      for (let i2 = 0; i2 < nP; i2++) for (let j2 = 0; j2 < nP; j2++) {
-        if (i2 !== j2 && parts[i2].kind === "rigid" && parts[j2].kind === "rigid") console.log("HG", i2, j2, hgap(i2, j2));
-      }
-    }
-    for (let i = 0; i < nP; i++) {
+    // edges in first-sequence order, so the sweep below settles fast
+    for (let r = 0; r < nP; r++) {
+      const i = g.gp[r];
+      if (parts[i].locked) continue;
+      const ti = y[i], bi = vBotArr[i] >= 0 ? y[vBotArr[i]] : ti + geo[i].h - 1;
+      const pi_ = posP[i], ni = posN[i];
       for (let j = 0; j < nP; j++) {
-        if (i === j || !leftOf(i, j)) continue;
-        if (parts[i].locked || parts[j].locked) continue;
-        const ti = y[i], bi = geo[i].mode === "V" ? y[vBot.get(i)!] : ti + geo[i].h - 1;
-        const tj = y[j], bj = geo[j].mode === "V" ? y[vBot.get(j)!] : tj + geo[j].h - 1;
+        if (i === j || !(pi_ < posP[j] && ni < posN[j])) continue;
+        if (parts[j].locked) continue;
+        const tj = y[j], bj = vBotArr[j] >= 0 ? y[vBotArr[j]] : tj + geo[j].h - 1;
         const margin = vgapOf(i, j) === 2 ? 1.5 : 0.5;
-        if (!(bi < tj - margin || bj < ti - margin)) xe.push({ u: i, v: j, w: geo[i].w - 1 + hgap(i, j) });
+        if (!(bi < tj - margin || bj < ti - margin)) addX(i, j, geo[i].w - 1 + hgap(i, j));
       }
     }
     const lockedX = new Map<number, number>();
@@ -476,17 +540,18 @@ export function computeAutoLayout5(
       }
     }
     for (const [n, v] of lockedX) {
-      xe.push({ u: XS, v: n, w: v });
-      xe.push({ u: n, v: XS, w: -v });
+      addX(XS, n, v);
+      addX(n, XS, -v);
     }
     const xd = new Float64Array(nP + 1).fill(-1e18);
     xd[XS] = 0;
     let xOK = true;
     for (let it = 0; it < nP + 3; it++) {
       let ch = false;
-      for (const e of xe) {
-        if (xd[e.u] + e.w > xd[e.v] + 1e-9) {
-          xd[e.v] = xd[e.u] + e.w;
+      for (let ei = 0; ei < nX; ei++) {
+        const u = xU[ei], v = xV[ei];
+        if (xd[u] + xW[ei] > xd[v] + 1e-9) {
+          xd[v] = xd[u] + xW[ei];
           ch = true;
         }
       }
@@ -527,6 +592,10 @@ export function computeAutoLayout5(
         if (v === 2 && net !== undefined && net >= 0) pinNetAt[i] = net;
       }
     };
+    // a pin without a net still breaks the strip it sits on (the router
+    // isolates floating pins), so it claims a private pseudo-net: the cuts
+    // it forces get counted and the copper beyond it no longer joins nets
+    let floatNet = nets.length;
     const lockedBoxes: { r1: number; r2: number; c1: number; c2: number }[] = [];
     for (let pi = 0; pi < nP; pi++) {
       const p = parts[pi];
@@ -550,7 +619,7 @@ export function computeAutoLayout5(
       if (p.kind === "rigid") {
         const sh = geo[pi].sh!;
         for (let r = 0; r < sh.h; r++) for (let c = 0; c < sh.w; c++) claim(yI[pi] + r, xI[pi] + c, 1, undefined, pi);
-        for (const sp of sh.pins) claim(yI[pi] + sp.rowOff, xI[pi] + sp.colOff, 2, sp.net, pi);
+        for (const sp of sh.pins) claim(yI[pi] + sp.rowOff, xI[pi] + sp.colOff, 2, sp.net ?? floatNet++, pi);
       } else if (geo[pi].mode === "H") {
         for (let c = 0; c <= p.dc0; c++) {
           if (c > 0 && c < p.dc0) claim(yI[pi], xI[pi] + c, 1, undefined, pi);
@@ -608,66 +677,119 @@ export function computeAutoLayout5(
     }
 
     // wires: per-net MST over segments, realizability-aware
-    const usedHoles = new Set<number>();
-    let wires = 0, wireLen = 0, slants = 0, crossings = 0, starved = 0;
+    const used = new Uint8Array(H * W);
+    // body cells per column above each row, so the bodies a vertical wire
+    // would cross between two rows come out of one subtraction
+    const bodyPre = new Int32Array((H + 1) * W);
+    for (let c = 0; c < W; c++) {
+      let n = 0;
+      for (let r = 0; r < H; r++) {
+        bodyPre[r * W + c] = n;
+        if (occ[r * W + c] === 1) n++;
+      }
+      bodyPre[H * W + c] = n;
+    }
+    let wires = 0, wireLen = 0, slants = 0, crossings = 0, starved = 0, starvedHard = 0;
     for (const [, segs] of segsOfNet) {
       if (segs.length < 2) continue;
-      const linkCount = new Int32Array(segs.length);
-      const inT = new Set<number>([0]);
-      while (inT.size < segs.length) {
-        let best: { total: number; a: number; b: number; cross: number; len: number; offAxis: boolean; col: number } | null = null;
-        for (const a of inT) {
-          for (let b2 = 0; b2 < segs.length; b2++) {
-            if (inT.has(b2)) continue;
-            const A = segs[a], B = segs[b2];
-            const lo = Math.max(A.c1, B.c1), hi = Math.min(A.c2, B.c2);
-            let cost: number, cross = 0, bestCol = -1;
-            if (A.row === B.row) cost = 50;
-            else if (lo <= hi) {
-              let bestCross = Infinity;
-              for (let c = lo; c <= hi; c++) {
-                if (occ[at(A.row, c)] !== 0 || occ[at(B.row, c)] !== 0) continue;
-                if (usedHoles.has(A.row * 4096 + c) || usedHoles.has(B.row * 4096 + c)) continue;
-                let cr = 0;
-                const r1 = Math.min(A.row, B.row), r2 = Math.max(A.row, B.row);
-                for (let r = r1 + 1; r < r2; r++) if (occ[at(r, c)] === 1) cr++;
-                if (cr < bestCross) {
-                  bestCross = cr;
-                  bestCol = c;
-                }
-                if (cr === 0) break;
-              }
-              if (bestCross === Infinity) cost = 50;
-              else {
-                cost = 1 + bestCross * 8;
-                cross = bestCross;
-              }
-            } else cost = 50;
-            const len = Math.abs(A.row - B.row);
-            const total = cost + len * 0.1;
-            if (!best || total < best.total) best = { total, a, b: b2, cross, len, offAxis: cost >= 50, col: bestCol };
+      const k = segs.length;
+      linkCount.fill(0, 0, k);
+      inTree.fill(0, 0, k);
+      const tree = [0];
+      inTree[0] = 1;
+      // Prim keys: per outside segment, its cheapest link from the tree
+      // (earliest tree member on ties, so the pick matches a full scan in
+      // tree order). A link only consumes holes on its two rows, so keys
+      // of segments elsewhere stay exact and are not recomputed.
+      const offer = (ti: number, b2: number, force: boolean) => {
+        const A = segs[tree[ti]], B = segs[b2];
+        const rowA = A.row * W;
+        const lo = Math.max(A.c1, B.c1), hi = Math.min(A.c2, B.c2);
+        let cost: number, cross = 0, bestCol = -1;
+        if (A.row === B.row) cost = 50;
+        else if (lo <= hi) {
+          let bestCross = Infinity;
+          const rowB = B.row * W;
+          const preTop = (Math.min(A.row, B.row) + 1) * W, preBot = Math.max(A.row, B.row) * W;
+          for (let c = lo; c <= hi; c++) {
+            if (occ[rowA + c] !== 0 || occ[rowB + c] !== 0) continue;
+            if (used[rowA + c] || used[rowB + c]) continue;
+            const cr = bodyPre[preBot + c] - bodyPre[preTop + c];
+            if (cr < bestCross) {
+              bestCross = cr;
+              bestCol = c;
+            }
+            if (cr === 0) break;
           }
+          if (bestCross === Infinity) cost = 50;
+          else {
+            cost = 1 + bestCross * 8;
+            cross = bestCross;
+          }
+        } else cost = 50;
+        const len = Math.abs(A.row - B.row);
+        const total = cost + len * 0.1;
+        if (force || total < kTotal[b2]) {
+          kTotal[b2] = total;
+          kA[b2] = ti;
+          kCross[b2] = cross;
+          kLen[b2] = len;
+          kCol[b2] = bestCol;
+          kOff[b2] = cost >= 50 ? 1 : 0;
         }
-        if (!best) break;
-        inT.add(best.b);
+      };
+      const rekey = (b2: number) => {
+        offer(0, b2, true);
+        for (let ti = 1; ti < tree.length; ti++) offer(ti, b2, false);
+      };
+      for (let b2 = 1; b2 < k; b2++) rekey(b2);
+      while (tree.length < k) {
+        let bb = -1;
+        for (let b2 = 0; b2 < k; b2++) {
+          if (inTree[b2]) continue;
+          if (bb < 0 || kTotal[b2] < kTotal[bb] || (kTotal[b2] === kTotal[bb] && kA[b2] < kA[bb])) bb = b2;
+        }
+        const a = tree[kA[bb]];
+        inTree[bb] = 1;
+        tree.push(bb);
         wires++;
-        wireLen += best.len;
-        crossings += best.cross;
-        if (best.offAxis) slants++;
-        if (best.col >= 0) {
-          usedHoles.add(segs[best.a].row * 4096 + best.col);
-          usedHoles.add(segs[best.b].row * 4096 + best.col);
+        wireLen += kLen[bb];
+        crossings += kCross[bb];
+        if (kOff[bb]) slants++;
+        let rowA = -1, rowB = -1;
+        if (kCol[bb] >= 0) {
+          rowA = segs[a].row;
+          rowB = segs[bb].row;
+          used[rowA * W + kCol[bb]] = 1;
+          used[rowB * W + kCol[bb]] = 1;
         }
-        linkCount[best.a]++;
-        linkCount[best.b]++;
+        linkCount[a]++;
+        linkCount[bb]++;
+        // a consumed hole only ever raises a pair's cost, and only when it
+        // was that pair's own column on one of its rows: just those keys
+        // are recomputed, the rest only hear the new member's offer
+        const tn = tree.length - 1;
+        const col = kCol[bb];
+        for (let b2 = 0; b2 < k; b2++) {
+          if (inTree[b2]) continue;
+          const rb = segs[b2].row, ra = segs[tree[kA[b2]]].row;
+          if (rowA >= 0 && kCol[b2] === col && (rb === rowA || rb === rowB || ra === rowA || ra === rowB)) rekey(b2);
+          else offer(tn, b2, false);
+        }
       }
+      // a linked segment without any free hole cannot take its wire at all
+      // (hard); one whose only free hole the link consumes leaves the
+      // router no slack (headroom, soft)
       for (let s = 0; s < segs.length; s++) {
         if (linkCount[s] === 0) continue;
-        let spare = 0;
+        let free = 0, spare = 0;
         for (let c = segs[s].c1; c <= segs[s].c2 && spare === 0; c++) {
-          if (occ[at(segs[s].row, c)] === 0 && !usedHoles.has(segs[s].row * 4096 + c)) spare++;
+          if (occ[at(segs[s].row, c)] !== 0) continue;
+          free++;
+          if (!used[segs[s].row * W + c]) spare++;
         }
-        if (spare === 0) starved++;
+        if (free === 0) starvedHard++;
+        else if (spare === 0) starved++;
       }
     }
 
@@ -718,31 +840,35 @@ export function computeAutoLayout5(
     const lockOver =
       (lockedColsCap !== undefined ? Math.max(0, W - lockedColsCap) : 0) +
       (lockedRowsCap !== undefined ? Math.max(0, H - lockedRowsCap) : 0);
-    // ribbon boards read badly even at equal area (v2's chooser rule): a
-    // user-locked dimension is the user's own shape choice and exempts it
+    // shape: humans build wide boards (corpus median rows/cols 0.75, the
+    // solver's 1.06), so every row beyond the width is priced like a full
+    // row of cells; a wide board pays only beyond the 2:1 ribbon (v2's
+    // rule). A user-locked dimension is the user's own shape choice and
+    // exempts the board
     const aspectOver = lockedColsCap !== undefined || lockedRowsCap !== undefined ? 0
-      : Math.max(0, Math.max(H, W) - 2 * Math.min(H, W)) * Math.min(H, W);
+      : W_TALL * Math.max(0, H - W) * W + Math.max(0, W - 2 * H) * H;
     // a locked dimension is a physical board already cut: charge its FULL
     // extent (narrower/shorter content saves nothing), so the anneal trades
     // the locked dimension for the free one
     const physW = lockedColsCap !== undefined ? Math.max(W, lockedColsCap) : W;
     const physH = lockedRowsCap !== undefined ? Math.max(H, lockedRowsCap) : H;
-    // connectors belong on the left or right board edge (on edge 0, 1 away
+    // connectors belong on a board edge, any of the four (on edge 0, 1 away
     // 50%, 2 away 75%, then 100% of the full price; the small slope keeps a
     // gradient on the plateau); a locked connector is the user's placement
     let connEdge = 0;
     for (let pi = 0; pi < nP; pi++) {
       const p = parts[pi];
       if (!p.isConn || p.locked) continue;
-      const d = Math.min(xI[pi], physW - (xI[pi] + geo[pi].w));
+      const h = geo[pi].mode === "V" ? yI[vBot.get(pi)!] - yI[pi] + 1 : geo[pi].h;
+      const d = Math.min(xI[pi], physW - (xI[pi] + geo[pi].w), yI[pi], physH - (yI[pi] + h));
       const CONN_FULL = 30;
       connEdge += (d <= 0 ? 0 : d === 1 ? 0.5 * CONN_FULL : d === 2 ? 0.75 * CONN_FULL : CONN_FULL) + 0.2 * d;
     }
     const eBase =
       W_AREA * (physH * physW + aspectOver) + W_WIRE * wires + W_WLEN * wireLen +
       W_CUT * cuts + W_BCUT * bCuts + W_LOCKOVER * lockOver + connEdge +
-      overlapBad * 500 + geoBad * 450 + ringBad * 120 + spanBad * 60 + starved * 50;
-    return { eBase, slants, crossings, H, W, yI, xI, geo, vBot, dbg: { wires, wireLen, cuts, bCuts, starved, geoBad, connEdge, lockOver, spanBad } };
+      overlapBad * 500 + geoBad * 450 + ringBad * 120 + spanBad * 60 + starved * 20 + starvedHard * 450;
+    return { eBase, slants, crossings, H, W, yI, xI, geo, vBot, dbg: { wires, wireLen, cuts, bCuts, starved, starvedHard, geoBad, connEdge, lockOver, spanBad } };
   }
 
   // ── mutation ──
@@ -916,7 +1042,7 @@ export function computeAutoLayout5(
     const W = lockedColsCap !== undefined ? Math.max(d.W, lockedColsCap) : d.W + 2 + dCol;
     const routeBoard: Board = { ...board, rows: H, cols: W, cuts: [], wires: [] };
     const movedIds = new Set(parts.map((p) => p.comp.id));
-    const chooser = new Chooser(routeBoard, componentDefs, nets, netAssignments, false, {}, false);
+    const chooser = new Chooser(routeBoard, componentDefs, nets, netAssignments, false, {}, false, true);
     chooser.route(comps, H, W, movedIds);
     chooser.freezePool();
     const netOfPin = new Map(netAssignments.map((a) => [pinKey(a.componentId, a.pinId), a.netId]));
@@ -927,7 +1053,15 @@ export function computeAutoLayout5(
       // would only drag edge-flush parts inward for no gain
       const full = compactPlacements(c0.virtual, componentDefs, netOfPin, c0.rows, c0.cols);
       if (full.removals > 0) chooser.route(full.comps, full.rows, full.cols, c0.movedIds);
-      insertWireChannels(chooser, componentDefs, {}, false);
+    }
+    // hard zero-mess rule: buy bus rows and channel columns until every
+    // wire is vertical and crosses nothing; a locked dimension cannot grow
+    // and locked parts must not shift, so under those the mess may remain
+    if (chooser.chosen!.bad === 0 && !hasLocked) {
+      insertWireChannels(chooser, componentDefs, {
+        ...(lockedRowsCap !== undefined ? { maxRows: lockedRowsCap } : {}),
+        ...(lockedColsCap !== undefined ? { maxCols: lockedColsCap } : {}),
+      }, false, true);
     }
     if (chooser.chosen!.bad === 0) repairSlantWires(chooser, routeBoard, componentDefs, netAssignments, new Set());
     const ch = chooser.chosen!;
@@ -940,6 +1074,7 @@ export function computeAutoLayout5(
     if (ch.plan.unresolvedConflicts > 0) issues.push(`${ch.plan.unresolvedConflicts} strip conflicts remain`);
     if (lockedColsCap !== undefined && ch.cols > lockedColsCap) issues.push(`does not fit the locked ${lockedColsCap} columns (needs ${ch.cols})`);
     if (lockedRowsCap !== undefined && ch.rows > lockedRowsCap) issues.push(`does not fit the locked ${lockedRowsCap} rows (needs ${ch.rows})`);
+    if (ch.mess > 0) issues.push(`${ch.mess} wire${ch.mess === 1 ? "" : "s"} could not be made straight and crossing-free`);
     const result: AutoLayoutResult = {
       placements: ch.virtual
         .filter((c) => movedIds.has(c.id) && c.boardPos)
