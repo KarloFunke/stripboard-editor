@@ -82,7 +82,10 @@ export function deriveWires(
   // tail hole next to the donor's pins rather than cutting the copper
   // beside it. The relay runs on the rest of the tail, which stays intact,
   // so the mode keeps its strongest off-axis repair.
-  drillTailRelays = false
+  drillTailRelays = false,
+  // No-stacking mode: any wire on top of another is priced as a last
+  // resort (like strict mess), so a free channel is taken whenever one exists
+  noWireStacking = false
 ): {
   wires: { from: BoardPosition; to: BoardPosition }[];
   extraCuts: Cut[];
@@ -328,8 +331,10 @@ export function deriveWires(
     // Rescue mode (per wire, see below): allow over-cap stacks at the
     // rescue rate when nothing under the cap can complete the net.
     let allowDeepStacks = false;
-    const overlapPenalty = (from: BoardPosition, to: BoardPosition) =>
-      wireStackPenalty(wireStackDepth(from, to, allWires), allowDeepStacks);
+    const overlapPenalty = (from: BoardPosition, to: BoardPosition) => {
+      const depth = wireStackDepth(from, to, allWires);
+      return noWireStacking ? WIRE_STRICT_MESS * depth : wireStackPenalty(depth, allowDeepStacks);
+    };
 
     for (const net of order) {
       const groupIdxs = netGroupIdxs.get(net.id)!;

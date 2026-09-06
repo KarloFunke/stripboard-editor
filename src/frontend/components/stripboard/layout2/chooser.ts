@@ -2,7 +2,7 @@ import { Board, BoardPosition, Component, ComponentDef, Net, NetAssignment } fro
 import { CompletionPlan, deriveCompletion } from "../autoFinish";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { getComponentBounds } from "../boardLayout";
-import { FootprintRect, segmentIntersectsRect, segmentsIntersect } from "../flexGeometry";
+import { FootprintRect, segmentIntersectsRect, segmentsIntersect, wireStackDepth } from "../flexGeometry";
 import { AREA_WEIGHT, avoidableBetweenCuts } from "./tidyScore";
 import { DimLimits } from "./tileModel";
 
@@ -58,8 +58,15 @@ export class Chooser {
     // Hard zero-mess rule: candidates rank on (bad, mess, cost) and the
     // router prices mess as a last resort, so a line that removes an
     // off-axis or crossing wire is adopted whatever it costs in area.
-    private strict = false
+    private strict = false,
+    // No wire may run on top of another: stacked wires count as mess
+    // (strict ranking) and the router prices them as a last resort
+    private noWireStacking = false
   ) {}
+
+  get forbidsStacking(): boolean {
+    return this.noWireStacking;
+  }
 
   private messOf(virtual: Component[], plan: CompletionPlan): number {
     const rects: FootprintRect[] = [];
@@ -72,11 +79,12 @@ export class Chooser {
       else rects.push(getComponentBounds(def, c.boardPos, c.rotation));
     }
     let mess = 0;
-    for (const w of plan.wires) {
+    plan.wires.forEach((w, i) => {
       if (w.from.col !== w.to.col) mess++;
       for (const r of rects) if (segmentIntersectsRect(w.from, w.to, r)) mess++;
       for (const b of bodies) if (segmentsIntersect(w.from, w.to, b.p1, b.p2)) mess++;
-    }
+      if (this.noWireStacking && wireStackDepth(w.from, w.to, plan.wires.slice(0, i)) > 0) mess++;
+    });
     return mess;
   }
 
@@ -168,6 +176,7 @@ export class Chooser {
       ...(repair ? { repairSlants: true } : {}),
       ...(this.drilledCutsOnly ? { drilledCutsOnly: true } : {}),
       ...(this.strict ? { strictWires: true } : {}),
+      ...(this.noWireStacking ? { noWireStacking: true } : {}),
     });
     const overCap =
       (this.limits.maxRows ? Math.max(0, rows - this.limits.maxRows) : 0) +

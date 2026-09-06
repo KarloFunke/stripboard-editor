@@ -18,8 +18,6 @@ export default function AutoLayoutSettings({ onClose }: { onClose: () => void })
   const setSpanOverride = useProjectStore((s) => s.setSpanOverride);
   const clearanceOverrides = useProjectStore((s) => s.clearanceOverrides);
   const setClearanceOverride = useProjectStore((s) => s.setClearanceOverride);
-  const tidyWires = useProjectStore((s) => s.tidyWires);
-  const setTidyWires = useProjectStore((s) => s.setTidyWires);
   const drilledCutsOnly = useProjectStore((s) => s.drilledCutsOnly);
   const setDrilledCutsOnly = useProjectStore((s) => s.setDrilledCutsOnly);
   const permBoards = useProjectStore((s) => s.permBoards);
@@ -28,6 +26,8 @@ export default function AutoLayoutSettings({ onClose }: { onClose: () => void })
   const setPermWorkers = useProjectStore((s) => s.setPermWorkers);
   const v5Moves = useProjectStore((s) => s.v5Moves);
   const setV5Moves = useProjectStore((s) => s.setV5Moves);
+  const noWireStacking = useProjectStore((s) => s.noWireStacking);
+  const setNoWireStacking = useProjectStore((s) => s.setNoWireStacking);
   const cores = Math.max(1, typeof navigator !== "undefined" ? navigator.hardwareConcurrency || 4 : 4);
   const workers = Math.min(permWorkers ?? defaultPermWorkers(cores), cores);
   const boards = permBoards ?? defaultPermBoards(components.filter((c) => !c.boardExcluded).length);
@@ -161,35 +161,33 @@ export default function AutoLayoutSettings({ onClose }: { onClose: () => void })
         )}
         <div className="mt-3 border-t border-neutral-200 dark:border-neutral-700 pt-3">
           <label className="flex items-center justify-between gap-2 cursor-pointer">
-            <span className="text-sm text-neutral-700 dark:text-neutral-200">Straighter wires</span>
-            <input
-              type="checkbox"
-              checked={tidyWires !== false}
-              onChange={(e) => setTidyWires(e.target.checked)}
-              className="h-4 w-4 accent-blue-500"
-            />
-          </label>
-          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 leading-snug">
-            Runs a second solver pass that trades some board space for fewer slanted
-            and crossing wires, kept only when it actually is tidier. Turning it off
-            roughly halves the solve time.
-          </p>
-        </div>
-        <div className="mt-3 border-t border-neutral-200 dark:border-neutral-700 pt-3">
-          <label className="flex items-center justify-between gap-2 cursor-pointer">
             <span className="text-sm text-neutral-700 dark:text-neutral-200">Drilled cuts only</span>
             <input
               type="checkbox"
-              checked={drilledCutsOnly === true}
+              checked={drilledCutsOnly !== false}
               onChange={(e) => setDrilledCutsOnly(e.target.checked)}
               className="h-4 w-4 accent-blue-500"
             />
           </label>
           <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 leading-snug">
             Sever strips by drilling out a hole instead of cutting the copper between
-            two holes wherever possible. Drilling is much easier to do accurately; the
-            board may come out slightly larger. Directly neighbouring pins of a part
-            still force a knife cut between them.
+            two holes wherever possible. The board may come out slightly larger. Directly
+            neighbouring pins of a part still force a knife cut between them.
+          </p>
+        </div>
+        <div className="mt-3 border-t border-neutral-200 dark:border-neutral-700 pt-3">
+          <label className="flex items-center justify-between gap-2 cursor-pointer">
+            <span className="text-sm text-neutral-700 dark:text-neutral-200">No stacked wires</span>
+            <input
+              type="checkbox"
+              checked={noWireStacking !== false}
+              onChange={(e) => setNoWireStacking(e.target.checked)}
+              className="h-4 w-4 accent-blue-500"
+            />
+          </label>
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 leading-snug">
+            Never runs one wire on top of another. Keeps the board buildable with thick
+            or uninsulated wire; the board may come out larger.
           </p>
         </div>
         <div className="mt-3 border-t border-neutral-200 dark:border-neutral-700 pt-3">
@@ -210,8 +208,7 @@ export default function AutoLayoutSettings({ onClose }: { onClose: () => void })
           />
           <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 leading-snug">
             Solves this many alternative layouts of the same circuit and applies the
-            best one found. Everything is deterministic: the same count always gives
-            the same board. Beyond 10 the returns are usually diminishing.
+            best one found. Beyond 10 the returns are usually diminishing.
           </p>
           {boards > 1 && (
             <div className="mt-2">
@@ -236,7 +233,7 @@ export default function AutoLayoutSettings({ onClose }: { onClose: () => void })
           )}
           <div className="mt-2">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-sm text-neutral-700 dark:text-neutral-200">v5 anneal effort</span>
+              <span className="text-sm text-neutral-700 dark:text-neutral-200">Anneal effort</span>
               <span className="text-sm text-neutral-500 dark:text-neutral-400 w-14 text-right">
                 {v5Moves ? `${Math.round(v5Moves / 1000)}k` : "auto"}
               </span>
@@ -251,8 +248,8 @@ export default function AutoLayoutSettings({ onClose }: { onClose: () => void })
               className="w-full mt-1 accent-blue-500"
             />
             <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 leading-snug">
-              Annealing moves per attempt for the v5 beta engine. Auto scales with the
-              part count; higher settings search longer and usually pack tighter.
+              Annealing moves per layout. Auto scales with the part count; higher
+              settings search longer and usually pack tighter.
             </p>
           </div>
         </div>

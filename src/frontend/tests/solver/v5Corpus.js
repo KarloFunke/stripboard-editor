@@ -95,6 +95,7 @@ Promise.all(Array.from({ length: workers }, pump)).then(() => {
     results.push({ id: entry.id, parts: entry.parts, human: { rows: entry.rows, cols: entry.cols }, best, cpuMs, seeds });
   }
   results.sort((a, b) => a.id - b.id);
+  fs.mkdirSync(path.join(dataDir, "results"), { recursive: true });
   const file = path.join(dataDir, "results", `v5-${name}.json`);
   fs.writeFileSync(file, JSON.stringify({ name, seedsBase, movesBase, wallMs: Date.now() - t0, results }, null, 1));
   console.log(`\nwrote ${file} (${((Date.now() - t0) / 60000).toFixed(1)} min wall)`);

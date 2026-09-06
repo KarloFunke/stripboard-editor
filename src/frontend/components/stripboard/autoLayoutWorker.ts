@@ -3,7 +3,9 @@ import { AutoLayoutOptions, computeAutoLayout } from "./autoLayout";
 import { AutoLayoutProgress, AutoLayoutResult } from "./layoutTypes";
 import { computeAutoLayout2, rateResult } from "./autoLayout2";
 import { computeAutoLayout5 } from "./autoLayout5";
+import { computeAutoLayout5Split } from "./autoLayout5Split";
 import { wireMessScore } from "./layout2/tidyScore";
+import { wireStackDepth } from "./flexGeometry";
 
 export interface AutoLayoutRequest {
   board: Board;
@@ -32,6 +34,13 @@ export interface AutoLayoutRequest {
   permutationIndex?: number;
   // v5: anneal budget per seed (undefined = size-scaled default)
   v5Moves?: number;
+  // v5: solve this bipartition variant (two halves under a common locked
+  // dimension, composed) instead of a joint seed
+  v5Split?: number;
+  // v5: no wire may run on top of another in one channel
+  noWireStacking?: boolean;
+  // v5 split: first seed of the halves' portfolio (one per board)
+  v5SeedBase?: number;
 }
 
 export type AutoLayoutWorkerMessage =
@@ -48,7 +57,7 @@ const ctx = self as unknown as {
 };
 
 ctx.onmessage = (e) => {
-  const { board, components, componentDefs, nets, netAssignments, engine, options, spanOverrides, clearanceOverrides, tidyGrowth, drilledCutsOnly, permutationIndex, v5Moves } = e.data;
+  const { board, components, componentDefs, nets, netAssignments, engine, options, spanOverrides, clearanceOverrides, tidyGrowth, drilledCutsOnly, permutationIndex, v5Moves, v5Split, noWireStacking, v5SeedBase } = e.data;
   const onProgress = (progress: AutoLayoutProgress) => {
     ctx.postMessage({ type: "progress", progress });
   };
@@ -74,18 +83,29 @@ ctx.onmessage = (e) => {
     return;
   }
   if (engine === "v5") {
-    const result = computeAutoLayout5(board, components, defs, nets, netAssignments, onProgress, {
-      ...(permutationIndex !== undefined ? { seedIndex: permutationIndex } : {}),
+    const v5Opts = {
       ...(v5Moves !== undefined ? { moves: v5Moves } : {}),
-    });
+      ...(drilledCutsOnly ? { drilledCutsOnly: true } : {}),
+      ...(noWireStacking ? { noWireStacking: true } : {}),
+    };
+    const result = v5Split !== undefined
+      ? computeAutoLayout5Split(board, components, defs, nets, netAssignments, onProgress, { variant: v5Split, ...(v5SeedBase !== undefined ? { seedBase: v5SeedBase } : {}), ...v5Opts })
+      : computeAutoLayout5(board, components, defs, nets, netAssignments, onProgress, {
+          ...(permutationIndex !== undefined ? { seedIndex: permutationIndex } : {}),
+          ...v5Opts,
+        });
     // the guard metric for v5 is total wire mess: off-axis wires count like
-    // crossings (presentation-clean first)
+    // crossings (presentation-clean first), and so do stacked wires when
+    // stacking is forbidden
     const offAxis = result.wires.filter((w) => w.from.col !== w.to.col).length;
+    const stacked = noWireStacking
+      ? result.wires.filter((w, i) => wireStackDepth(w.from, w.to, result.wires.slice(0, i)) > 0).length
+      : 0;
     ctx.postMessage({
       type: "done",
       result,
       score: rateResult(result, board, components, defs, drilledCutsOnly),
-      crossings: wireMessScore(result, components, defs).crossings + offAxis,
+      crossings: wireMessScore(result, components, defs).crossings + offAxis + stacked,
     });
     return;
   }

@@ -79,7 +79,7 @@ export function deriveCompletion(
   // crossings) or are ones this pass takes anyway.
   // strictWires prices every off-axis or crossing wire as a last resort
   // (WIRE_STRICT_MESS) so the router takes any clean route that exists.
-  opts?: { allowSharedJoints?: boolean; repairSlants?: boolean; evalNets?: Set<string>; drilledCutsOnly?: boolean; strictWires?: boolean }
+  opts?: { allowSharedJoints?: boolean; repairSlants?: boolean; evalNets?: Set<string>; drilledCutsOnly?: boolean; strictWires?: boolean; noWireStacking?: boolean }
 ): CompletionPlan {
   const cutIssues: string[] = [];
   const pins = collectBoardPins(board, components, componentDefs, netAssignments);
@@ -140,7 +140,8 @@ export function deriveCompletion(
       segments, connectivity, routeNets, pins, occupied, board.wires, reserveNets, obstacleIndex, wireIssues, starvedNetIds, starvedPinPositions,
       opts?.allowSharedJoints ?? false,
       opts?.evalNets !== undefined,
-      opts?.drilledCutsOnly ?? false
+      opts?.drilledCutsOnly ?? false,
+      opts?.noWireStacking ?? false
     );
     return { cuts: cutsTry, segments, wires, extraCuts, wireMess, sharedJoints, wireIssues, starvedNetIds, starvedPinPositions };
   };

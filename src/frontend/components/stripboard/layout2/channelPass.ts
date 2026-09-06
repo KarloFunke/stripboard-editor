@@ -1,7 +1,7 @@
 import { BoardPosition, Component, ComponentDef } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { getComponentBounds } from "../boardLayout";
-import { FootprintRect, WireObstacles, spanLimits, wireExtraLength } from "../flexGeometry";
+import { FootprintRect, WireObstacles, spanLimits, wireExtraLength, wireStackDepth } from "../flexGeometry";
 import { Candidate, Chooser } from "./chooser";
 import { DimLimits } from "./tileModel";
 import { IC_MIN_PINS } from "./tidyScore";
@@ -68,14 +68,35 @@ export function insertWireChannels(
           ...(c.flexibleEndPos ? { flexibleEndPos: shift(c.flexibleEndPos) } : {}),
         };
       });
+    // an edge line must not push a connector off the board edge it sits on
+    const connectorFlush = (comps: Component[], isCol: boolean, at: number, n: number): boolean =>
+      (at === 0 || at === n) &&
+      comps.some((c) => {
+        if (!c.boardPos || c.boardExcluded) return false;
+        const def = resolveComponentDef(c, componentDefs);
+        if (!def || def.category !== "connector") return false;
+        let lo: number, hi: number;
+        if (def.flexible) {
+          const p2 = c.flexibleEndPos ?? c.boardPos;
+          lo = Math.min(isCol ? c.boardPos.col : c.boardPos.row, isCol ? p2.col : p2.row);
+          hi = Math.max(isCol ? c.boardPos.col : c.boardPos.row, isCol ? p2.col : p2.row);
+        } else {
+          const r = getComponentBounds(def, c.boardPos, c.rotation);
+          lo = isCol ? r.minCol : r.minRow;
+          hi = isCol ? r.maxCol : r.maxRow;
+        }
+        return at === 0 ? lo === 0 : hi === n - 1;
+      });
     const colOk = (cur: Candidate, at: number) =>
       (strict ? at >= 0 && at <= cur.cols : at >= 1 && at <= cur.cols - 1) &&
       !(limits.maxCols !== undefined && cur.cols + 1 > limits.maxCols) &&
-      !lineStraddled(cur.virtual, true, at);
+      !lineStraddled(cur.virtual, true, at) &&
+      !connectorFlush(cur.virtual, true, at, cur.cols);
     const rowOk = (cur: Candidate, at: number) =>
       (strict ? at >= 0 && at <= cur.rows : at >= 1 && at <= cur.rows - 1) &&
       !(limits.maxRows !== undefined && cur.rows + 1 > limits.maxRows) &&
-      !lineStraddled(cur.virtual, false, at);
+      !lineStraddled(cur.virtual, false, at) &&
+      !connectorFlush(cur.virtual, false, at, cur.rows);
     // strict: the nearest insertable line above/below a row (left/right of
     // a column), walking outward past straddling bodies
     const nearLines = (ok: (at: number) => boolean, at0: number, max: number): number[] => {
@@ -102,7 +123,8 @@ export function insertWireChannels(
         }
       }
       const offenders = cur.plan.wires.filter(
-        (w) => w.from.col !== w.to.col || wireExtraLength(w.from, w.to, obstacles) > 0
+        (w, i) => w.from.col !== w.to.col || wireExtraLength(w.from, w.to, obstacles) > 0 ||
+          (chooser.forbidsStacking && wireStackDepth(w.from, w.to, cur.plan.wires.slice(0, i)) > 0)
       );
       if (offenders.length === 0) break;
       const colCands = new Set<number>();

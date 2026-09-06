@@ -3,7 +3,10 @@ import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { getComponentBounds, getRotatedPinPositions } from "./boardLayout";
 import { AutoLayoutProgress, AutoLayoutResult } from "./layoutTypes";
 import { Rot, allowedDrows } from "./layout2/tileModel";
-import { bodiesTooClose, bodyIntersectsRect, segmentsIntersect } from "./flexGeometry";
+import { bodiesTooClose, bodyIntersectsRect, clearanceOf, segmentsIntersect, wireStackDepth } from "./flexGeometry";
+import { alignCuts } from "./layout2/alignCuts";
+import { padAroundEdgeConnectors } from "./layout2/edgePadding";
+import { drillRemainingCuts } from "./autoFinish";
 import { Chooser } from "./layout2/chooser";
 import { compactPlacements } from "./layout2/compaction";
 import { insertWireChannels } from "./layout2/channelPass";
@@ -36,8 +39,43 @@ export interface AutoLayout5Options {
   // Run exactly this one seed (parallel portfolio: the editor spreads seed
   // indices over workers and compares the finished boards)
   seedIndex?: number;
+  // First seed of the portfolio (default 0): seeds seedBase .. seedBase+seeds-1
+  seedBase?: number;
+  // Board edges a connector may count as "on the edge" (default all four);
+  // a split half excludes its seam side, which ends up in the interior
+  connSides?: { top: boolean; bottom: boolean; left: boolean; right: boolean };
+  // Only sever strips by drilling holes: knife cuts the drill upgrade
+  // cannot absorb are priced in the skeleton and the finish
+  drilledCutsOnly?: boolean;
+  // No wire may run on top of another in one channel
+  noWireStacking?: boolean;
   // Harness-only: log each seed's decoded best (never set by the UI)
   debugSeeds?: boolean;
+  // Harness-only landscape instrumentation (never set by the UI): trace is
+  // called once per 1% of the anneal with window statistics, probe once per
+  // seed after the anneal with the engine closures
+  trace?: (rec: LandscapeTrace) => void;
+  probe?: (api: LandscapeProbe) => void;
+  // Harness-only schedule overrides for annealing experiments
+  schedule?: { t0?: number; t0Scale?: number; tEnd?: number; rampStart?: number; rampEndFrac?: number; hardStart?: number; coldT?: number };
+}
+
+export interface LandscapeTrace {
+  seed: number; it: number; T: number; w: number;
+  cur: number; best: number; curFin: number;
+  acc: number; accUp: number; up: number; nulls: number; infeasible: number;
+  H: number; W: number;
+}
+export interface LandscapeProbe {
+  seed: number;
+  best: { E: number; g: unknown; d: unknown };
+  decode: (g: unknown) => unknown;
+  mutate: (g: unknown, rng: () => number) => unknown;
+  initGenome: (rng: () => number) => unknown;
+  cloneG: (g: unknown) => unknown;
+  price: (d: unknown, w: number) => number;
+  t0: number;
+  W_MESS: number;
 }
 
 const W_AREA = 0.35;
@@ -45,9 +83,11 @@ const W_WIRE = 4;       // per link wire
 const W_WLEN = 0.4;     // per row of wire length
 const W_CUT = 0.05;     // cuts are nearly free
 const W_BCUT = 2;       // between-holes cuts stay visibly priced
+const W_BCUT_DRILL = 8; // a knife cut under drilled-cuts-only, about a wire
 const W_MESS = 400;     // final price per off-axis or crossing wire
 const W_TALL = 2;       // rows of cells each row beyond the board width costs
 const RAMP_START = 25;  // their price while the skeleton forms
+const T_START = 150;    // anneal start temperature (see solveSeed)
 const W_LOCKOVER = 150; // per line over a locked dimension
 const ROTS: Rot[] = [0, 90, 180, 270];
 
@@ -105,10 +145,19 @@ interface Genome {
   hv: number[];
   br: number[];
   grp: number[][];
+  // extra blank rows kept below a part (bus-row supply) and blank columns
+  // kept right of it (attachment holes beside pins): slack the compaction
+  // would otherwise squeeze out
+  gap: number[];
+  xgap: number[];
 }
 
 interface Decoded {
   eBase: number;
+  hardPen: number;
+  // which margin lines the skeleton's wiring attached to: the finish must
+  // keep the padding outside a flush connector on those sides
+  marginUsed: { top: boolean; bottom: boolean; left: boolean; right: boolean };
   slants: number;
   crossings: number;
   H: number;
@@ -117,7 +166,7 @@ interface Decoded {
   xI: Int32Array;
   geo: { w: number; h: number; sh?: RigidShape; mode?: "H" | "V" }[];
   vBot: Map<number, number>;
-  dbg?: Record<string, number>;
+  dbg?: Record<string, number | string[]>;
 }
 
 export function computeAutoLayout5(
@@ -206,6 +255,14 @@ export function computeAutoLayout5(
   const lockedRowsCap = board.lockedRows ? board.rows : undefined;
   const seedsN = Math.max(1, options?.seeds ?? 6);
   const movesN = options?.moves ?? Math.min(160000, Math.max(60000, 3200 * nP));
+  const wBCut = options?.drilledCutsOnly ? W_BCUT_DRILL : W_BCUT;
+  const anyLockedPart = parts.some((p) => p.locked);
+  // free board lines a flexible body keeps to any neighbour (def setting)
+  const clrOf = parts.map((p) => (p.kind === "flex" ? clearanceOf(p.def) : 0));
+  const clrPad = 2 + Math.max(0, ...clrOf);
+  const connSides = options?.connSides ?? { top: true, bottom: true, left: true, right: true };
+  const mCol = anyLockedPart || lockedColsCap !== undefined ? 0 : 1;
+  const mRow = anyLockedPart || lockedRowsCap !== undefined ? 0 : 1;
 
   // ── genotype ──
   const initGenome = (rng: () => number): Genome => {
@@ -223,11 +280,13 @@ export function computeAutoLayout5(
       hv: flexIdx.map(() => 0),
       br: flexIdx.map(() => 0),
       grp: netPins.map((pins) => pins.map(() => 0)),
+      gap: parts.map(() => 0),
+      xgap: parts.map(() => 0),
     };
   };
   const cloneG = (g: Genome): Genome => ({
     gp: g.gp.slice(), gn: g.gn.slice(), rot: g.rot.slice(),
-    hv: g.hv.slice(), br: g.br.slice(), grp: g.grp.map((a) => a.slice()),
+    hv: g.hv.slice(), br: g.br.slice(), grp: g.grp.map((a) => a.slice()), gap: g.gap.slice(), xgap: g.xgap.slice(),
   });
   const rotOfPart = (g: Genome, pi: number): Rot => {
     const p = parts[pi];
@@ -251,6 +310,21 @@ export function computeAutoLayout5(
   const kTotal = new Float64Array(maxK), kA = new Int32Array(maxK), kCross = new Int32Array(maxK);
   const kLen = new Int32Array(maxK), kCol = new Int32Array(maxK), kOff = new Uint8Array(maxK);
   const linkCount = new Int32Array(maxK), inTree = new Uint8Array(maxK);
+  const kRow = new Int32Array(maxK), kCA = new Int32Array(maxK), kCB = new Int32Array(maxK);
+  // per-decode scratch grids, grown on demand and cleared over the used
+  // prefix only (a fresh allocation per decode was a tenth of the run)
+  let gridCap = 0;
+  let occBuf = new Int8Array(0), ownerBuf = new Int16Array(0), pinNetBuf = new Int32Array(0);
+  let usedBuf = new Uint8Array(0), bodyPreBuf = new Int32Array(0), hopBuf = new Int32Array(0);
+  const ensureGrid = (n: number) => {
+    if (n <= gridCap) return;
+    gridCap = Math.max(n, gridCap * 2);
+    occBuf = new Int8Array(gridCap);
+    ownerBuf = new Int16Array(gridCap);
+    pinNetBuf = new Int32Array(gridCap);
+    usedBuf = new Uint8Array(gridCap);
+    bodyPreBuf = new Int32Array(gridCap);
+  };
   function decode(g: Genome): Decoded | null {
     const posP = new Int32Array(nP), posN = new Int32Array(nP);
     g.gp.forEach((p, i) => (posP[p] = i));
@@ -282,9 +356,11 @@ export function computeAutoLayout5(
       return [isTop ? pin.pi : vBot.get(pin.pi)!, 0];
     };
 
-    // optimistic: pure non-overlap; real clearances are checked EXACTLY at
-    // decoded coordinates (bodiesTooClose/bodyIntersectsRect) and priced
-    const vgapOf = (_i: number, _j: number) => 1;
+    // optimistic: the part's own clearance below it; real pair clearances
+    // are checked EXACTLY at decoded coordinates (bodiesTooClose /
+    // bodyIntersectsRect) and priced. Independent of the part below, which
+    // the nearest-successor edge pruning relies on.
+    const vgapOf = (i: number, _j: number) => Math.max(1, clrOf[i]);
 
     let nE = 0;
     const addE = (u: number, v: number, w: number) => {
@@ -308,11 +384,18 @@ export function computeAutoLayout5(
       // the part's bottom node and its offset: a V flex ends at its bottom
       // pin node, anything else at its own node plus its height
       const bu = vBotArr[i] >= 0 ? vBotArr[i] : i;
-      const w0 = (vBotArr[i] >= 0 ? 0 : geo[i].h - 1) + vgapOf(i, 0);
+      const w0 = (vBotArr[i] >= 0 ? 0 : geo[i].h - 1) + vgapOf(i, 0) + g.gap[i];
       const pi_ = posP[i], ni = posN[i];
-      for (let j = 0; j < nP; j++) {
-        if (i === j || !(pi_ < posP[j] && ni > posN[j])) continue;
-        if (parts[j].locked) continue;
+      // nearest successors only: any other part below i is reached through
+      // one of them with at least this edge's weight (the weight does not
+      // depend on j), so the longest paths are the same with far fewer edges
+      let seen = -1;
+      for (let q = pi_ + 1; q < nP; q++) {
+        const j = g.gp[q];
+        const nj = posN[j];
+        if (nj > ni || parts[j].locked) continue;
+        if (nj < seen) continue;
+        seen = nj;
         addE(bu, j, w0);
       }
     }
@@ -502,7 +585,7 @@ export function computeAutoLayout5(
     for (let i = 0; i < nP; i++) addX(XS, i, 0);
     const hgap = (i: number, j: number) => {
       const fi = parts[i].kind === "flex", fj = parts[j].kind === "flex";
-      if (fi && fj) return 2;
+      if (fi && fj) return 1 + Math.max(1, clrOf[i], clrOf[j]);
       if (!fi && !fj) {
         // a free col is only needed when the FACING edges both carry pins
         // (cut-apart one-hole segments starve the router)
@@ -512,7 +595,7 @@ export function computeAutoLayout5(
         return rPins && lPins ? 2 : 1;
       }
       const f = fi ? i : j;
-      return geo[f].mode === "V" ? 2 : 1;
+      return geo[f].mode === "V" ? 1 + Math.max(1, clrOf[f]) : 1;
     };
     // edges in first-sequence order, so the sweep below settles fast
     for (let r = 0; r < nP; r++) {
@@ -520,12 +603,12 @@ export function computeAutoLayout5(
       if (parts[i].locked) continue;
       const ti = y[i], bi = vBotArr[i] >= 0 ? y[vBotArr[i]] : ti + geo[i].h - 1;
       const pi_ = posP[i], ni = posN[i];
-      for (let j = 0; j < nP; j++) {
-        if (i === j || !(pi_ < posP[j] && ni < posN[j])) continue;
-        if (parts[j].locked) continue;
+      for (let q = pi_ + 1; q < nP; q++) {
+        const j = g.gp[q];
+        if (ni > posN[j] || parts[j].locked) continue;
         const tj = y[j], bj = vBotArr[j] >= 0 ? y[vBotArr[j]] : tj + geo[j].h - 1;
-        const margin = vgapOf(i, j) === 2 ? 1.5 : 0.5;
-        if (!(bi < tj - margin || bj < ti - margin)) addX(i, j, geo[i].w - 1 + hgap(i, j));
+        const margin = vgapOf(i, j) >= 2 ? 1.5 : 0.5;
+        if (!(bi < tj - margin || bj < ti - margin)) addX(i, j, geo[i].w - 1 + hgap(i, j) + g.xgap[i]);
       }
     }
     const lockedX = new Map<number, number>();
@@ -574,17 +657,22 @@ export function computeAutoLayout5(
       H = Math.max(H, bot + 1);
       W = Math.max(W, xI[pi] + geo[pi].w);
     }
-    const occ = new Int8Array(H * W);
-    const owner = new Int16Array(H * W).fill(-1);
-    const pinNetAt = new Int32Array(H * W).fill(-1);
-    const at = (r: number, c: number) => r * W + c;
+    // the grid carries one blank line of margin on every free side: the
+    // finish pads the route board the same way, so edge segments really do
+    // have an attachment hole there and the rim rows serve as bus rows
+    const GH = H + 2 * mRow, GW = W + 2 * mCol;
+    ensureGrid((GH + 1) * GW);
+    const occ = occBuf.fill(0, 0, GH * GW);
+    const owner = ownerBuf.fill(-1, 0, GH * GW);
+    const pinNetAt = pinNetBuf.fill(-1, 0, GH * GW);
+    const at = (r: number, c: number) => r * GW + c;
     let overlapBad = 0;
     const claim = (r: number, c: number, v: number, net: number | undefined, pi: number) => {
       if (r < 0 || c < 0 || r >= H || c >= W) {
         overlapBad++;
         return;
       }
-      const i = at(r, c);
+      const i = at(r + mRow, c + mCol);
       if (occ[i] !== 0 && owner[i] !== pi) overlapBad++;
       if (v === 2 || occ[i] === 0) {
         occ[i] = v;
@@ -626,8 +714,8 @@ export function computeAutoLayout5(
           if (flexCellBad(yI[pi], xI[pi] + c, "H")) ringBad++;
         }
         const brBit = flexBit(g.br, pi);
-        claim(yI[pi], xI[pi], 2, brBit === 0 ? p.na : p.nb, pi);
-        claim(yI[pi], xI[pi] + p.dc0, 2, brBit === 0 ? p.nb : p.na, pi);
+        claim(yI[pi], xI[pi], 2, (brBit === 0 ? p.na : p.nb) ?? floatNet++, pi);
+        claim(yI[pi], xI[pi] + p.dc0, 2, (brBit === 0 ? p.nb : p.na) ?? floatNet++, pi);
       } else {
         const t = yI[pi], b = yI[vBot.get(pi)!];
         for (let r = t; r <= b; r++) {
@@ -635,21 +723,28 @@ export function computeAutoLayout5(
           if (flexCellBad(r, xI[pi], "V")) ringBad++;
         }
         const brBit = flexBit(g.br, pi);
-        claim(t, xI[pi], 2, brBit === 0 ? p.na : p.nb, pi);
-        claim(b, xI[pi], 2, brBit === 0 ? p.nb : p.na, pi);
+        claim(t, xI[pi], 2, (brBit === 0 ? p.na : p.nb) ?? floatNet++, pi);
+        claim(b, xI[pi], 2, (brBit === 0 ? p.nb : p.na) ?? floatNet++, pi);
       }
     }
 
     // runs, cuts, segments per row
     let cuts = 0, bCuts = 0;
     const segsOfNet = new Map<number, { row: number; c1: number; c2: number }[]>();
-    for (let r = 0; r < H; r++) {
+    // pin-free rows are bus rows: copper a net may claim over a span to
+    // travel horizontally between two vertical hops (the router's relays)
+    const busRows: number[] = [];
+    const busClaims = new Map<number, { c1: number; c2: number; net: number }[]>();
+    for (let r = 0; r < GH; r++) {
       const rowPins: { c: number; net: number }[] = [];
-      for (let c = 0; c < W; c++) {
+      for (let c = 0; c < GW; c++) {
         const i = at(r, c);
         if (occ[i] === 2 && pinNetAt[i] >= 0) rowPins.push({ c, net: pinNetAt[i] });
       }
-      if (rowPins.length === 0) continue;
+      if (rowPins.length === 0) {
+        busRows.push(r);
+        continue;
+      }
       let segStart = 0;
       let curNet = rowPins[0].net;
       let lastPinC = rowPins[0].c;
@@ -673,24 +768,42 @@ export function computeAutoLayout5(
         }
         lastPinC = rowPins[k].c;
       }
-      flush(W - 1, curNet);
+      flush(GW - 1, curNet);
     }
 
     // wires: per-net MST over segments, realizability-aware
-    const used = new Uint8Array(H * W);
+    const used = usedBuf.fill(0, 0, GH * GW);
     // body cells per column above each row, so the bodies a vertical wire
     // would cross between two rows come out of one subtraction
-    const bodyPre = new Int32Array((H + 1) * W);
-    for (let c = 0; c < W; c++) {
+    const bodyPre = bodyPreBuf;
+    for (let c = 0; c < GW; c++) {
       let n = 0;
-      for (let r = 0; r < H; r++) {
-        bodyPre[r * W + c] = n;
-        if (occ[r * W + c] === 1) n++;
+      for (let r = 0; r < GH; r++) {
+        bodyPre[r * GW + c] = n;
+        if (occ[r * GW + c] === 1) n++;
       }
-      bodyPre[H * W + c] = n;
+      bodyPre[GH * GW + c] = n;
     }
-    let wires = 0, wireLen = 0, slants = 0, crossings = 0, starved = 0, starvedHard = 0;
-    for (const [, segs] of segsOfNet) {
+    let wires = 0, wireLen = 0, slants = 0, crossings = 0, starved = 0, starvedHard = 0, relays = 0;
+    const hardSegs: string[] = [];
+    // cleanest hop column from a segment to a bus row: free holes at both
+    // ends, fewest bodies between
+    const hop = (S: { row: number; c1: number; c2: number }, r: number): number => {
+      const rowS = S.row * GW, rowR = r * GW;
+      const preTop = (Math.min(S.row, r) + 1) * GW, preBot = Math.max(S.row, r) * GW;
+      let bestC = -1, bestCross = Infinity;
+      for (let c = S.c1; c <= S.c2; c++) {
+        if (occ[rowS + c] !== 0 || occ[rowR + c] !== 0 || used[rowS + c] || used[rowR + c]) continue;
+        const cr = bodyPre[preBot + c] - bodyPre[preTop + c];
+        if (cr < bestCross) {
+          bestCross = cr;
+          bestC = c;
+        }
+        if (cr === 0) break;
+      }
+      return bestC < 0 ? -1 : bestC + (bestCross << 16);
+    };
+    for (const [net, segs] of segsOfNet) {
       if (segs.length < 2) continue;
       const k = segs.length;
       linkCount.fill(0, 0, k);
@@ -701,16 +814,34 @@ export function computeAutoLayout5(
       // (earliest tree member on ties, so the pick matches a full scan in
       // tree order). A link only consumes holes on its two rows, so keys
       // of segments elsewhere stay exact and are not recomputed.
+      // hop columns per (segment, bus row), found once and reused while
+      // the two holes they end on stay free
+      const nBus = busRows.length;
+      if (hopBuf.length < k * nBus) hopBuf = new Int32Array(Math.max(k * nBus, hopBuf.length * 2));
+      const hopCache = hopBuf.fill(-2, 0, k * nBus);
+      const hopCached = (si: number, bi2: number): number => {
+        const idx = si * nBus + bi2;
+        let h = hopCache[idx];
+        if (h >= 0) {
+          const c = h & 0xffff;
+          if (used[segs[si].row * GW + c] || used[busRows[bi2] * GW + c]) h = -2;
+        }
+        if (h === -2) {
+          h = hop(segs[si], busRows[bi2]);
+          hopCache[idx] = h;
+        }
+        return h;
+      };
       const offer = (ti: number, b2: number, force: boolean) => {
         const A = segs[tree[ti]], B = segs[b2];
-        const rowA = A.row * W;
+        const rowA = A.row * GW;
         const lo = Math.max(A.c1, B.c1), hi = Math.min(A.c2, B.c2);
         let cost: number, cross = 0, bestCol = -1;
         if (A.row === B.row) cost = 50;
         else if (lo <= hi) {
           let bestCross = Infinity;
-          const rowB = B.row * W;
-          const preTop = (Math.min(A.row, B.row) + 1) * W, preBot = Math.max(A.row, B.row) * W;
+          const rowB = B.row * GW;
+          const preTop = (Math.min(A.row, B.row) + 1) * GW, preBot = Math.max(A.row, B.row) * GW;
           for (let c = lo; c <= hi; c++) {
             if (occ[rowA + c] !== 0 || occ[rowB + c] !== 0) continue;
             if (used[rowA + c] || used[rowB + c]) continue;
@@ -727,15 +858,52 @@ export function computeAutoLayout5(
             cross = bestCross;
           }
         } else cost = 50;
-        const len = Math.abs(A.row - B.row);
-        const total = cost + len * 0.1;
+        let len = Math.abs(A.row - B.row);
+        let total = cost + len * 0.1;
+        let relayRow = -1, cA = -1, cB = -1;
+        if (cost >= 50 && busRows.length) {
+          // no shared column: a bus-row relay, two vertical hops joined by
+          // a claimed span of pin-free copper. A clean relay through a row
+          // between the strips is the cheapest possible and ends the search
+          const rLo = Math.min(A.row, B.row), rHi = Math.max(A.row, B.row);
+          const sa = tree[ti];
+          for (let bi2 = 0; bi2 < busRows.length; bi2++) {
+            const r = busRows[bi2];
+            if (r === A.row || r === B.row) continue;
+            const hA = hopCached(sa, bi2);
+            if (hA < 0) continue;
+            const hB = hopCached(b2, bi2);
+            if (hB < 0) continue;
+            const ca = hA & 0xffff, cb = hB & 0xffff;
+            const lo2 = Math.min(ca, cb), hi2 = Math.max(ca, cb);
+            const claims = busClaims.get(r);
+            let taken = false;
+            if (claims) for (const cl of claims) if (cl.net !== net && cl.c1 <= hi2 && lo2 <= cl.c2) { taken = true; break; }
+            if (taken) continue;
+            const cr = (hA >> 16) + (hB >> 16);
+            const rl = Math.abs(A.row - r) + Math.abs(B.row - r);
+            const t = 3 + cr * 8 + rl * 0.1;
+            if (t < total) {
+              total = t;
+              cross = cr;
+              len = rl;
+              relayRow = r;
+              cA = ca;
+              cB = cb;
+              if (cr === 0 && r > rLo && r < rHi) break;
+            }
+          }
+        }
         if (force || total < kTotal[b2]) {
           kTotal[b2] = total;
           kA[b2] = ti;
           kCross[b2] = cross;
           kLen[b2] = len;
           kCol[b2] = bestCol;
-          kOff[b2] = cost >= 50 ? 1 : 0;
+          kOff[b2] = relayRow < 0 && cost >= 50 ? 1 : 0;
+          kRow[b2] = relayRow;
+          kCA[b2] = cA;
+          kCB[b2] = cB;
         }
       };
       const rekey = (b2: number) => {
@@ -752,28 +920,44 @@ export function computeAutoLayout5(
         const a = tree[kA[bb]];
         inTree[bb] = 1;
         tree.push(bb);
-        wires++;
         wireLen += kLen[bb];
         crossings += kCross[bb];
         if (kOff[bb]) slants++;
-        let rowA = -1, rowB = -1;
-        if (kCol[bb] >= 0) {
-          rowA = segs[a].row;
-          rowB = segs[bb].row;
-          used[rowA * W + kCol[bb]] = 1;
-          used[rowB * W + kCol[bb]] = 1;
+        if (kRow[bb] >= 0) {
+          const r = kRow[bb];
+          used[segs[a].row * GW + kCA[bb]] = 1;
+          used[r * GW + kCA[bb]] = 1;
+          used[r * GW + kCB[bb]] = 1;
+          used[segs[bb].row * GW + kCB[bb]] = 1;
+          if (!busClaims.has(r)) busClaims.set(r, []);
+          busClaims.get(r)!.push({ c1: Math.min(kCA[bb], kCB[bb]), c2: Math.max(kCA[bb], kCB[bb]), net });
+          wires += 2;
+          relays++;
+        } else {
+          wires++;
+          if (kCol[bb] >= 0) {
+            used[segs[a].row * GW + kCol[bb]] = 1;
+            used[segs[bb].row * GW + kCol[bb]] = 1;
+          }
         }
         linkCount[a]++;
         linkCount[bb]++;
-        // a consumed hole only ever raises a pair's cost, and only when it
-        // was that pair's own column on one of its rows: just those keys
-        // are recomputed, the rest only hear the new member's offer
+        // a consumed hole only ever raises a pair's cost, and only when the
+        // key relied on that hole: just those keys are recomputed, the
+        // rest only hear the new member's offer (claims never collide
+        // inside one net, so relay keys depend on their four holes alone)
         const tn = tree.length - 1;
-        const col = kCol[bb];
         for (let b2 = 0; b2 < k; b2++) {
           if (inTree[b2]) continue;
-          const rb = segs[b2].row, ra = segs[tree[kA[b2]]].row;
-          if (rowA >= 0 && kCol[b2] === col && (rb === rowA || rb === rowB || ra === rowA || ra === rowB)) rekey(b2);
+          const rb = segs[b2].row * GW, ra = segs[tree[kA[b2]]].row * GW;
+          let stale = false;
+          if (kRow[b2] >= 0) {
+            const rr = kRow[b2] * GW;
+            stale = !!(used[ra + kCA[b2]] || used[rr + kCA[b2]] || used[rr + kCB[b2]] || used[rb + kCB[b2]]);
+          } else if (kCol[b2] >= 0) {
+            stale = !!(used[ra + kCol[b2]] || used[rb + kCol[b2]]);
+          }
+          if (stale) rekey(b2);
           else offer(tn, b2, false);
         }
       }
@@ -786,10 +970,12 @@ export function computeAutoLayout5(
         for (let c = segs[s].c1; c <= segs[s].c2 && spare === 0; c++) {
           if (occ[at(segs[s].row, c)] !== 0) continue;
           free++;
-          if (!used[segs[s].row * W + c]) spare++;
+          if (!used[segs[s].row * GW + c]) spare++;
         }
-        if (free === 0) starvedHard++;
-        else if (spare === 0) starved++;
+        if (free === 0) {
+          starvedHard++;
+          if (options?.debugSeeds) hardSegs.push(`${segs[s].row}:${segs[s].c1}-${segs[s].c2}/n${net}`);
+        } else if (spare === 0) starved++;
       }
     }
 
@@ -821,17 +1007,21 @@ export function computeAutoLayout5(
             minRow: yI[pi], maxRow: b, minCol: xI[pi], maxCol: xI[pi] });
         }
       }
+      // sorted by top row, a pair is skipped as soon as B starts below A's reach
+      rects.sort((p, q) => p.minRow - q.minRow);
       for (let a = 0; a < rects.length; a++) {
+        const A = rects[a];
         for (let b2 = a + 1; b2 < rects.length; b2++) {
-          const A = rects[a], B = rects[b2];
-          if (A.minRow > B.maxRow + 2 || B.minRow > A.maxRow + 2 || A.minCol > B.maxCol + 2 || B.minCol > A.maxCol + 2) continue;
+          const B = rects[b2];
+          if (B.minRow > A.maxRow + clrPad) break;
+          if (A.minCol > B.maxCol + clrPad || B.minCol > A.maxCol + clrPad) continue;
           if (A.kind === "flex" && B.kind === "flex") {
             if (segmentsIntersect(A.p1!, A.p2!, B.p1!, B.p2!)) geoBad++;
-            else if (bodiesTooClose(A.p1!, A.p2!, B.p1!, B.p2!)) geoBad++;
+            else if (bodiesTooClose(A.p1!, A.p2!, B.p1!, B.p2!, Math.max(clrOf[A.pi], clrOf[B.pi]))) geoBad++;
           } else if (A.kind === "flex" || B.kind === "flex") {
             const F = A.kind === "flex" ? A : B;
             const R = A.kind === "flex" ? B : A;
-            if (bodyIntersectsRect(F.p1!, F.p2!, { minRow: R.minRow, maxRow: R.maxRow, minCol: R.minCol, maxCol: R.maxCol })) geoBad++;
+            if (bodyIntersectsRect(F.p1!, F.p2!, { minRow: R.minRow, maxRow: R.maxRow, minCol: R.minCol, maxCol: R.maxCol }, clrOf[F.pi])) geoBad++;
           }
         }
       }
@@ -855,25 +1045,46 @@ export function computeAutoLayout5(
     // connectors belong on a board edge, any of the four (on edge 0, 1 away
     // 50%, 2 away 75%, then 100% of the full price; the small slope keeps a
     // gradient on the plateau); a locked connector is the user's placement
+    // a margin line the wiring attached to becomes a real board line in
+    // the finish (padding outside), so a connector flush on that side sits
+    // one line in and is priced that way: the anneal weighs the channel
+    // against the connectors it pushes off the edge
+    const marginUsed = { top: false, bottom: false, left: false, right: false };
+    if (mRow) for (let c = 0; c < GW; c++) { if (used[c]) marginUsed.top = true; if (used[(GH - 1) * GW + c]) marginUsed.bottom = true; }
+    if (mCol) for (let r = 0; r < GH; r++) { if (used[r * GW]) marginUsed.left = true; if (used[r * GW + GW - 1]) marginUsed.right = true; }
     let connEdge = 0;
     for (let pi = 0; pi < nP; pi++) {
       const p = parts[pi];
       if (!p.isConn || p.locked) continue;
       const h = geo[pi].mode === "V" ? yI[vBot.get(pi)!] - yI[pi] + 1 : geo[pi].h;
-      const d = Math.min(xI[pi], physW - (xI[pi] + geo[pi].w), yI[pi], physH - (yI[pi] + h));
+      const FAR = 50;
+      const d = Math.min(
+        connSides.left ? xI[pi] + (marginUsed.left ? 1 : 0) : FAR,
+        connSides.right ? physW - (xI[pi] + geo[pi].w) + (marginUsed.right ? 1 : 0) : FAR,
+        connSides.top ? yI[pi] + (marginUsed.top ? 1 : 0) : FAR,
+        connSides.bottom ? physH - (yI[pi] + h) + (marginUsed.bottom ? 1 : 0) : FAR);
       const CONN_FULL = 30;
       connEdge += (d <= 0 ? 0 : d === 1 ? 0.5 * CONN_FULL : d === 2 ? 0.75 * CONN_FULL : CONN_FULL) + 0.2 * d;
     }
     const eBase =
       W_AREA * (physH * physW + aspectOver) + W_WIRE * wires + W_WLEN * wireLen +
-      W_CUT * cuts + W_BCUT * bCuts + W_LOCKOVER * lockOver + connEdge +
+      W_CUT * cuts + wBCut * bCuts + W_LOCKOVER * lockOver + connEdge +
       overlapBad * 500 + geoBad * 450 + ringBad * 120 + spanBad * 60 + starved * 20 + starvedHard * 450;
-    return { eBase, slants, crossings, H, W, yI, xI, geo, vBot, dbg: { wires, wireLen, cuts, bCuts, starved, starvedHard, geoBad, connEdge, lockOver, spanBad } };
+    const hardPen = overlapBad * 500 + geoBad * 450 + starvedHard * 450;
+    return { eBase, hardPen, marginUsed, slants, crossings, H, W, yI, xI, geo, vBot, dbg: { wires, wireLen, relays, cuts, bCuts, starved, starvedHard, geoBad, connEdge, lockOver, spanBad, hardSegs } };
   }
 
   // ── mutation ──
-  function mutate(g: Genome, rng: () => number): Genome | null {
+  function mutate(g: Genome, rng: () => number, cold = false): Genome | null {
     let r = rng();
+    if (cold) {
+      // low-temperature mix: only the move kinds that stay on the plateau
+      // (pull, sequence swaps, branch flip, label merge, gap toggles)
+      const bands: [number, number, number][] = [[0.06, 0.17, 8], [0.17, 0.336, 22], [0.336, 0.502, 22], [0.502, 0.585, 12], [0.7344, 0.8008, 6], [0.8008, 0.9004, 14], [0.9004, 0.92115, 8], [0.92115, 0.9419, 8]];
+      let x = rng() * 100, b = bands[0];
+      for (const bb of bands) { if (x < bb[2]) { b = bb; break; } x -= bb[2]; }
+      r = b[0] + rng() * (b[1] - b[0]);
+    }
     const gg = cloneG(g);
     const ri = (n: number) => Math.floor(rng() * n);
     // side-switch teleport: throw a connector to the opposite extreme of
@@ -940,7 +1151,7 @@ export function computeAutoLayout5(
     } else if (r < 0.76 && flexIdx.length > 0) {
       const k = ri(flexIdx.length);
       gg.br[k] = 1 - gg.br[k];
-    } else if (r < 0.9) {
+    } else if (r < 0.88) {
       const n = ri(nets.length);
       const pins = netPins[n];
       if (pins.length < 2) return null;
@@ -948,6 +1159,14 @@ export function computeAutoLayout5(
       let b = ri(pins.length);
       if (a === b) b = (b + 1) % pins.length;
       gg.grp[n][a] = gg.grp[n][b];
+    } else if (r < 0.905) {
+      // open or close a blank row below a part (bus-row supply)
+      const i = ri(nP);
+      gg.gap[i] = gg.gap[i] > 0 ? 0 : 1 + ri(2);
+    } else if (r < 0.93) {
+      // open or close blank columns right of a part (attachment holes)
+      const i = ri(nP);
+      gg.xgap[i] = gg.xgap[i] > 0 ? 0 : 1 + ri(2);
     } else {
       const n = ri(nets.length);
       const pins = netPins[n];
@@ -959,10 +1178,16 @@ export function computeAutoLayout5(
   }
 
   // ── SA with penalty ramp ──
-  function solveSeed(seed: number): { E: number; g: Genome; d: Decoded } | null {
+  function solveSeed(seed: number, seedPos: number): { E: number; g: Genome; d: Decoded } | null {
     const rng = mulberry32((seed + 1) * 0x9e3779b9);
-    const wOf = (it: number) => Math.min(W_MESS, RAMP_START * Math.pow(W_MESS / RAMP_START, it / movesN));
-    const price = (d: Decoded, w: number) => d.eBase + w * (d.slants + d.crossings);
+    const rampStart = options?.schedule?.rampStart ?? RAMP_START;
+    const rampEnd = movesN * (options?.schedule?.rampEndFrac ?? 1);
+    const wOf = (it: number) => Math.min(W_MESS, rampStart * Math.pow(W_MESS / rampStart, it / rampEnd));
+    const hardStart = options?.schedule?.hardStart ?? 1;
+    const hardOf = (it: number) => hardStart >= 1 ? 1 : Math.min(1, hardStart * Math.pow(1 / hardStart, it / rampEnd));
+    let hardScale = 1;
+    const price = (d: Decoded, w: number) => d.eBase + w * (d.slants + d.crossings) + (hardScale - 1) * d.hardPen;
+    const priceFin = (d: Decoded) => d.eBase + W_MESS * (d.slants + d.crossings);
     let g = initGenome(rng);
     let cur = decode(g);
     if (options?.debugSeeds && cur) console.log('FP0 gp=' + g.gp.slice(0, 8).join(',') + ' eBase=' + cur.eBase.toFixed(2) + ' HxW=' + cur.H + 'x' + cur.W + ' ySum=' + cur.yI.reduce((a, b) => a + b, 0) + ' xSum=' + cur.xI.reduce((a, b) => a + b, 0) + ' grp=' + g.grp.map((a) => a.join('')).join('|') + ' xI=' + Array.from(cur.xI).join(','));
@@ -974,46 +1199,57 @@ export function computeAutoLayout5(
     if (!cur) return null;
     if (options?.debugSeeds) console.log("FP gp=" + g.gp.join(",") + " gn=" + g.gn.join(","));
 
-    const ups: number[] = [];
-    for (let i = 0; i < 100; i++) {
-      const g2 = mutate(g, rng);
-      if (!g2) continue;
-      const e2 = decode(g2);
-      if (e2 && price(e2, RAMP_START) > price(cur, RAMP_START)) ups.push(price(e2, RAMP_START) - price(cur, RAMP_START));
-    }
-    ups.sort((a, b) => a - b);
-    const typUp = ups.length ? ups[Math.floor(ups.length * 0.7)] : 5;
-    const t0 = Math.max(0.5, typUp) / Math.log(1 / 0.8);
-    const cool = Math.pow(0.15 / t0, 1 / movesN);
+    // fixed start temperature: the landscape is plateaus between penalty
+    // cliffs (400–450 per violation); above ~150 the walk is random, and the
+    // calibrated start (2000–8000) wasted the first third of every run
+    const t0 = options?.schedule?.t0 ?? T_START * (options?.schedule?.t0Scale ?? 1);
+    const tEnd = options?.schedule?.tEnd ?? 0.15;
+    const coldT = options?.schedule?.coldT ?? 0;
+    const cool = Math.pow(tEnd / t0, 1 / movesN);
     let T = t0;
-    let best = { E: price(cur, W_MESS), g: cloneG(g), d: cur };
+    let best = { E: priceFin(cur), g: cloneG(g), d: cur };
     const reportEvery = Math.max(2000, Math.floor(movesN / 20));
+    const traceEvery = Math.max(1, Math.floor(movesN / 100));
+    let tAcc = 0, tAccUp = 0, tUp = 0, tNull = 0, tInf = 0;
     for (let it = 0; it < movesN; it++) {
       T *= cool;
-      if (it % reportEvery === 0) report("arrange", (options?.seedIndex !== undefined ? it / movesN : (seed + it / movesN) / seedsN));
-      const g2 = mutate(g, rng);
-      if (!g2) continue;
+      if (it % reportEvery === 0) report("arrange", (options?.seedIndex !== undefined ? it / movesN : (seedPos + it / movesN) / seedsN));
+      if (options?.trace && it % traceEvery === 0) {
+        options.trace({ seed, it, T, w: wOf(it), cur: price(cur, wOf(it)), best: best.E, curFin: priceFin(cur), acc: tAcc, accUp: tAccUp, up: tUp, nulls: tNull, infeasible: tInf, H: cur.H, W: cur.W });
+        tAcc = tAccUp = tUp = tNull = tInf = 0;
+      }
+      const g2 = mutate(g, rng, T < coldT);
+      if (!g2) { tNull++; continue; }
       const e2 = decode(g2);
-      if (!e2) continue;
+      if (!e2) { tInf++; continue; }
       const w = wOf(it);
+      hardScale = hardOf(it);
       const dE = price(e2, w) - price(cur, w);
+      if (dE > 0) tUp++;
       if (dE <= 0 || rng() < Math.exp(-dE / T)) {
+        tAcc++;
+        if (dE > 0) tAccUp++;
         g = g2;
         cur = e2;
-        const eFin = price(e2, W_MESS);
+        const eFin = priceFin(e2);
         if (eFin < best.E) best = { E: eFin, g: cloneG(g2), d: e2 };
       }
     }
+    if (options?.probe) options.probe({ seed, best, decode, mutate, initGenome, cloneG, price: (d: Decoded) => priceFin(d), t0, W_MESS } as unknown as LandscapeProbe);
     return best;
   }
 
   // ── finalize through the real completion pipeline ──
   const hasLocked = parts.some((p) => p.locked);
   function finalize(bestG: Genome, d: Decoded) {
-    const dRow = hasLocked || lockedRowsCap !== undefined ? 0 : 1;
-    const dCol = hasLocked || lockedColsCap !== undefined ? 0 : 1;
-    const comps: Component[] = components.map((c) => ({ ...c, boardPos: null, flexibleEndPos: undefined, rotation: 0 as Rot }));
-    const byId = new Map(comps.map((c) => [c.id, c]));
+    // decoded coordinates first; the routing room around the skeleton is
+    // added below (padAroundEdgeConnectors), none under locked parts or a
+    // locked dimension
+    const dRow = 0, dCol = 0;
+    const padRows = hasLocked || lockedRowsCap !== undefined ? 0 : 1;
+    const padCols = hasLocked || lockedColsCap !== undefined ? 0 : 1;
+    const comps0: Component[] = components.map((c) => ({ ...c, boardPos: null, flexibleEndPos: undefined, rotation: 0 as Rot }));
+    const byId = new Map(comps0.map((c) => [c.id, c]));
     for (let pi = 0; pi < nP; pi++) {
       const p = parts[pi];
       const c = byId.get(p.comp.id)!;
@@ -1038,11 +1274,13 @@ export function computeAutoLayout5(
         c.flexibleEndPos = { row: brBit === 0 ? b : t, col: d.xI[pi] + dCol };
       }
     }
-    const H = lockedRowsCap !== undefined ? Math.max(d.H, lockedRowsCap) : d.H + 1 + dRow;
-    const W = lockedColsCap !== undefined ? Math.max(d.W, lockedColsCap) : d.W + 2 + dCol;
+    const padded = padAroundEdgeConnectors(comps0, componentDefs, d.H, d.W, { top: padRows, bottom: padRows, left: padCols, right: 2 * padCols }, d.marginUsed);
+    const comps = padded.comps;
+    const H = lockedRowsCap !== undefined ? Math.max(padded.rows, lockedRowsCap) : padded.rows;
+    const W = lockedColsCap !== undefined ? Math.max(padded.cols, lockedColsCap) : padded.cols;
     const routeBoard: Board = { ...board, rows: H, cols: W, cuts: [], wires: [] };
     const movedIds = new Set(parts.map((p) => p.comp.id));
-    const chooser = new Chooser(routeBoard, componentDefs, nets, netAssignments, false, {}, false, true);
+    const chooser = new Chooser(routeBoard, componentDefs, nets, netAssignments, false, {}, options?.drilledCutsOnly ?? false, true, options?.noWireStacking ?? false);
     chooser.route(comps, H, W, movedIds);
     chooser.freezePool();
     const netOfPin = new Map(netAssignments.map((a) => [pinKey(a.componentId, a.pinId), a.netId]));
@@ -1074,7 +1312,11 @@ export function computeAutoLayout5(
     if (ch.plan.unresolvedConflicts > 0) issues.push(`${ch.plan.unresolvedConflicts} strip conflicts remain`);
     if (lockedColsCap !== undefined && ch.cols > lockedColsCap) issues.push(`does not fit the locked ${lockedColsCap} columns (needs ${ch.cols})`);
     if (lockedRowsCap !== undefined && ch.rows > lockedRowsCap) issues.push(`does not fit the locked ${lockedRowsCap} rows (needs ${ch.rows})`);
-    if (ch.mess > 0) issues.push(`${ch.mess} wire${ch.mess === 1 ? "" : "s"} could not be made straight and crossing-free`);
+    const stacked = options?.noWireStacking
+      ? ch.plan.wires.filter((w, i) => wireStackDepth(w.from, w.to, ch.plan.wires.slice(0, i)) > 0).length
+      : 0;
+    if (ch.mess - stacked > 0) issues.push(`${ch.mess - stacked} wire${ch.mess - stacked === 1 ? "" : "s"} could not be made straight and crossing-free`);
+    if (stacked > 0) issues.push(`${stacked} wire${stacked === 1 ? "" : "s"} still run on top of another wire`);
     const result: AutoLayoutResult = {
       placements: ch.virtual
         .filter((c) => movedIds.has(c.id) && c.boardPos)
@@ -1145,7 +1387,21 @@ export function computeAutoLayout5(
       const trimmed = trimResult(result, routeBoard, ch.virtual, componentDefs, hasLocked);
       final = { ...result, ...trimmed };
     }
-    const rate = rateResult(result, routeBoard, ch.virtual, componentDefs, false);
+    // purely visual: line the cuts up on shared columns (v2 does the same)
+    if (final.quality === 0) {
+      final = alignCuts(final, routeBoard, components, componentDefs);
+      if (options?.drilledCutsOnly && final.boardSize) {
+        // alignment may have slid a stuck knife cut next to a drillable hole
+        const byPl = new Map(final.placements.map((p) => [p.componentId, p]));
+        const virtual = components.map((c) => {
+          const p = byPl.get(c.id);
+          return p ? { ...c, boardPos: p.boardPos, rotation: p.rotation ?? c.rotation, flexibleEndPos: p.flexibleEndPos } : c;
+        });
+        const vBoard: Board = { ...board, rows: final.boardSize.rows, cols: final.boardSize.cols, cuts: [], wires: [] };
+        final = { ...final, cuts: drillRemainingCuts(vBoard, virtual, componentDefs, netAssignments, final.cuts, final.wires) };
+      }
+    }
+    const rate = rateResult(result, routeBoard, ch.virtual, componentDefs, options?.drilledCutsOnly ?? false);
     const offAxis = final.wires.filter((w) => w.from.col !== w.to.col).length;
     const crossings = wireMessScore(final, comps, componentDefs).crossings;
     const overCap =
@@ -1157,9 +1413,9 @@ export function computeAutoLayout5(
 
   // ── run the portfolio ──
   const seedBests: { E: number; g: Genome; d: Decoded }[] = [];
-  const seedList = options?.seedIndex !== undefined ? [options.seedIndex] : [...Array(seedsN).keys()];
-  for (const seed of seedList) {
-    const r = solveSeed(seed);
+  const seedList = options?.seedIndex !== undefined ? [options.seedIndex] : [...Array(seedsN).keys()].map((k) => k + (options?.seedBase ?? 0));
+  for (const [pos, seed] of seedList.entries()) {
+    const r = solveSeed(seed, pos);
     if (r) seedBests.push(r);
     if (r && options?.debugSeeds) {
       console.log(`[v5 seed ${seed}] E ${r.E.toFixed(1)} decoded ${r.d.H}x${r.d.W}`, JSON.stringify(r.d.dbg));

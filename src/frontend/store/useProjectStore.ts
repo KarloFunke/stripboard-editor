@@ -111,6 +111,8 @@ interface ProjectActions {
   setPermWorkers: (n: number) => void;
   // v5 beta anneal budget per seed (0 = back to the size-scaled default)
   setV5Moves: (n: number) => void;
+  setLayoutEngine: (engine: "v2" | "v5") => void;
+  setNoWireStacking: (value: boolean) => void;
   // Insert a blank row/column at `at` (0-based): everything at or beyond it
   // shifts by one line. A rigid part whose footprint straddles the line
   // cannot be split and stays put — may break its nets; a manual-cleanup
@@ -350,6 +352,8 @@ function prepareProjectState(data: Project) {
     permBoards: data.permBoards ?? (data.permTimeBudget === 0 ? 1 : undefined),
     permWorkers: data.permWorkers,
     v5Moves: data.v5Moves,
+    layoutEngine: data.layoutEngine,
+    noWireStacking: data.noWireStacking,
     autoLayoutUsed: data.autoLayoutUsed,
     boardEditsSinceAutoLayout: data.boardEditsSinceAutoLayout,
     autoLayoutRuns: data.autoLayoutRuns,
@@ -1039,7 +1043,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   setDrilledCutsOnly: (value) => {
-    set({ drilledCutsOnly: value || undefined, isDirty: true });
+    set({ drilledCutsOnly: value ? undefined : false, isDirty: true });
   },
 
   setPermBoards: (n) => {
@@ -1053,6 +1057,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   setV5Moves: (n) => {
     set({ v5Moves: n > 0 ? Math.round(n) : undefined, isDirty: true });
+  },
+
+  setLayoutEngine: (engine) => {
+    set({ layoutEngine: engine === "v5" ? undefined : engine, isDirty: true });
+  },
+
+  setNoWireStacking: (value) => {
+    set({ noWireStacking: value ? undefined : false, isDirty: true });
   },
 
   insertBoardLine: (axis, at) => {
@@ -1262,7 +1274,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   autoFinishBoard: () => {
     const s = get();
     const result = computeAutoFinish(
-      s.board, s.components, s.componentDefs, s.nets, s.netAssignments, s.drilledCutsOnly ?? false
+      s.board, s.components, s.componentDefs, s.nets, s.netAssignments, s.drilledCutsOnly !== false
     );
     if (result.cuts.length > 0 || result.wires.length > 0) {
       get().pushSnapshot();
@@ -1386,6 +1398,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       permBoards: s.permBoards,
       permWorkers: s.permWorkers,
       v5Moves: s.v5Moves,
+      layoutEngine: s.layoutEngine,
+      noWireStacking: s.noWireStacking,
       autoLayoutUsed: s.autoLayoutUsed,
       boardEditsSinceAutoLayout: s.boardEditsSinceAutoLayout,
       autoLayoutRuns: s.autoLayoutRuns,
@@ -1434,6 +1448,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     permBoards: undefined,
     permWorkers: undefined,
     v5Moves: undefined,
+    layoutEngine: undefined,
+    noWireStacking: undefined,
     autoLayoutUsed: undefined,
     boardEditsSinceAutoLayout: undefined,
     autoLayoutRuns: undefined,
