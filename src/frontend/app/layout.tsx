@@ -23,7 +23,7 @@ export const metadata: Metadata = {
     template: "%s - Stripboard Editor",
   },
   description:
-    "Free online stripboard layout editor with a built-in schematic editor and an automatic layout router. Draw a schematic with standard symbols, then let the router place every part, size the board, and work out the strip cuts and link wires for you — or lay it out by hand. Copper strips colour-code to your nets in real time so you can instantly see what is connected, then print a true-scale build template with a mirrored cut guide and a bill of materials (BOM), or export a KiCad-compatible netlist to turn the prototype into a PCB.",
+    "Free online stripboard layout editor with a built-in schematic editor and an automatic layouter. Draw a schematic with standard symbols, then let the layouter place every part, size the board, and work out the strip cuts and link wires for you: compact boards with no slanted or crossing wires, connectors on the edge, and drilled cuts. Or lay it out by hand. Copper strips colour-code to your nets in real time so you can instantly see what is connected, then print a true-scale build template with a mirrored cut guide and a bill of materials (BOM), or export a KiCad-compatible netlist to turn the prototype into a PCB.",
   keywords: [
     "stripboard",
     "veroboard",
@@ -31,6 +31,8 @@ export const metadata: Metadata = {
     "stripboard editor",
     "automatic stripboard layout",
     "stripboard auto router",
+    "stripboard auto-layout",
+    "automatic veroboard layout",
     "stripboard layout generator",
     "veroboard layout generator",
     "schematic to stripboard",
@@ -54,7 +56,7 @@ export const metadata: Metadata = {
     siteName: "Stripboard Editor",
     title: "Stripboard Editor",
     description:
-      "Free online stripboard editor with a built-in schematic editor and an automatic layout router. Draw circuits with standard symbols, wire up nets, then let the router lay out the whole board for you or place parts by hand with live strip colouring — print a 1:1 build template with a parts list (BOM), or export a KiCad netlist.",
+      "Free online stripboard editor with a built-in schematic editor and an automatic layouter. Draw circuits with standard symbols, wire up nets, then let the layouter build the whole board for you, compact and without slanted or crossing wires, or place parts by hand with live strip colouring. Print a 1:1 build template with a parts list (BOM), or export a KiCad netlist.",
     images: [
       {
         url: "/demo-circuit.png",
@@ -68,7 +70,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Stripboard Editor",
     description:
-      "Free online stripboard editor with a built-in schematic editor and an automatic layout router. Draw circuits, wire up nets, let the router lay out the board, print a 1:1 build template with a BOM, or export a KiCad netlist.",
+      "Free online stripboard editor with a built-in schematic editor and an automatic layouter. Draw circuits, wire up nets, let the layouter build a compact board with no slanted or crossing wires, print a 1:1 build template with a BOM, or export a KiCad netlist.",
     images: ["/demo-circuit.png"],
   },
   alternates: {
