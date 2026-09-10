@@ -4,7 +4,7 @@ import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { spanLimits, DEFAULT_CLEARANCE } from "./flexGeometry";
-import { defaultPermBoards, defaultPermWorkers } from "./layoutTypes";
+import { defaultPermWorkers } from "./layoutTypes";
 
 /**
  * Popup with per-component-type auto-layout settings: the allowed pin-to-pin
@@ -18,20 +18,21 @@ export default function AutoLayoutSettings({ onClose }: { onClose: () => void })
   const setSpanOverride = useProjectStore((s) => s.setSpanOverride);
   const clearanceOverrides = useProjectStore((s) => s.clearanceOverrides);
   const setClearanceOverride = useProjectStore((s) => s.setClearanceOverride);
-  const tidyWires = useProjectStore((s) => s.tidyWires);
-  const setTidyWires = useProjectStore((s) => s.setTidyWires);
   const drilledCutsOnly = useProjectStore((s) => s.drilledCutsOnly);
   const setDrilledCutsOnly = useProjectStore((s) => s.setDrilledCutsOnly);
-  const permBoards = useProjectStore((s) => s.permBoards);
-  const setPermBoards = useProjectStore((s) => s.setPermBoards);
   const permWorkers = useProjectStore((s) => s.permWorkers);
   const setPermWorkers = useProjectStore((s) => s.setPermWorkers);
+  const v5TimeS = useProjectStore((s) => s.v5TimeS);
+  const setV5TimeS = useProjectStore((s) => s.setV5TimeS);
+  const noWireStacking = useProjectStore((s) => s.noWireStacking);
+  const setNoWireStacking = useProjectStore((s) => s.setNoWireStacking);
+  const v5RandomSeeds = useProjectStore((s) => s.v5RandomSeeds);
+  const setV5RandomSeeds = useProjectStore((s) => s.setV5RandomSeeds);
   const cores = Math.max(1, typeof navigator !== "undefined" ? navigator.hardwareConcurrency || 4 : 4);
   const workers = Math.min(permWorkers ?? defaultPermWorkers(cores), cores);
-  const boards = permBoards ?? defaultPermBoards(components.filter((c) => !c.boardExcluded).length);
   // Slider stops for the portfolio size; 1 = off (single solve)
-  const BOARD_STOPS = [1, 3, 10, 25, 50, 100, 250];
-  const boardIdx = BOARD_STOPS.findIndex((s) => s >= boards);
+  // v5 anneal budget stops; 0 = auto (size-scaled default)
+  const V5_TIME_STOPS = [15, 30, 60, 120, 300];
 
   // The editor panes clip absolutely-positioned children (overflow-hidden),
   // so the panel is fixed to the viewport instead: anchored under the gear
@@ -157,62 +158,39 @@ export default function AutoLayoutSettings({ onClose }: { onClose: () => void })
         )}
         <div className="mt-3 border-t border-neutral-200 dark:border-neutral-700 pt-3">
           <label className="flex items-center justify-between gap-2 cursor-pointer">
-            <span className="text-sm text-neutral-700 dark:text-neutral-200">Straighter wires</span>
-            <input
-              type="checkbox"
-              checked={tidyWires !== false}
-              onChange={(e) => setTidyWires(e.target.checked)}
-              className="h-4 w-4 accent-blue-500"
-            />
-          </label>
-          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 leading-snug">
-            Runs a second solver pass that trades some board space for fewer slanted
-            and crossing wires, kept only when it actually is tidier. Turning it off
-            roughly halves the solve time.
-          </p>
-        </div>
-        <div className="mt-3 border-t border-neutral-200 dark:border-neutral-700 pt-3">
-          <label className="flex items-center justify-between gap-2 cursor-pointer">
             <span className="text-sm text-neutral-700 dark:text-neutral-200">Drilled cuts only</span>
             <input
               type="checkbox"
-              checked={drilledCutsOnly === true}
+              checked={drilledCutsOnly !== false}
               onChange={(e) => setDrilledCutsOnly(e.target.checked)}
               className="h-4 w-4 accent-blue-500"
             />
           </label>
           <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 leading-snug">
             Sever strips by drilling out a hole instead of cutting the copper between
-            two holes wherever possible. Drilling is much easier to do accurately; the
-            board may come out slightly larger. Directly neighbouring pins of a part
-            still force a knife cut between them.
+            two holes wherever possible. The board may come out slightly larger. Directly
+            neighbouring pins of a part still force a knife cut between them.
           </p>
         </div>
         <div className="mt-3 border-t border-neutral-200 dark:border-neutral-700 pt-3">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-sm text-neutral-700 dark:text-neutral-200">Layouts to solve</span>
-            <span className="text-sm text-neutral-500 dark:text-neutral-400 w-14 text-right">
-              {boards === 1 ? "1 (off)" : boards}
-            </span>
-          </div>
-          <input
-            type="range"
-            min={0}
-            max={BOARD_STOPS.length - 1}
-            step={1}
-            value={boardIdx < 0 ? BOARD_STOPS.length - 1 : boardIdx}
-            onChange={(e) => setPermBoards(BOARD_STOPS[parseInt(e.target.value)])}
-            className="w-full mt-1 accent-blue-500"
-          />
+          <label className="flex items-center justify-between gap-2 cursor-pointer">
+            <span className="text-sm text-neutral-700 dark:text-neutral-200">No stacked wires</span>
+            <input
+              type="checkbox"
+              checked={noWireStacking !== false}
+              onChange={(e) => setNoWireStacking(e.target.checked)}
+              className="h-4 w-4 accent-blue-500"
+            />
+          </label>
           <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 leading-snug">
-            Solves this many alternative layouts of the same circuit and applies the
-            best one found. Everything is deterministic: the same count always gives
-            the same board. Beyond 10 the returns are usually diminishing.
+            Never runs one wire on top of another. Keeps the board buildable with thick
+            or uninsulated wire; the board may come out larger.
           </p>
-          {boards > 1 && (
-            <div className="mt-2">
+        </div>
+        <div className="mt-3 border-t border-neutral-200 dark:border-neutral-700 pt-3">
+          <div>
               <div className="flex items-center justify-between gap-2">
-                <span className="text-sm text-neutral-700 dark:text-neutral-200">Parallel solvers</span>
+                <span className="text-sm text-neutral-700 dark:text-neutral-200">Layouts to solve</span>
                 <span className="text-sm text-neutral-500 dark:text-neutral-400 w-14 text-right">{workers}</span>
               </div>
               <input
@@ -225,11 +203,53 @@ export default function AutoLayoutSettings({ onClose }: { onClose: () => void })
                 className="w-full mt-1 accent-blue-500"
               />
               <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 leading-snug">
-                How many layouts are solved at the same time (this machine reports {cores} CPU
-                cores); more finishes sooner but can make this device sluggish while solving.
+                Alternative layouts of the same circuit, solved at the same time, one per processor
+                core (this machine reports {cores}); the best one is applied. All of them take the
+                time set below, and using every core can make this device sluggish while solving.
               </p>
+          </div>
+          <div className="mt-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm text-neutral-700 dark:text-neutral-200">Time per layout</span>
+              <span className="text-sm text-neutral-500 dark:text-neutral-400 w-14 text-right">
+                {(v5TimeS ?? 60) >= 60 ? `${Math.round((v5TimeS ?? 60) / 60)} min` : `${v5TimeS} s`}
+              </span>
             </div>
-          )}
+            <input
+              type="range"
+              min={0}
+              max={V5_TIME_STOPS.length - 1}
+              step={1}
+              value={Math.max(0, V5_TIME_STOPS.indexOf(v5TimeS ?? 60))}
+              onChange={(e) => setV5TimeS(V5_TIME_STOPS[parseInt(e.target.value)])}
+              className="w-full mt-1 accent-blue-500"
+            />
+            <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 leading-snug">
+              How long each layout anneals on this machine. Small circuits may finish sooner,
+              since more time buys them nothing; big ones use it all and may profit from even more time then
+              the default setting grants them.
+            </p>
+          </div>
+          <div className="mt-3">
+            <label className="flex items-center justify-between gap-2 cursor-pointer">
+              <span className="text-sm text-neutral-700 dark:text-neutral-200">New layouts every run</span>
+              <input
+                type="checkbox"
+                checked={v5RandomSeeds === true}
+                onChange={(e) => setV5RandomSeeds(e.target.checked)}
+                className="h-4 w-4 accent-blue-500"
+              />
+            </label>
+            <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 leading-snug">
+              Starts every run from fresh random arrangements, so each click offers different
+              boards. Off, the same circuit and settings give the same board again.
+            </p>
+          </div>
+          <div className="mt-3 border-t border-neutral-200 dark:border-neutral-700 pt-3">
+            <a href="/how-auto-layout-works" target="_blank" rel="noopener noreferrer" className="text-xs text-[var(--copper)] hover:underline">
+              How the layouter works, with demos to play with &rarr;
+            </a>
+          </div>
         </div>
       </div>
     </>

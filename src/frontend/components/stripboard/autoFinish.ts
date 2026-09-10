@@ -13,7 +13,7 @@ import { getComponentBounds, getFlexiblePinPositions } from "./boardLayout";
 import { computeStripSegments, StripSegment } from "./stripSegments";
 import { computeConnectivity } from "./connectivity";
 import { WireObstacleIndex, WireObstacles } from "./flexGeometry";
-import { collectBoardPins, collectOccupiedHoles } from "./boardPins";
+import { collectBoardPins, collectOccupiedHoles, collectHeaderBodyHoles } from "./boardPins";
 import { deriveCuts, upgradeCutsToDrills } from "./cutPlanning";
 import { deriveWires } from "./wireRouting";
 
@@ -77,7 +77,9 @@ export function deriveCompletion(
   // drills it can take early either cost a free hole the router needed
   // (0.35 knife cuts saved per board against 26 off-axis wires and 16
   // crossings) or are ones this pass takes anyway.
-  opts?: { allowSharedJoints?: boolean; repairSlants?: boolean; evalNets?: Set<string>; drilledCutsOnly?: boolean }
+  // strictWires prices every off-axis or crossing wire as a last resort
+  // (WIRE_STRICT_MESS) so the router takes any clean route that exists.
+  opts?: { allowSharedJoints?: boolean; repairSlants?: boolean; evalNets?: Set<string>; drilledCutsOnly?: boolean; strictWires?: boolean; noWireStacking?: boolean }
 ): CompletionPlan {
   const cutIssues: string[] = [];
   const pins = collectBoardPins(board, components, componentDefs, netAssignments);
@@ -91,7 +93,12 @@ export function deriveCompletion(
     if (comp && !comp.boardPos && !comp.boardExcluded) reserveNets.add(a.netId);
   }
 
-  const cuts = deriveCuts(board, pins, occupied, cutIssues, reserveNets);
+  const cuts = deriveCuts(
+    board, pins, occupied, cutIssues, reserveNets,
+    // strict: a free hole under a module is a last resort for the cut
+    // planner too, or the router is left with only crossing attachments
+    opts?.strictWires ? collectHeaderBodyHoles(components, componentDefs) : undefined
+  );
 
   // Component geometry the wires should preferably not run over
   const obstacles: WireObstacles = { rects: [], bodies: [] };
@@ -108,7 +115,7 @@ export function deriveCompletion(
   }
   // Shared across every routeWith attempt: obstacles don't depend on cuts,
   // so the pair memo keeps paying through repair re-routes and retries.
-  const obstacleIndex = new WireObstacleIndex(obstacles);
+  const obstacleIndex = new WireObstacleIndex(obstacles, opts?.strictWires ?? false);
 
   interface RouteAttempt {
     cuts: Cut[];
@@ -133,7 +140,8 @@ export function deriveCompletion(
       segments, connectivity, routeNets, pins, occupied, board.wires, reserveNets, obstacleIndex, wireIssues, starvedNetIds, starvedPinPositions,
       opts?.allowSharedJoints ?? false,
       opts?.evalNets !== undefined,
-      opts?.drilledCutsOnly ?? false
+      opts?.drilledCutsOnly ?? false,
+      opts?.noWireStacking ?? false
     );
     return { cuts: cutsTry, segments, wires, extraCuts, wireMess, sharedJoints, wireIssues, starvedNetIds, starvedPinPositions };
   };
@@ -148,7 +156,8 @@ export function deriveCompletion(
   // = still between the same neighboring pins) and keep a re-route that
   // has strictly fewer slants without starving anything.
   if (opts?.repairSlants) {
-    const slantsOf = (a: RouteAttempt) => a.wires.filter((w) => w.from.col !== w.to.col);
+    const slantsOf = (a: RouteAttempt) =>
+      a.wires.filter((w) => w.from.col !== w.to.col || (opts.strictWires && obstacleIndex.extraLength(w.from, w.to) > 0));
     const pinsByRow = new Map<number, number[]>();
     for (const p of pins) {
       if (!pinsByRow.has(p.row)) pinsByRow.set(p.row, []);

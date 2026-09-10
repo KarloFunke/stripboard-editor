@@ -167,7 +167,7 @@ export interface Project {
   tidyWires?: boolean;
   // Auto-layout config: only sever strips by drilling a hole, never by
   // cutting the copper between two holes (easier to build, may cost board
-  // space). Off by default.
+  // space). On unless explicitly false.
   drilledCutsOnly?: boolean;
   // Auto-layout config: portfolio size. The solver solves this many
   // deterministic input orderings (boards) across permWorkers parallel
@@ -176,6 +176,21 @@ export interface Project {
   // portfolio off (single solve).
   permBoards?: number;
   permWorkers?: number;
+  // v5 beta: anneal moves per seed (undefined = size-scaled default)
+  v5Moves?: number;
+  // v5: wall-time budget per layout in seconds (undefined = 60)
+  v5TimeS?: number;
+  // v5: decode speed the last run measured on this machine, ms per move;
+  // turns the time budget into a repeatable move count
+  v5MsPerMove?: number;
+  // v5: fresh random seeds on every run instead of the fixed series
+  v5RandomSeeds?: boolean;
+  // Auto-layout engine: "v5" (annealed, default when absent) or "v2"
+  // (strip-first)
+  layoutEngine?: "v2" | "v5";
+  // v5: never run wires on top of each other in one channel (thick or bare
+  // wire builds). On unless explicitly false.
+  noWireStacking?: boolean;
   // Legacy portfolio config (seconds of solve time); read once on load and
   // mapped onto permBoards, never written back.
   permTimeBudget?: number;

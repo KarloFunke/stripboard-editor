@@ -1,7 +1,7 @@
 import { BoardPosition, Component, ComponentDef } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { getComponentBounds } from "../boardLayout";
-import { FootprintRect, WireObstacles, spanLimits, wireExtraLength } from "../flexGeometry";
+import { FootprintRect, WireObstacles, spanLimits, wireExtraLength, wireStackDepth } from "../flexGeometry";
 import { Candidate, Chooser } from "./chooser";
 import { DimLimits } from "./tileModel";
 import { IC_MIN_PINS } from "./tidyScore";
@@ -17,11 +17,21 @@ import { IC_MIN_PINS } from "./tidyScore";
 // mess it removes. Runs last so no later compaction can harvest the
 // channel away; the caller skips it with locked parts (content must not
 // shift).
+// strict (hard zero-mess rule, strict chooser): the pass keeps inserting
+// until no off-axis or crossing wire remains, adopting the best insertion
+// per round whatever it costs in area. Channel columns may not be
+// straddled by a flexible body (its body would cross every wire in the
+// channel) and may sit on the board edge. When no single line helps, two
+// lines at once are tried in pairs: a relay row beside one endpoint plus a
+// channel column through the other endpoint's strip always opens a clean
+// route (a one-row hop crosses nothing, and a blank column carries no
+// bodies), and a second channel relieves a column whose wire stack is full.
 export function insertWireChannels(
   chooser: Chooser,
   componentDefs: ComponentDef[],
   limits: DimLimits,
-  icChannels: boolean
+  icChannels: boolean,
+  strict = false
 ): void {
     const lineStraddled = (comps: Component[], isCol: boolean, at: number): boolean =>
       comps.some((c) => {
@@ -37,6 +47,7 @@ export function insertWireChannels(
           const lo = isCol ? Math.min(c.boardPos!.col, p2.col) : Math.min(c.boardPos!.row, p2.row);
           const hi = isCol ? Math.max(c.boardPos!.col, p2.col) : Math.max(c.boardPos!.row, p2.row);
           if (!(lo < at && at <= hi)) return false;
+          if (strict && isCol) return true;
           const dr = Math.abs(c.boardPos!.row - p2.row) + (isCol ? 0 : 1);
           const dc = Math.abs(c.boardPos!.col - p2.col) + (isCol ? 1 : 0);
           return Math.hypot(dr, dc) > spanLimits(def).max + 1e-6;
@@ -57,7 +68,46 @@ export function insertWireChannels(
           ...(c.flexibleEndPos ? { flexibleEndPos: shift(c.flexibleEndPos) } : {}),
         };
       });
-    for (let round = 0; round < (icChannels ? 12 : 3); round++) {
+    // an edge line must not push a connector off the board edge it sits on
+    const connectorFlush = (comps: Component[], isCol: boolean, at: number, n: number): boolean =>
+      (at === 0 || at === n) &&
+      comps.some((c) => {
+        if (!c.boardPos || c.boardExcluded) return false;
+        const def = resolveComponentDef(c, componentDefs);
+        if (!def || def.category !== "connector") return false;
+        let lo: number, hi: number;
+        if (def.flexible) {
+          const p2 = c.flexibleEndPos ?? c.boardPos;
+          lo = Math.min(isCol ? c.boardPos.col : c.boardPos.row, isCol ? p2.col : p2.row);
+          hi = Math.max(isCol ? c.boardPos.col : c.boardPos.row, isCol ? p2.col : p2.row);
+        } else {
+          const r = getComponentBounds(def, c.boardPos, c.rotation);
+          lo = isCol ? r.minCol : r.minRow;
+          hi = isCol ? r.maxCol : r.maxRow;
+        }
+        return at === 0 ? lo === 0 : hi === n - 1;
+      });
+    const colOk = (cur: Candidate, at: number) =>
+      (strict ? at >= 0 && at <= cur.cols : at >= 1 && at <= cur.cols - 1) &&
+      !(limits.maxCols !== undefined && cur.cols + 1 > limits.maxCols) &&
+      !lineStraddled(cur.virtual, true, at) &&
+      !connectorFlush(cur.virtual, true, at, cur.cols);
+    const rowOk = (cur: Candidate, at: number) =>
+      (strict ? at >= 0 && at <= cur.rows : at >= 1 && at <= cur.rows - 1) &&
+      !(limits.maxRows !== undefined && cur.rows + 1 > limits.maxRows) &&
+      !lineStraddled(cur.virtual, false, at) &&
+      !connectorFlush(cur.virtual, false, at, cur.rows);
+    // strict: the nearest insertable line above/below a row (left/right of
+    // a column), walking outward past straddling bodies
+    const nearLines = (ok: (at: number) => boolean, at0: number, max: number): number[] => {
+      const out: number[] = [];
+      for (let at = at0; at >= 0; at--) if (ok(at)) { out.push(at); break; }
+      for (let at = at0 + 1; at <= max; at++) if (ok(at)) { out.push(at); break; }
+      return out;
+    };
+    const nearRows = (cur: Candidate, r: number) => nearLines((at) => rowOk(cur, at), r, cur.rows);
+    const nearCols = (cur: Candidate, c: number) => nearLines((at) => colOk(cur, at), c, cur.cols);
+    for (let round = 0; round < (strict ? 40 : icChannels ? 12 : 3); round++) {
       const cur: Candidate = chooser.chosen!;
       const obstacles: WireObstacles = { rects: [], bodies: [] };
       const icRects: FootprintRect[] = [];
@@ -73,7 +123,8 @@ export function insertWireChannels(
         }
       }
       const offenders = cur.plan.wires.filter(
-        (w) => w.from.col !== w.to.col || wireExtraLength(w.from, w.to, obstacles) > 0
+        (w, i) => w.from.col !== w.to.col || wireExtraLength(w.from, w.to, obstacles) > 0 ||
+          (chooser.forbidsStacking && wireStackDepth(w.from, w.to, cur.plan.wires.slice(0, i)) > 0)
       );
       if (offenders.length === 0) break;
       const colCands = new Set<number>();
@@ -99,6 +150,13 @@ export function insertWireChannels(
       for (const w of offenders) {
         const loC = Math.min(w.from.col, w.to.col);
         const hiC = Math.max(w.from.col, w.to.col);
+        if (strict) {
+          for (const p of [w.from, w.to]) {
+            for (const r of nearRows(cur, p.row)) rowCands.add(r);
+            for (const c of nearCols(cur, p.col)) colCands.add(c);
+          }
+          for (let c = loC + 1; c <= hiC; c++) colCands.add(c);
+        }
         if (loC !== hiC) {
           // a channel column anywhere between the endpoints gives both
           // strips a shared free column; a relay row between them lets two
@@ -128,19 +186,42 @@ export function insertWireChannels(
           for (let r = loR + 1; r <= hiR; r++) rowCands.add(r);
         }
       }
-      if (limits.maxCols !== undefined && cur.cols + 1 > limits.maxCols) colCands.clear();
-      if (limits.maxRows !== undefined && cur.rows + 1 > limits.maxRows) rowCands.clear();
       for (const at of colCands) {
-        if (at < 1 || at > cur.cols - 1) continue; // edge channels are tried above
-        if (lineStraddled(cur.virtual, true, at)) continue;
+        if (!colOk(cur, at)) continue; // interior only unless strict: edge channels are tried above
         chooser.route(insertLine(cur.virtual, true, at), cur.rows, cur.cols + 1, cur.movedIds);
       }
       for (const at of rowCands) {
-        if (at < 1 || at > cur.rows - 1) continue;
-        if (lineStraddled(cur.virtual, false, at)) continue;
+        if (!rowOk(cur, at)) continue;
         chooser.route(insertLine(cur.virtual, false, at), cur.rows + 1, cur.cols, cur.movedIds);
       }
-      if (chooser.chosen === cur) break; // no insertion paid for itself
+      if (chooser.chosen !== cur) continue;
+      if (!strict) break; // no insertion paid for itself
+      // strict: no single line helped. Two lines at once can: a relay row
+      // beside one endpoint plus a channel through the other's strip, or a
+      // second channel where one column's stack capacity is exhausted. Try
+      // every pair among the lines nearest the first offenders' endpoints.
+      const lines: { isCol: boolean; at: number }[] = [];
+      const seen = new Set<string>();
+      for (const w of offenders.slice(0, 2)) {
+        for (const p of [w.from, w.to]) {
+          for (const at of nearRows(cur, p.row)) if (!seen.has(`r${at}`)) { seen.add(`r${at}`); lines.push({ isCol: false, at }); }
+          for (const at of nearCols(cur, p.col)) if (!seen.has(`c${at}`)) { seen.add(`c${at}`); lines.push({ isCol: true, at }); }
+        }
+      }
+      for (let i = 0; i < lines.length; i++) {
+        for (let j = i; j < lines.length; j++) {
+          const a = lines[i], b = lines[j];
+          if (a.isCol === b.isCol && (limits[a.isCol ? "maxCols" : "maxRows"] ?? Infinity) < (a.isCol ? cur.cols : cur.rows) + 2) continue;
+          // same-kind pairs: insert the higher position first so the lower
+          // one's index stays valid
+          const [first, second] = a.isCol === b.isCol && a.at < b.at ? [b, a] : [a, b];
+          const comps = insertLine(insertLine(cur.virtual, first.isCol, first.at), second.isCol, second.at);
+          const dRows = (a.isCol ? 0 : 1) + (b.isCol ? 0 : 1);
+          const dCols = (a.isCol ? 1 : 0) + (b.isCol ? 1 : 0);
+          chooser.route(comps, cur.rows + dRows, cur.cols + dCols, cur.movedIds);
+        }
+      }
+      if (chooser.chosen === cur) break; // nothing opens a clean route
     }
     // ── Bus lanes: compound insertion for stacked horizontal runs ──
     // Several wide horizontal runs may each fail to pay for a private

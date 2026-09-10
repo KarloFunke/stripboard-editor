@@ -17,14 +17,14 @@ const BODY_CONTACT_SEPARATION = 1;
 export const DEFAULT_CLEARANCE = 1;
 
 // Pin-to-pin span limits in hole pitches (Euclidean). Axial parts with a fat
-// body (resistors, inductors) can't sit closer than 4 (5 holes end to end);
-// small parts (caps, LEDs, small diodes) can stand upright at any spacing
-// but shouldn't stretch.
+// body (resistors, inductors, diodes) can't sit closer than 4 (5 holes end to
+// end); small parts (caps, LEDs) can stand upright at any spacing but
+// shouldn't stretch.
 const AXIAL_SPAN = { min: 4, max: 10 };
 const COMPACT_SPAN = { min: 1, max: 6 };
 // Fuse: never tighter than its default 3-hole reach, up to that plus 5.
 const FUSE_SPAN = { min: 3, max: 8 };
-const AXIAL_DEF_IDS = new Set(["def-resistor", "def-inductor"]);
+const AXIAL_DEF_IDS = new Set(["def-resistor", "def-inductor", "def-diode", "def-zener"]);
 
 export function spanLimits(def: ComponentDef): { min: number; max: number } {
   if (def.spanOverride) return def.spanOverride;
@@ -198,6 +198,11 @@ export interface FootprintRect {
 export const WIRE_OFFAXIS_FREE = 1;
 export const WIRE_OFFAXIS_RATE = 2;
 export const WIRE_CROSS_EXTRA = 8;
+// Strict mode (hard zero-mess rule): every off-axis wire, one-hole
+// diagonals included, and every crossing is priced at WIRE_STRICT_MESS, so
+// any clean route beats any messy one and mess survives only where no
+// clean route exists at all.
+export const WIRE_STRICT_MESS = 1000;
 
 // ── Wire stacking (parallel runs sharing one channel) ──
 // Wires running collinearly on top of each other are physically fine
@@ -210,7 +215,7 @@ export const WIRE_CROSS_EXTRA = 8;
 // lane only when a net cannot complete any other way (completeness beats
 // the cap, matching the shared-joint rescue).
 export const WIRE_STACK_MAX = 3;
-export const WIRE_STACK_PRICES = [0, 4, 10];
+export const WIRE_STACK_PRICES = [0, 6, 15];
 export const WIRE_STACK_RESCUE = 1000;
 
 /**
@@ -324,7 +329,7 @@ export class WireObstacleIndex {
   private gen = 0;
   private memo = new Map<number, number>();
 
-  constructor(obstacles: WireObstacles) {
+  constructor(obstacles: WireObstacles, readonly strict = false) {
     let lo = Infinity;
     let hi = -Infinity;
     const spans: { minC: number; maxC: number }[] = [];
@@ -366,8 +371,9 @@ export class WireObstacleIndex {
     const dc = Math.abs(to.col - from.col);
     let extra = 0;
     if (dc > 1e-9) {
-      extra += WIRE_OFFAXIS_RATE * Math.max(0, Math.hypot(dr, dc) - WIRE_OFFAXIS_FREE);
+      extra += this.strict ? WIRE_STRICT_MESS : WIRE_OFFAXIS_RATE * Math.max(0, Math.hypot(dr, dc) - WIRE_OFFAXIS_FREE);
     }
+    const crossExtra = this.strict ? WIRE_STRICT_MESS : WIRE_CROSS_EXTRA;
     const minR = Math.min(from.row, to.row);
     const maxR = Math.max(from.row, to.row);
     const cLo = Math.max(Math.min(from.col, to.col) - this.base, 0);
@@ -382,10 +388,10 @@ export class WireObstacleIndex {
         if (this.maxRow[oi] < minR || this.minRow[oi] > maxR) continue;
         const rect = this.rects[oi];
         if (rect) {
-          if (segmentIntersectsRect(from, to, rect)) extra += WIRE_CROSS_EXTRA;
+          if (segmentIntersectsRect(from, to, rect)) extra += crossExtra;
         } else {
           const body = this.bodies[oi]!;
-          if (segmentsIntersect(from, to, body.p1, body.p2)) extra += WIRE_CROSS_EXTRA;
+          if (segmentsIntersect(from, to, body.p1, body.p2)) extra += crossExtra;
         }
       }
     }

@@ -138,9 +138,11 @@ function verify(b, components, nets, assignments, defs) {
 function checkGeometry(b, components, defs) {
   const d = defs ?? DEFS;
   const problems = [];
-  const resolve = (comp) => comp.footprintOverride
-    ? { ...d.find((x) => x.id === comp.defId), ...comp.footprintOverride }
-    : d.find((x) => x.id === comp.defId);
+  const resolve = (comp) => {
+    const def = d.find((x) => x.id === comp.defId);
+    const o = comp.footprintOverride;
+    return o && def ? { ...def, width: o.width, height: o.height, pins: o.pins, bodyCells: o.bodyCells } : def;
+  };
 
   const placed = components.filter((c) => c.boardPos && !c.boardExcluded);
   const flexParts = [];

@@ -27,6 +27,8 @@ const aspectOf = (rows, cols) => Math.round((Math.max(rows, cols) / Math.min(row
 
 let noHarvest = false;
 let maxClusterOpt = 0;
+// Alternative stage-0 cap: pin budget per cluster instead of parts
+let maxPinsOpt = 0;
 // Tidy second pass: allowed area growth fraction (Infinity = unlimited), 0 = off
 let tidyGrowthOpt = 0;
 // Input-order jitter: number of deterministic orderings to solve (0/1 = off)
@@ -138,6 +140,7 @@ function solve(board, comps, defs, nets, asg) {
     res = computeAutoLayout2(board, comps, defs, nets, asg, undefined, {
       harvest: !noHarvest,
       ...(maxClusterOpt > 0 ? { maxCluster: maxClusterOpt } : {}),
+      ...(maxPinsOpt > 0 ? { maxClusterPins: maxPinsOpt } : {}),
       ...(tidyGrowthOpt > 0 ? { tidyGrowth: tidyGrowthOpt } : {}),
       ...(permsOpt > 1 ? { permutations: permsOpt } : {}),
       ...(beamOpt ? { beamSearch: true } : {}),
@@ -238,7 +241,9 @@ function sweepOne(entry, dataDir, lockedN) {
   const human = metrics(humanBoard, humanComps, defs, nets, asg);
 
   const blankComps = humanComps.map((c) => ({ ...c, boardPos: null, flexibleEndPos: undefined, rotation: 0, locked: undefined }));
-  const blankBoard = { ...humanBoard, cuts: [], wires: [] };
+  // Free runs are genuinely free: a dimension the user locked in the editor
+  // must not constrain the solver here. --lock-width re-locks explicitly.
+  const blankBoard = { ...humanBoard, cuts: [], wires: [], lockedRows: false, lockedCols: false };
   const solveDefs = relaxMode ? relaxDefs(defs, humanComps) : defs;
   const free = onlyLocked ? null : solve(blankBoard, blankComps, solveDefs, nets, asg);
 
@@ -292,6 +297,7 @@ function sweepOne(entry, dataDir, lockedN) {
 if (!isMainThread) {
   noHarvest = !!workerData.noHarvest;
   maxClusterOpt = workerData.maxClusterOpt ?? 0;
+  maxPinsOpt = workerData.maxPinsOpt ?? 0;
   tidyGrowthOpt = workerData.tidyGrowthOpt ?? 0;
   permsOpt = workerData.permsOpt ?? 0;
   beamOpt = !!workerData.beamOpt;
@@ -302,7 +308,15 @@ if (!isMainThread) {
   onlyLocked = !!workerData.onlyLocked;
   relaxMode = workerData.relaxMode ?? "";
   parentPort.on("message", (msg) => {
-    parentPort.postMessage({ i: msg.i, row: sweepOne(msg.entry, workerData.dataDir, workerData.lockedN) });
+    let row;
+    try {
+      row = sweepOne(msg.entry, workerData.dataDir, workerData.lockedN);
+    } catch (err) {
+      // A project the harness itself cannot read must not take the sweep
+      // down with it; record it and carry on.
+      row = { id: msg.entry.id, parts: msg.entry.parts, harnessError: String(err && err.message ? err.message : err) };
+    }
+    parentPort.postMessage({ i: msg.i, row });
   });
   return;
 }
@@ -320,6 +334,7 @@ if (!dataDir) {
 const lockedN = Number(argVal("locked") ?? 0);
 noHarvest = args.includes("--no-harvest");
 maxClusterOpt = Number(argVal("max-cluster") ?? 0);
+maxPinsOpt = Number(argVal("max-pins") ?? 0);
 // --tidy 15|30|unlimited enables the tidy second pass at that growth cap
 const tidyArg = argVal("tidy");
 tidyGrowthOpt = tidyArg === "unlimited" ? Infinity : tidyArg ? Number(tidyArg) / 100 : 0;
@@ -348,15 +363,15 @@ const index = JSON.parse(fs.readFileSync(path.join(dataDir, "index.json"), "utf8
 // Projects whose parts name component definitions that no longer exist are
 // invisible to the solver AND to the editor: not hard, just unsolvable data.
 // They are out of the corpus, not a failure to report. --keep-legacy overrides.
-const legacy = index.filter((e) => e.unresolvedDefs > 0);
+const legacy = index.filter((e) => e.unresolvedDefs > 0 || e.shortedDefs > 0);
 if (legacy.length && !args.includes("--keep-legacy")) {
-  console.log(`excluding ${legacy.length} projects with unresolved component defs (ids ${legacy.map((e) => e.id).join(", ")})`);
+  console.log(`excluding ${legacy.length} projects with unresolved or shorted component defs (ids ${legacy.map((e) => e.id).join(", ")})`);
 }
 let entries = index.filter(
   (e) =>
     (!onlyIds || onlyIds.has(e.id)) &&
     (!maxParts || e.parts <= maxParts) &&
-    (args.includes("--keep-legacy") || e.unresolvedDefs === 0)
+    (args.includes("--keep-legacy") || (e.unresolvedDefs === 0 && !(e.shortedDefs > 0)))
 );
 if (requireConnector) {
   const before = entries.length;
@@ -375,7 +390,7 @@ function finish(results) {
   fs.writeFileSync(
     outFile,
     JSON.stringify(
-      { tag, lockedN, lockConnectors, lockWidth, onlyLocked, perms: permsOpt, beam: beamOpt, pickCrossings: !noPickCrossings, drilled: drilledOpt, maxCluster: maxClusterOpt, relax: relaxMode, date: new Date().toISOString(), results },
+      { tag, lockedN, lockConnectors, lockWidth, onlyLocked, perms: permsOpt, beam: beamOpt, tidyGrowth: tidyGrowthOpt === Infinity ? "unlimited" : tidyGrowthOpt, pickCrossings: !noPickCrossings, drilled: drilledOpt, maxCluster: maxClusterOpt, maxPins: maxPinsOpt, relax: relaxMode, date: new Date().toISOString(), results },
       null,
       1
     )
@@ -443,7 +458,7 @@ if (jobs <= 1) {
   let done = 0;
   for (let w = 0; w < jobs; w++) {
     const worker = new Worker(__filename, {
-      workerData: { dataDir, lockedN, noHarvest, maxClusterOpt, tidyGrowthOpt, permsOpt, beamOpt, noPickCrossings, drilledOpt, lockConnectors, lockWidth, onlyLocked, relaxMode },
+      workerData: { dataDir, lockedN, noHarvest, maxClusterOpt, maxPinsOpt, tidyGrowthOpt, permsOpt, beamOpt, noPickCrossings, drilledOpt, lockConnectors, lockWidth, onlyLocked, relaxMode },
     });
     worker.on("message", ({ i, row }) => {
       results[i] = row;

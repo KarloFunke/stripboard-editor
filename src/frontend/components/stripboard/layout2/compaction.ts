@@ -30,8 +30,12 @@ export function compactPlacements(
   rows: number,
   cols: number,
   maxRemovals = Infinity, // replay a prefix of the (deterministic) removal sequence
-  validate?: (comps: Component[], rows: number, cols: number) => boolean
+  validate?: (comps: Component[], rows: number, cols: number) => boolean,
+  // lines that must stay, e.g. those carrying wires or cuts of a routing the
+  // caller wants to keep intact (indices as of the input board)
+  keep?: { rows: Set<number>; cols: Set<number> }
 ): { comps: Component[]; rows: number; cols: number; removals: number } {
+  const keepRows = keep ? [...keep.rows] : [], keepCols = keep ? [...keep.cols] : [];
   type P = { row: number; col: number };
   const pos: (P | null)[] = comps.map((c) => (c.boardPos ? { ...c.boardPos } : null));
   const end: (P | null)[] = comps.map((c) => (c.flexibleEndPos ? { ...c.flexibleEndPos } : null));
@@ -218,6 +222,7 @@ export function compactPlacements(
 
   const tryRemove = (line: number, isCol: boolean): boolean => {
     if (isCol ? line <= lockCol : line <= lockRow) return false;
+    if ((isCol ? keepCols : keepRows).includes(line)) return false;
     for (const r of occ.rigids) {
       if (isCol ? r.rect.minCol <= line && line <= r.rect.maxCol
                 : r.rect.minRow <= line && line <= r.rect.maxRow) return false;
@@ -256,6 +261,8 @@ export function compactPlacements(
       r.pins = r.pins.map((p) => ({ ...shiftPt(p, line, isCol), net: p.net }));
     });
     baseViol = post;
+    const kept = isCol ? keepCols : keepRows;
+    for (let k = 0; k < kept.length; k++) if (kept[k] > line) kept[k]--;
     return true;
   };
 

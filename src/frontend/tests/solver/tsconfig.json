@@ -19,6 +19,9 @@
     "../../components/stripboard/autoPlace.ts",
     "../../components/stripboard/autoLayout.ts",
     "../../components/stripboard/autoLayout2.ts",
+    "../../components/stripboard/autoLayout3.ts",
+    "../../components/stripboard/autoLayout5.ts",
+    "../../components/stripboard/autoLayout5Split.ts",
     "../../components/stripboard/netCompleteness.ts",
     "../../data/defaultComponents.ts"
   ]

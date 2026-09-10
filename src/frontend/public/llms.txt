@@ -2,7 +2,8 @@
 
 > A free online editor for designing circuits on stripboard (also called
 > Veroboard). It pairs a schematic editor with a stripboard layout editor,
-> and includes a router that can lay out the whole board automatically.
+> and includes an automatic layouter that turns a schematic into a complete,
+> buildable board: placement, board size, strip cuts and link wires.
 
 Stripboard is prototyping board made of a grid of holes over parallel
 copper strips, where every hole on a strip is already electrically
@@ -16,17 +17,24 @@ handing it to an automatic router.
 - Schematic editor with a standard symbol library, wiring, and nets.
 - Stripboard editor with live strip colouring that shows nets and conflicts
   in real time.
-- Automatic layout router: places every component, sizes the board, and
-  generates the strip cuts and link wires needed to complete it. It is
-  deterministic, so the same circuit always produces the same layout.
-- The router also tidies its own result: a second pass straightens link
-  wires and keeps them from crossing over components, and the strip cuts
-  are placed as drilled holes lined up in shared columns, the way a
-  builder would make them.
+- Automatic layout (simulated annealing over a compact board description,
+  decoded exactly and finished by a real router): places every component,
+  sizes the board, and generates the strip cuts and link wires needed to
+  complete it. On a free board the result has no slanted link wires and
+  no wire crossing a component; the layouter buys blank rows or columns
+  instead. Connectors are kept on the board edge, wires are never stacked
+  on top of each other by default, and cuts are drilled-out holes lined
+  up in shared columns wherever possible.
+- Several layouts are solved in parallel from different starting points
+  (and, on larger circuits, from split-and-join variants) and the best
+  finished board is applied. Given the same circuit and settings the
+  result is deterministic.
 - Per-component-type layout settings: the allowed pin-to-pin span for
   flexible parts (e.g. how many holes a resistor may stretch across), and
-  the clearance kept around a part's body, down to 0 for placing parts
-  directly side by side.
+  the clearance kept around a part's body in free board lines, down to 0
+  for placing parts directly side by side.
+- Layout options: drilled cuts only, no stacked wires, the number of
+  layouts to solve, parallel solvers, and the annealing effort per layout.
 - Board size can be locked (fix rows and/or columns to fit a board you
   already own) and individual components can be locked in place before
   running the router, which will then design the rest of the layout
@@ -49,7 +57,7 @@ handing it to an automatic router.
 - [Quick guide](https://stripboard-editor.com/guide): keyboard shortcuts,
   workflow, and an overview of every feature above.
 - [How auto-layout works](https://stripboard-editor.com/guide/auto-layout):
-  a plain-language explanation of the router's stages and what you can
-  configure.
+  a plain-language explanation of the annealed layouter, what it
+  guarantees, and what you can configure.
 - [What's new](https://stripboard-editor.com/updates): changelog and
   planned work.

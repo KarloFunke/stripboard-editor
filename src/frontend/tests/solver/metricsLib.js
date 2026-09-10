@@ -9,7 +9,10 @@ const {
 function resolveDef(comp, defs) {
   const def = defs.find((d) => d.id === comp.defId);
   if (!def) return undefined;
-  return comp.footprintOverride ? { ...def, ...comp.footprintOverride } : def;
+  // mirror utils/resolveComponentDef: an override replaces the footprint
+  // fields wholesale (no bodyCells in the override = no body)
+  const o = comp.footprintOverride;
+  return o ? { ...def, width: o.width, height: o.height, pins: o.pins, bodyCells: o.bodyCells } : def;
 }
 
 function metrics(board, components, defs, nets, assignments) {

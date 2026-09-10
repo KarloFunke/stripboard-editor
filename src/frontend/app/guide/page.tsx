@@ -6,7 +6,7 @@ import SiteFooter from "@/components/SiteFooter";
 export const metadata: Metadata = {
   title: "Guide",
   description:
-    "A quick guide to the Stripboard Editor covering keyboard shortcuts, workflow, the auto-layout router, KiCad netlist export, and key concepts.",
+    "A quick guide to the Stripboard Editor covering keyboard shortcuts, workflow, the automatic layouter, KiCad netlist export, and key concepts.",
   alternates: { canonical: "https://stripboard-editor.com/guide" },
 };
 
@@ -84,16 +84,15 @@ export default function GuidePage() {
             Auto-layout
           </h2>
           <p className="text-sm text-neutral-700 dark:text-neutral-300 mb-3">
-            Click <strong>Auto-layout</strong> in the stripboard toolbar to have the router arrange every part for you. It reads your schematic nets, places the components, picks a board size, and generates the strip cuts and link wires needed to complete the board. The router is deterministic, so the same circuit always produces the same layout, and by default it respects the physical reality of the parts (for example, it leaves a strip between two through-hole resistor bodies rather than overlapping them). If anything cannot be completed, a pop-up tells you what and why.
+            Click <strong>Auto-layout</strong> in the stripboard toolbar. The layouter places every part, picks the board size, and adds the cuts and link wires. If anything cannot be completed, a pop-up tells you what and why.
           </p>
-          <p className="text-sm text-neutral-700 dark:text-neutral-300 mb-2">You stay in control of a few things:</p>
           <ul className="space-y-2 text-sm text-neutral-700 dark:text-neutral-300">
-            <li><strong>Lock the board size.</strong> Click the padlock next to the <em>Rows</em> or <em>Cols</em> field to fix that dimension. Auto-layout then keeps exactly that many rows or columns, so you can constrain the result to a board you already own (for example, exactly 20 columns wide). Leave a dimension unlocked and the router chooses it freely. If a locked size is too small to fit the circuit, it tells you rather than silently overflowing.</li>
-            <li><strong>Lock components in place.</strong> Position a part where you want it (a connector along an edge, say), select it, and press <kbd className="px-1.5 py-0.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded text-xs font-mono">L</kbd> (or use <strong>Lock</strong> in the floating menu). Auto-layout will never move a locked part; instead it designs the surrounding layout around it. Select several parts and press <kbd className="px-1.5 py-0.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded text-xs font-mono">L</kbd> to lock them all at once. Locking works, but expect a locked layout to come out somewhat larger or less tidy than an unconstrained one.</li>
-            <li><strong>Pin spacing and clearance.</strong> Click the gear beside the <em>Auto-layout</em> button to tune each flexible part type. <em>Pin spacing</em> sets how many holes a part may span from pin to pin, letting you keep resistors upright or stretch them flat. <em>Clearance</em> is the air kept around a body: the default leaves one free strip beside the part, and setting it to 0 lets parts of that type sit directly side by side for a tighter board.</li>
+            <li><strong>Lock the board size.</strong> Click the padlock next to <em>Rows</em> or <em>Cols</em> to keep exactly that many. A locked board cannot grow, so a few slanted or crossing wires may remain.</li>
+            <li><strong>Lock parts.</strong> Select placed parts and press <kbd className="px-1.5 py-0.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded text-xs font-mono">L</kbd> to keep them where they are. Locked layouts come out a little larger.</li>
+            <li><strong>Settings</strong> (gear beside the button): pin spacing and clearance per flexible part type, drilled cuts only, no stacked wires, how many layouts to solve, and the anneal effort per layout. Each option explains itself in the panel.</li>
           </ul>
           <p className="text-sm text-neutral-700 dark:text-neutral-300 mt-3">
-            Curious how it decides all this? <Link href="/guide/auto-layout" className="text-[var(--copper)] hover:underline font-semibold">How auto-layout works &rarr;</Link>
+            Curious how it decides all this? <Link href="/how-auto-layout-works" className="text-[var(--copper)] hover:underline font-semibold">How auto-layout works &rarr;</Link>
           </p>
         </section>
 

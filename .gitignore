@@ -8,3 +8,4 @@ node_modules/
 *.sqlite3
 auto-layouter-data/
 CLAUDE.md
+.claude/

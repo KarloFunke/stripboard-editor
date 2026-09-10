@@ -15,16 +15,19 @@ function bestCutPosition(
   colB: number,
   occupied: Set<string>,
   gLo: number,
-  gHi: number
+  gHi: number,
+  // holes worth only half: reachable, but a wire there crosses a module
+  devalued?: Set<string>
 ): number {
   const mid = (colA + colB - 1) / 2;
   let bestG = Math.max(gLo, Math.min(gHi, Math.floor(mid)));
   let bestScore = -Infinity;
+  const worth = (c: number) => (occupied.has(holeKey(row, c)) ? 0 : devalued?.has(holeKey(row, c)) ? 0.5 : 1);
   for (let g = gLo; g <= gHi; g++) {
     let left = 0;
     let right = 0;
-    for (let c = colA + 1; c <= g; c++) if (!occupied.has(holeKey(row, c))) left++;
-    for (let c = g + 1; c < colB; c++) if (!occupied.has(holeKey(row, c))) right++;
+    for (let c = colA + 1; c <= g; c++) left += worth(c);
+    for (let c = g + 1; c < colB; c++) right += worth(c);
     const score = Math.min(left, right) * 1000 - Math.abs(g - mid);
     if (score > bestScore) {
       bestScore = score;
@@ -44,7 +47,8 @@ export function deriveCuts(
   pins: BoardPin[],
   occupied: Set<string>,
   issues: string[],
-  reserveNets?: Set<string>
+  reserveNets?: Set<string>,
+  devalued?: Set<string>
 ): Cut[] {
   // gap g on a row = the copper between col g and col g+1 is severed
   const severedGaps = new Set<string>();
@@ -143,7 +147,7 @@ export function deriveCuts(
       if (bNeeds && gapFree.length > 0 && (!aNeeds || gapFree.length >= 2)) {
         gHi = Math.max(gLo, gapFree[gapFree.length - 1] - 1);
       }
-      const cutCol = bestCutPosition(row, colA, colB, occupied, gLo, gHi);
+      const cutCol = bestCutPosition(row, colA, colB, occupied, gLo, gHi, devalued);
       newCuts.push({ row, col: cutCol });
       severedGaps.add(`${row}:${cutCol}`);
       carry = gapFree.filter((c) => c > cutCol).length;

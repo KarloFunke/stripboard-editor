@@ -246,7 +246,8 @@ export default function HomeClient({
                   <p className="text-sm font-medium text-neutral-800 dark:text-neutral-200">Auto-layout</p>
                 </div>
                 <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                  Skip steps 2 and 3: the router places every part, picks a board size, and works out the cuts and link wires for you.
+                  Skip steps 2 and 3: the router places every part, picks a board size, and works out the cuts and link wires for you.{" "}
+                  <Link href="/how-auto-layout-works" className="text-[var(--copper)] hover:underline">How it works &rarr;</Link>
                 </p>
               </div>
               <div className="flex justify-center text-[var(--copper)] text-[10px] leading-none py-1" aria-hidden="true">▼</div>
@@ -353,8 +354,8 @@ export default function HomeClient({
           <div className="mb-8">
             <h2 className="text-lg font-semibold text-neutral-800 dark:text-neutral-200 mb-3">Account</h2>
             <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-lg px-4 py-3 flex flex-col gap-3">
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-neutral-600 dark:text-neutral-400">Logged in as <span className="font-medium text-neutral-900 dark:text-neutral-100">{user.username}</span></span>
+              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                <span className="text-sm text-neutral-600 dark:text-neutral-400 min-w-0 break-words">Logged in as <span className="font-medium text-neutral-900 dark:text-neutral-100">{user.username}</span></span>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => { setShowChangePassword(true); setPwError(null); setPwSuccess(false); setNewPw(""); setConfirmPw(""); }}
@@ -370,8 +371,8 @@ export default function HomeClient({
                   </button>
                 </div>
               </div>
-              <div className="flex items-center justify-between border-t border-neutral-100 dark:border-neutral-800 pt-3">
-                <span className="text-sm text-neutral-600 dark:text-neutral-400">
+              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-neutral-100 dark:border-neutral-800 pt-3">
+                <span className="text-sm text-neutral-600 dark:text-neutral-400 min-w-0 break-words">
                   {user.email
                     ? <>Recovery email: <span className="font-medium text-neutral-900 dark:text-neutral-100">{user.email}</span></>
                     : <>No recovery email set <span className="text-neutral-400 dark:text-neutral-500">(fully optional, only used for password reset)</span></>}
@@ -399,10 +400,10 @@ export default function HomeClient({
                   <Link
                     key={project.edit_uuid}
                     href={`/project/${project.edit_uuid}`}
-                    className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-lg px-4 py-3 flex items-center gap-4 hover:border-neutral-300 dark:hover:border-neutral-600 transition-colors"
+                    className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-lg px-3 sm:px-4 py-3 flex items-center gap-3 sm:gap-4 hover:border-neutral-300 dark:hover:border-neutral-600 transition-colors"
                   >
                     {project.preview_data && (
-                      <div className="flex-shrink-0">
+                      <div className="flex-shrink-0 w-24 sm:w-[180px] [&>svg]:w-full [&>svg]:h-auto">
                         <StripboardPreview data={project.preview_data} maxWidth={180} maxHeight={120} />
                       </div>
                     )}
