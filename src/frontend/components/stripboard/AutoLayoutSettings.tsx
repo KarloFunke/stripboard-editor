@@ -226,7 +226,7 @@ export default function AutoLayoutSettings({ onClose }: { onClose: () => void })
             />
             <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 leading-snug">
               How long each layout anneals on this machine. Small circuits may finish sooner,
-              since more time buys them nothing; big ones use it all and may profit from even more time then
+              since more time buys them nothing; big ones use it all and may profit from even more time than
               the default setting grants them.
             </p>
           </div>

@@ -48,7 +48,7 @@ const TOC: [string, string][] = [
   ["portfolio", "10. Many runs"],
   ["limits", "11. What it cannot do"],
   ["results", "12. How well it works"],
-  ["notes", "Notes and references"],
+  ["notes", "Final notes and references"],
   ["related", "Appendix A: Related work"],
 ];
 
@@ -86,7 +86,7 @@ export default function AutoLayoutGuidePage() {
           </P>
           <details id="stripboard" className="my-6 rounded border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800/40 px-3 py-2 [&[open]]:pb-3">
             <summary className="cursor-pointer text-xs font-mono text-[var(--copper)] hover:underline marker:text-neutral-400">
-              0. What is stripboard? (if you somehow ended up on a website that lays out stripboard but dont know what it is, please read this)
+              0. What is stripboard? (if you somehow ended up on a website that lays out stripboard but don&apos;t know what it is, please read this)
             </summary>
             <div className="mt-3">
               <P>
@@ -215,10 +215,10 @@ export default function AutoLayoutGuidePage() {
             Sadly few real problems can be written down so that they turn into the rolling hills on the left, and stripboards are
             not among them (as far as I know as of writing this anyway). But luckily it turns out they do not have to be. A landscape anneals well as long as it has structure of the
             right kind, picture a river valley: steep walls on most sides, but between the walls a floor
-            that keeps going downhill. A hot search crosses the walls freely and stumbels into different valleys. 
-            A cooling one is caught by one valley, and once it is in that valley it can follow the valley down stream. 
+            that keeps going downhill. A hot search crosses the walls freely and stumbles into different valleys. 
+            A cooling one is caught by one valley, and once it is in that valley it can follow the valley downstream. 
             Such a landscape takes more effort to walk than rolling hills, since most
-            directions from any point are walls and the annealer cannot see the channel, it has to blindly try moves slowly stumbling down hill. But it anneals.
+            directions from any point are walls and the annealer cannot see the channel, it has to blindly try moves slowly stumbling downhill. But it anneals.
           </P>
           <LandscapeValley caption="What most real problems offer at best: walls on most sides, and channels between them that run downhill. A search that finds a channel can follow it a long way down." />
           <H3>The description must rule out nonsense, or price it</H3>
@@ -241,7 +241,7 @@ export default function AutoLayoutGuidePage() {
           <H2 id="goal">3. What a good board looks like</H2>
           <P>
             Before the search itself, a word on what it searches for. A stripboard layout is good when a person is happy to
-            build it, I consider the following properties most relevant:
+            build it. I consider the following properties most relevant:
           </P>
           <UL>
             <li><strong>Complete.</strong> Every connection of the schematic made, nothing else connected, no two components colliding or closer than the clearance asked for.</li>
@@ -287,7 +287,7 @@ export default function AutoLayoutGuidePage() {
           </P>
           <P>
             This section describes the alternative the layouter uses instead: a way of writing a board down in which
-            every value is a board, every good board can still be expressed with, and an landscape that resembles the 
+            every value is a board, every good board can still be expressed, and the landscape resembles the 
             river valleys instead of a saw blade.
           </P>
           <P>
@@ -331,7 +331,7 @@ export default function AutoLayoutGuidePage() {
           </P>
           <H3>The rest of the description</H3>
           <P>
-            Unfortunatly a stripboard needs more than a packing of rectangles. Stripboard has a useful property: once the components are placed,
+            Unfortunately a stripboard needs more than a packing of rectangles. Stripboard has a useful property: once the components are placed,
             almost everything else is forced. Which strips carry which nets, where the cuts have to go and which segments need a
             link wire all follow from the pin positions. But that also means the
             packing alone decides the electrical quality of the board, and a packing of bare rectangles knows nothing about it.
@@ -340,7 +340,7 @@ export default function AutoLayoutGuidePage() {
             orders alone do not fix it. Their real strength is that they can be combined with further entries. The electrical
             choices then stop being accidents of the packing and become explicit parts of the description.
           </P>
-          <P>Here are the other descriptions used along side the 2 orderings:</P>
+          <P>Here are the other descriptions used alongside the 2 orderings:</P>
           <UL>
             <li><strong>Rotation</strong> of every rigid component, in four steps.</li>
             <li><strong>Flat or upright</strong> for every two-legged component with flexible leads, such as a resistor or a diode, and <strong>how far its leads span</strong>, within the range you allow in the settings.</li>
@@ -395,12 +395,12 @@ export default function AutoLayoutGuidePage() {
             the annealer does at every step.
           </P>
           <P>
-            Be warned that most buttons will make the score jump by several hundred points (But there is at least one good moves to discover : ) ). 
+            Be warned that most buttons will make the score jump by several hundred points (But there is at least one good move to discover : ) ). 
             That is the consequence of the landscape. 
             A change that leaves a pin without a free hole for its wire, or lays a wire across a component, is
             priced far above any saving in area. Most single edits of a decent description do exactly that. Those are the steep walls
             at the edges of the river valleys. Finding the few moves that travel down the river valley is what the annealer is spending its time on 
-            in the ending phase of each run. While at the start it accepts those big jumps in the score to find a valley to settel into.
+            in the ending phase of each run. While at the start it accepts those big jumps in the score to find a valley to settle into.
           </P>
           <MoveDemo caption="One move at a time, with mess priced as at the end of a run. The changed entries of the description are marked." />
           <P>
@@ -417,7 +417,7 @@ export default function AutoLayoutGuidePage() {
             some bookkeeping. It has to come close to the finished board, since a score based on a rough guess might
             lead the search into a wrong direction. It is also the most time-critical piece of the
             layouter, because it runs once per step, so wherever a small simplification buys a large speedup that trade is
-            woth it. For example the last refinement of cuts and wires is left to the finishing pass of section 9 while 
+            worth it. For example the last refinement of cuts and wires is left to the finishing pass of section 9 while 
             this decoder only gets close to that.
           </P>
           <P>
@@ -431,7 +431,7 @@ export default function AutoLayoutGuidePage() {
             first order and after in the second means above.
           </P>
           <DecodeStage stage={1} caption="The six components in their two orders, and the relation each pair gets. Fifteen relations." />
-          <H3>Building Rows from the relations</H3>
+          <H3>Building rows from the relations</H3>
           <P>
             Rows come first, because the strips run along the rows: which row a pin lands on is the electrical decision, and
             the columns only decide how much space lies between. Every above-relation becomes an arrow from the upper component
@@ -481,7 +481,7 @@ export default function AutoLayoutGuidePage() {
           <H2 id="score">7. The score</H2>
           <P>
             The score of a decoded board is a weighted sum. The weights were tuned by running the layouter over many 
-            boards and adjusting them until further adjustments didnt improve the results anymore 
+            boards and adjusting them until further adjustments didn&apos;t improve the results anymore 
             (kind of like annealing the annealer) (This took many many hours of my CPU annealing boards). The exact numbers matter less
             than the order of magnitude between the terms.
           </P>
@@ -546,7 +546,7 @@ export default function AutoLayoutGuidePage() {
           <P>
             The Layouts to solve setting says how many. The runs are spread over the processor cores of your machine,
             one run per core in use. The finished
-            boards are compared on completeness first (for the very rare cases where a run wasnt able to complete a board), 
+            boards are compared on completeness first (for the very rare cases where a run wasn&apos;t able to complete a board), 
             then on a rating of area, wires
             and cuts. Every run uses a fixed random seed, so the same circuit with the same settings on the same machine
             gives the same board again; a setting starts every run from fresh random arrangements instead, for when you
@@ -556,7 +556,7 @@ export default function AutoLayoutGuidePage() {
           {/* 11 */}
           <H2 id="limits">11. What it cannot do</H2>
           <UL>
-            <li><strong>Locked boards and locked components</strong> Expect a run containing locked pieces or dimnesions to be somewhat larger, or to keep a few slanted wires. It takes away some freedome from the solver.</li>
+            <li><strong>Locked boards and locked components.</strong> Expect a run containing locked pieces or dimensions to be somewhat larger, or to keep a few slanted wires. It takes away some freedom from the solver.</li>
             <li><strong>Time.</strong> A small circuit is done in seconds; a big one uses the default minute it is given, depending on exact size it would probably still improve with more time (which you can adjust in the settings).</li>
             <li><strong>Taste.</strong> The score encodes some basic properties like size, wire length and count. It does not know that you wanted the LEDs in a row. Place those components yourself, lock them, and let it arrange the rest around them.</li>
           </UL>
@@ -567,7 +567,7 @@ export default function AutoLayoutGuidePage() {
             The layouter is measured against a corpus of 271 circuits that people laid out by hand in this editor, from three
             components up to about fifty. On every one of them, unlocked, it produces a complete board with no slanted wire and
             no wire crossing a component, at the default of one minute per layout. Its board is smaller than the hand layout in
-            199 cases and larger in 70, smaller by 30% on the median.
+            199 cases, larger in 70 and the same size in 2, smaller by 30% on the median.
           </P>
           <P>
             The margin is largest on small boards and narrows as they grow. Up to twenty components the layouter beats most
@@ -579,7 +579,7 @@ export default function AutoLayoutGuidePage() {
             and settings. If you build something with it, or it does something odd, the{" "}
             <Link href="/feedback" className="text-[var(--copper)] hover:underline">feedback page</Link> is the place to contact me if you like.
           </P>
-          <H2 id="notes">Final Notes and references</H2>
+          <H2 id="notes">Final notes and references</H2>
           <P>
             Thank you for reading this far. I hope you found it interesting!
           </P>

@@ -39,13 +39,13 @@ const updates: { date: string; items: string[]; link?: { href: string; lead: str
   {
     date: "2026-07-24",
     items: [
-      "Big changes to the auto layouter. Much more user settings and it also performs much better overall. Thats why I also removed the 'alpha' tag as I think its quite capable at this point."
+      "Big changes to the auto layouter. Many more user settings and it also performs much better overall. That's why I also removed the 'alpha' tag as I think it's quite capable at this point."
     ],
   },
   {
     date: "2026-07-23",
     items: [
-      "Netlist export. Export a design to an EDA tool as a KiCad-compatible netlist (.net): components, values, pin numbers and nets all are included, so you can turn a stripboard prototype into a PCB without redesigning the Schematic in another tool.",
+      "Netlist export. Export a design to an EDA tool as a KiCad-compatible netlist (.net): components, values, pin numbers and nets all are included, so you can turn a stripboard prototype into a PCB without redesigning the schematic in another tool.",
       "Auto-align polarity. Drop or move a 2-legged part like a resistor onto the board with its legs reversed and it flips itself 180 degrees automatically, so each pin lands on its correct net.",
       "Fixed rotating 2-legged components: parts spanning an even number of holes now rotate in place instead of slowly wandering across the board, and four rotations return to the exact starting position.",
       "Floating menu for schematic wires. Select a wire to delete just that segment or the whole wire in one go (or press Alt+Del for the whole wire). A whole wire is everything connected up to the component pins it runs between.",
@@ -62,7 +62,7 @@ const updates: { date: string; items: string[]; link?: { href: string; lead: str
   {
     date: "2026-07-16",
     items: [
-      "New auto-layout router (alpha). Click Auto-layout and the program will try to find an good layout of all components. It works but please consider it the first version I felt comfortable releasing. I plan to further improve on it in the future.",
+      "New auto-layout router (alpha). Click Auto-layout and the program will try to find a good layout of all components. It works but please consider it the first version I felt comfortable releasing. I plan to further improve on it in the future.",
     ],
   },
   {
@@ -80,7 +80,7 @@ const updates: { date: string; items: string[]; link?: { href: string; lead: str
   {
     date: "2026-07-03",
     items: [
-      "Saving unsafed projects in local storage with the option to restore them when opening a new project again.",
+      "Saving unsaved projects in local storage with the option to restore them when opening a new project again.",
       "Move a whole multi-selection of components at once by dragging it, on both the schematic and the stripboard (previously only possible with the arrow keys).",
     ],
   },
@@ -88,7 +88,7 @@ const updates: { date: string; items: string[]; link?: { href: string; lead: str
     date: "2026-06-26",
     items: [
       "Copy and paste schematic components with Ctrl+C and Ctrl+V.",
-      "The site has moved to dedicated, professional hosting (coming from being hosted on my old PC over my residential ISP)(I got really lucky that this site was up 100% over the last 4 months with this old setup).",
+      "The site has moved to dedicated, professional hosting (coming from being hosted on my old PC over my residential ISP) (I got really lucky that this site was up 100% over the last 4 months with this old setup).",
     ],
   },
   {
