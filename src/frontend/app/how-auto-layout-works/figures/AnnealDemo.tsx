@@ -216,10 +216,16 @@ export default function AnnealDemo({
   useEffect(() => {
     if (!running) return;
     let raf = 0;
+    let acc = 0;
     const loop = () => {
       const sim = simRef.current!;
-      for (let k = 0; k < speed && !sim.done; k++) tick(sim);
-      setFrame((f) => f + 1);
+      acc += speed;
+      const n = Math.floor(acc);
+      acc -= n;
+      if (n > 0) {
+        for (let k = 0; k < n && !sim.done; k++) tick(sim);
+        setFrame((f) => f + 1);
+      }
       if (sim.done) { setRunning(false); return; }
       raf = requestAnimationFrame(loop);
     };
@@ -259,6 +265,7 @@ export default function AnnealDemo({
     <figure className="my-6 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800/40 p-3 sm:p-4">
       <div className="flex flex-wrap items-center gap-2 mb-3">
         <button className={btn} onClick={() => setRunning((r) => !r)} disabled={sim.done}>{running ? "Pause" : sim.step === 0 ? "Play" : "Continue"}</button>
+        <button className={btn} onClick={() => { tick(sim); setFrame((f) => f + 1); }} disabled={sim.done}>+1 step</button>
         <button className={btn} onClick={() => { for (let k = 0; k < 100 && !sim.done; k++) tick(sim); setFrame((f) => f + 1); }} disabled={sim.done}>+100 steps</button>
         <button className={btn} onClick={() => reset()}>Restart</button>
         <button className={btn} onClick={() => { const s = seedN + 1; setSeedN(s); reset(s); }}>New start</button>
@@ -275,7 +282,7 @@ export default function AnnealDemo({
           <option value={12000}>12,000 steps</option>
         </select>
         <select className={sel} value={speed} onChange={(e) => setSpeed(Number(e.target.value))} title="Steps per animation frame">
-          <option value={1}>slow</option>
+          <option value={0.25}>slow</option>
           <option value={3}>normal</option>
           <option value={25}>fast</option>
           <option value={200}>instant</option>

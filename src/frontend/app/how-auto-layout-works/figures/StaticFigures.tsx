@@ -40,7 +40,7 @@ export function AcceptanceChart() {
           );
         })}
       </svg>
-      <figcaption className="text-xs text-neutral-500 dark:text-neutral-400 leading-snug">
+      <figcaption className="mt-3 text-xs text-neutral-500 dark:text-neutral-400 leading-snug">
         The acceptance rule. A move that improves the score is always kept. A move that makes it worse by some amount is kept
         with probability e<sup>-worse/T</sup>: at a high temperature almost anything passes, at a low one only the smallest
         setbacks do, and at T near zero the rule becomes "improvements only".

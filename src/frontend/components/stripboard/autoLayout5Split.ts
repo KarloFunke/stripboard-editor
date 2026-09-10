@@ -29,6 +29,7 @@ export interface AutoLayout5SplitOptions {
   variant: number;
   // anneal budget per half seed (default: v5's size-scaled default)
   moves?: number;
+  timeBudgetMs?: number;
   // seeds per half (default 3), starting at seedBase (default 0)
   seeds?: number;
   seedBase?: number;
@@ -166,6 +167,7 @@ export function computeAutoLayout5Split(
           ? { top: s !== 1, bottom: s !== 0, left: true, right: true }
           : { top: true, bottom: true, left: s !== 1, right: s !== 0 },
         ...(options?.moves !== undefined ? { moves: options.moves } : {}),
+        ...(options?.timeBudgetMs !== undefined ? { timeBudgetMs: options.timeBudgetMs } : {}),
         ...(options?.drilledCutsOnly ? { drilledCutsOnly: true } : {}),
         ...(options?.noWireStacking ? { noWireStacking: true } : {}),
       });

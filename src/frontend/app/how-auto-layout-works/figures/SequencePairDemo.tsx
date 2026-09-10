@@ -2,10 +2,10 @@
 
 import { useState } from "react";
 
-// ── Sequence pair: two orderings of the parts describe a whole packing ──
-// For any two parts a and b: a before b in both orderings means a is left
+// ── Sequence pair: two orderings of the components describe a whole packing ──
+// For any two components a and b: a before b in both orderings means a is left
 // of b; a before b in the first but after b in the second means a is above
-// b. Every part then sits as far up and left as those relations allow.
+// b. Every component then sits as far up and left as those relations allow.
 
 const PARTS = [
   { id: "A", w: 3, h: 2, color: "#b45309" },
@@ -100,7 +100,7 @@ export default function SequencePairDemo() {
         onMouseLeave={() => setHover(null)}
         className={`w-8 h-8 rounded text-white text-sm font-mono border-2 transition-transform ${picked ? "scale-110 border-neutral-900 dark:border-white" : "border-transparent"} ${hover === id ? "ring-2 ring-offset-1 ring-neutral-400" : ""}`}
         style={{ background: p.color }}
-        title="Click two parts in the same row to swap them"
+        title="Click two components in the same row to swap them"
       >
         {id}
       </button>
@@ -126,7 +126,7 @@ export default function SequencePairDemo() {
             <button className={btn} onClick={shuffle}>Shuffle both</button>
             <button className={btn} onClick={() => { setSeqP(["A", "B", "C", "E", "D"]); setSeqN(["C", "A", "B", "D", "E"]); setPick(null); }}>Reset</button>
           </div>
-          <p className="text-neutral-500 dark:text-neutral-400">Click two parts in one row to swap them. Hover a part to read its relations.</p>
+          <p className="text-neutral-500 dark:text-neutral-400">Click two components in one row to swap them. Hover a component to read its relations.</p>
           <div className="font-mono min-h-[5.5rem]">
             {hover ? relations.map((r) => <div key={r}>{r}</div>) : <div className="text-neutral-400">board {W} × {H} = {W * H} cells</div>}
           </div>
@@ -148,10 +148,9 @@ export default function SequencePairDemo() {
         </svg>
       </div>
       <figcaption className="mt-3 text-xs text-neutral-500 dark:text-neutral-400 leading-snug">
-        Two orderings of five parts and the packing they describe. A part that comes first in both orders sits to the left,
-        a part that comes first in the first order but later in the second sits above. Every possible pair of orders is a
-        valid, overlap-free packing, and every packing that matters has a pair of orders. Swapping two entries is one of the
-        layouter&apos;s moves.
+        Two orderings of five components and the packing they describe. A component that comes first in both orders sits to the left,
+        a component that comes first in the first order but later in the second sits above. Every possible pair of orders is a
+        valid, overlap-free packing, and every packing that matters has a pair of orders.
       </figcaption>
     </figure>
   );

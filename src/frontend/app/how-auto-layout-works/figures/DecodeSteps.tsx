@@ -5,7 +5,7 @@ import { dipNotch } from "@/components/stripboard/componentGlyphs";
 
 // ── From description to board, one layer at a time ──
 // A hand-made example drawn the way the editor draws a board: copper strips,
-// holes, dashed part bodies with the label above, net-coloured pins, red X
+// holes, dashed component bodies with the label above, net-coloured pins, red X
 // cut marks and link wires. A resistor standing upright, a 6-pin IC, a
 // resistor lying flat and a 2-pin connector.
 
@@ -32,11 +32,11 @@ const WIRES = [{ net: "C", r1: 1, r2: 4, c: 1 }, { net: "D", r1: 1, r2: 4, c: 6 
 const STEPS = [
   {
     title: "1. The description",
-    text: "Two orders of the four parts say who is left of whom and who is above whom; R1 stands upright and R2 lies flat, each spanning a chosen number of holes; pins that share a net are asked to share a strip where they can. Nothing here is a coordinate.",
+    text: "Two orders of the four components say who is left of whom and who is above whom; R1 stands upright and R2 lies flat, each spanning a chosen number of holes; pins that share a net are asked to share a strip where they can. Nothing here is a coordinate.",
   },
   {
     title: "2. Positions",
-    text: "Solving the spacing constraints puts every part as far up and left as its neighbours and clearances allow, so R1 lands in the top left corner. U1 sits right of R1 with one free column between them, J1 right of U1, R2 below U1 with a free row between.",
+    text: "Solving the spacing constraints puts every component as far up and left as its neighbours and clearances allow, so R1 lands in the top left corner. U1 sits right of R1 with one free column between them, J1 right of U1, R2 below U1 with a free row between.",
   },
   {
     title: "3. Strips and pins",
@@ -48,7 +48,7 @@ const STEPS = [
   },
   {
     title: "5. Link wires",
-    text: "Nets that are split over several segments are joined by vertical link wires between two free holes. Net C needs one from row 2 down to row 5 in column 2, net D one in column 7. Both run straight, cross no part, and end on holes that were still free.",
+    text: "Nets that are split over several segments are joined by vertical link wires between two free holes. Net C needs one from row 2 down to row 5 in column 2, net D one in column 7. Both run straight, cross no component, and end on holes that were still free.",
   },
   {
     title: "6. The score",
@@ -112,7 +112,7 @@ export default function DecodeSteps() {
                 const r = Math.floor(i / COLS), c = i % COLS;
                 return <circle key={i} cx={cx(c)} cy={cy(r)} r={HOLE_R} fill="var(--hole-fill)" stroke="var(--hole-stroke)" strokeWidth={0.5} />;
               })}
-              {/* parts */}
+              {/* components */}
               {PARTS.map((p) => {
                 const x0 = cx(p.body.c1) - PAD, y0 = cy(p.body.r1) - PAD;
                 const bw = (p.body.c2 - p.body.c1) * SP + 2 * PAD, bh = (p.body.r2 - p.body.r1) * SP + 2 * PAD;

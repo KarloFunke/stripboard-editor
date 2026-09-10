@@ -92,7 +92,7 @@ export default function GuidePage() {
             <li><strong>Settings</strong> (gear beside the button): pin spacing and clearance per flexible part type, drilled cuts only, no stacked wires, how many layouts to solve, and the anneal effort per layout. Each option explains itself in the panel.</li>
           </ul>
           <p className="text-sm text-neutral-700 dark:text-neutral-300 mt-3">
-            Curious how it decides all this? <Link href="/guide/auto-layout" className="text-[var(--copper)] hover:underline font-semibold">How auto-layout works &rarr;</Link>
+            Curious how it decides all this? <Link href="/how-auto-layout-works" className="text-[var(--copper)] hover:underline font-semibold">How auto-layout works &rarr;</Link>
           </p>
         </section>
 

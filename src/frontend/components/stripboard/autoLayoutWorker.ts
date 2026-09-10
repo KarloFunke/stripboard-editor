@@ -34,6 +34,8 @@ export interface AutoLayoutRequest {
   permutationIndex?: number;
   // v5: anneal budget per seed (undefined = size-scaled default)
   v5Moves?: number;
+  v5TimeS?: number;
+  v5MsPerMove?: number;
   // v5: solve this bipartition variant (two halves under a common locked
   // dimension, composed) instead of a joint seed
   v5Split?: number;
@@ -49,7 +51,7 @@ export type AutoLayoutWorkerMessage =
   // crossings: wire-over-part crossings, for the guarded final pick —
   // compare on (quality, crossings, score); lets the editor pick across
   // workers without letting crossings trade up.
-  | { type: "done"; result: AutoLayoutResult; score?: number; crossings?: number };
+  | { type: "done"; result: AutoLayoutResult; score?: number; crossings?: number; msPerMove?: number };
 
 const ctx = self as unknown as {
   postMessage(msg: AutoLayoutWorkerMessage): void;
@@ -57,7 +59,7 @@ const ctx = self as unknown as {
 };
 
 ctx.onmessage = (e) => {
-  const { board, components, componentDefs, nets, netAssignments, engine, options, spanOverrides, clearanceOverrides, tidyGrowth, drilledCutsOnly, permutationIndex, v5Moves, v5Split, noWireStacking, v5SeedBase } = e.data;
+  const { board, components, componentDefs, nets, netAssignments, engine, options, spanOverrides, clearanceOverrides, tidyGrowth, drilledCutsOnly, permutationIndex, v5Moves, v5TimeS, v5MsPerMove, v5Split, noWireStacking, v5SeedBase } = e.data;
   const onProgress = (progress: AutoLayoutProgress) => {
     ctx.postMessage({ type: "progress", progress });
   };
@@ -83,8 +85,11 @@ ctx.onmessage = (e) => {
     return;
   }
   if (engine === "v5") {
+    let msPerMove: number | undefined;
     const v5Opts = {
       ...(v5Moves !== undefined ? { moves: v5Moves } : {}),
+      ...(v5TimeS !== undefined ? { timeBudgetMs: v5TimeS * 1000, onBudget: (b: { msPerMove: number }) => { msPerMove = b.msPerMove; } } : {}),
+      ...(v5MsPerMove !== undefined ? { msPerMoveHint: v5MsPerMove } : {}),
       ...(drilledCutsOnly ? { drilledCutsOnly: true } : {}),
       ...(noWireStacking ? { noWireStacking: true } : {}),
     };
@@ -106,6 +111,7 @@ ctx.onmessage = (e) => {
       result,
       score: rateResult(result, board, components, defs, drilledCutsOnly),
       crossings: wireMessScore(result, components, defs).crossings + offAxis + stacked,
+      ...(msPerMove !== undefined ? { msPerMove } : {}),
     });
     return;
   }

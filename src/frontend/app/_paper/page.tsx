@@ -1483,7 +1483,7 @@ export default function PaperPage() {
             <P>
               Measurements dated {EVALUATED.date}, taken at source revision <Code>{EVALUATED.commit}</Code> [2]. For a
               non-technical description of the same machinery, see{" "}
-              <Link href="/guide/auto-layout" className="text-[var(--copper)] hover:underline">
+              <Link href="/how-auto-layout-works" className="text-[var(--copper)] hover:underline">
                 How Auto-layout Works
               </Link>
               .

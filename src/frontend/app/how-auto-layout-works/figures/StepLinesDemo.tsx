@@ -3,16 +3,16 @@
 import { useEffect, useMemo, useState } from "react";
 
 // ── How a packing is read into its two orders (Murata's step-lines) ──
-// Positive step-line of a part: from its lower-left corner go down, sliding
-// left along the top of any part in the way, to the bottom of the board;
+// Positive step-line of a component: from its lower-left corner go down, sliding
+// left along the top of any component in the way, to the bottom of the board;
 // from its upper-right corner go up, sliding right along the bottom of any
-// part in the way, to the top. These lines never cross, and reading them
+// component in the way, to the top. These lines never cross, and reading them
 // from left to right gives the first order. The negative step-line does
 // the mirror image (upper-left corner up and left, lower-right corner down
 // and right) and gives the second order.
 
 interface Mod { id: string; x1: number; x2: number; y1: number; y2: number; color: string }
-// the same five parts as the packing figure below; y grows upward in these
+// the same five components as the packing figure below; y grows upward in these
 // coordinates, and every edge coordinate is distinct
 const MODS: Mod[] = [
   { id: "A", x1: 0.5, x2: 3.5, y1: 5.5, y2: 7.5, color: "#b45309" },
@@ -26,7 +26,7 @@ const S = 34;
 
 type Pt = [number, number];
 
-// walk vertically from (x, y); when a part blocks, slide along its edge
+// walk vertically from (x, y); when a component blocks, slide along its edge
 function walk(x: number, y: number, dir: "up" | "down", slide: "left" | "right", self: string): Pt[] {
   const pts: Pt[] = [];
   for (let guard = 0; guard < 50; guard++) {
@@ -51,9 +51,9 @@ function walk(x: number, y: number, dir: "up" | "down", slide: "left" | "right",
   return pts;
 }
 
-// the three pieces of a step-line, each starting at the part so the
+// the three pieces of a step-line, each starting at the component so the
 // drawing grows outward from its corners: one half to the bottom, one half
-// to the top, and the diagonal through the part
+// to the top, and the diagonal through the component
 function stepPieces(m: Mod, sign: "pos" | "neg"): Pt[][] {
   if (sign === "pos") {
     const down = [[m.x1, m.y1] as Pt, ...walk(m.x1, m.y1, "down", "left", m.id)];
@@ -114,7 +114,7 @@ export default function StepLinesDemo() {
   useEffect(() => {
     if (!playing) return;
     if (shown >= MODS.length) { setPlaying(false); return; }
-    const t = setTimeout(() => setShown((n) => n + 1), 900);
+    const t = setTimeout(() => setShown((n) => n + 1), 1400);
     return () => clearTimeout(t);
   }, [playing, shown]);
 
@@ -151,9 +151,9 @@ export default function StepLinesDemo() {
             return stepPieces(m, sign).map((pts, j) => {
               const d = pts.map(([x, y], i) => `${i === 0 ? "M" : "L"}${px(x).toFixed(1)},${py(y).toFixed(1)}`).join(" ");
               return (
-                <path key={`${id}${j}`} d={d} fill="none" stroke={m.color} strokeWidth={k === shown - 1 ? 3 : 2} strokeOpacity={dim ? 0.25 : 0.95} strokeLinejoin="round" strokeLinecap="round"
+                <path key={`${id}${j}`} d={d} fill="none" stroke={m.color} strokeWidth={k === shown - 1 ? 3 : 2} strokeOpacity={dim ? 0.25 : 0.95} strokeLinejoin="round" strokeLinecap="round" pointerEvents="none"
                   pathLength={1} strokeDasharray={1} strokeDashoffset={0}
-                  style={k === shown - 1 ? { animation: "sp-draw 0.8s ease-out" } : undefined} />
+                  style={k === shown - 1 ? { animation: j === 2 ? "sp-draw 0.4s ease-out 0.8s both" : "sp-draw 0.8s ease-out" } : undefined} />
               );
             });
           })}
@@ -162,8 +162,8 @@ export default function StepLinesDemo() {
         <div className="flex-1 min-w-0 text-xs text-neutral-700 dark:text-neutral-300 space-y-3">
           <p className="leading-relaxed">
             {sign === "pos"
-              ? "Positive step-line: from the part's lower-left corner go down, sliding left along the top of anything in the way, until the bottom edge. From its upper-right corner go up, sliding right along the bottom of anything in the way, until the top edge. Join the two through the part."
-              : "Negative step-line: from the part's upper-left corner go up, sliding left along the bottom of anything in the way, until the top edge. From its lower-right corner go down, sliding right along the top of anything in the way, until the bottom edge. Join the two through the part."}
+              ? "Positive step-line: from the component's lower-left corner go down, sliding left along the top of anything in the way, until the bottom edge. From its upper-right corner go up, sliding right along the bottom of anything in the way, until the top edge. Join the two through the component."
+              : "Negative step-line: from the component's upper-left corner go up, sliding left along the bottom of anything in the way, until the top edge. From its lower-right corner go down, sliding right along the top of anything in the way, until the bottom edge. Join the two through the component."}
           </p>
           <p className="leading-relaxed">The lines never cross, so they can be read from left to right. That reading is the {sign === "pos" ? "first" : "second"} order.</p>
           <div className="font-mono">
@@ -186,7 +186,7 @@ export default function StepLinesDemo() {
                     const rel = pa && na ? "left of" : !pa && !na ? "right of" : pa && !na ? "above" : "below";
                     return <div key={b}>{a} is {rel} {b}</div>;
                   })
-                : "hover a part to read its relations off the two orders"}
+                : "hover a component to read its relations off the two orders"}
             </div>
           </div>
         </div>
@@ -194,7 +194,7 @@ export default function StepLinesDemo() {
       <figcaption className="mt-3 text-xs text-neutral-500 dark:text-neutral-400 leading-snug">
         Reading a packing into its two orders, after Murata and colleagues, who introduced the idea for chip floorplans in
         1995. Every packing has exactly one pair of orders, and the pair contains everything about the packing that
-        matters: for any two parts, first in both orders means left of, first in one and last in the other means above.
+        matters.
       </figcaption>
     </figure>
   );

@@ -178,6 +178,13 @@ export interface Project {
   permWorkers?: number;
   // v5 beta: anneal moves per seed (undefined = size-scaled default)
   v5Moves?: number;
+  // v5: wall-time budget per layout in seconds (undefined = 60)
+  v5TimeS?: number;
+  // v5: decode speed the last run measured on this machine, ms per move;
+  // turns the time budget into a repeatable move count
+  v5MsPerMove?: number;
+  // v5: fresh random seeds on every run instead of the fixed series
+  v5RandomSeeds?: boolean;
   // Auto-layout engine: "v5" (annealed, default when absent) or "v2"
   // (strip-first)
   layoutEngine?: "v2" | "v5";

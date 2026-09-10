@@ -111,6 +111,9 @@ interface ProjectActions {
   setPermWorkers: (n: number) => void;
   // v5 beta anneal budget per seed (0 = back to the size-scaled default)
   setV5Moves: (n: number) => void;
+  setV5TimeS: (n: number) => void;
+  setV5MsPerMove: (n: number) => void;
+  setV5RandomSeeds: (value: boolean) => void;
   setLayoutEngine: (engine: "v2" | "v5") => void;
   setNoWireStacking: (value: boolean) => void;
   // Insert a blank row/column at `at` (0-based): everything at or beyond it
@@ -352,6 +355,9 @@ function prepareProjectState(data: Project) {
     permBoards: data.permBoards ?? (data.permTimeBudget === 0 ? 1 : undefined),
     permWorkers: data.permWorkers,
     v5Moves: data.v5Moves,
+    v5TimeS: data.v5TimeS,
+    v5MsPerMove: data.v5MsPerMove,
+    v5RandomSeeds: data.v5RandomSeeds,
     layoutEngine: data.layoutEngine,
     noWireStacking: data.noWireStacking,
     autoLayoutUsed: data.autoLayoutUsed,
@@ -1059,6 +1065,24 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set({ v5Moves: n > 0 ? Math.round(n) : undefined, isDirty: true });
   },
 
+  setV5TimeS: (n) => {
+    set({ v5TimeS: n > 0 ? Math.round(n) : undefined, isDirty: true });
+  },
+
+  // the stored speed only moves when a run measures something clearly
+  // different, so a run's move count stays on the same rung under ordinary
+  // load noise; it is a machine property, so it does not dirty the project
+  setV5MsPerMove: (n) => {
+    if (!(n > 0)) return;
+    const old = get().v5MsPerMove;
+    if (old !== undefined && Math.abs(n / old - 1) < 0.15) return;
+    set({ v5MsPerMove: n });
+  },
+
+  setV5RandomSeeds: (value) => {
+    set({ v5RandomSeeds: value ? true : undefined, isDirty: true });
+  },
+
   setLayoutEngine: (engine) => {
     set({ layoutEngine: engine === "v5" ? undefined : engine, isDirty: true });
   },
@@ -1398,6 +1422,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       permBoards: s.permBoards,
       permWorkers: s.permWorkers,
       v5Moves: s.v5Moves,
+      v5TimeS: s.v5TimeS,
+      v5MsPerMove: s.v5MsPerMove,
+      v5RandomSeeds: s.v5RandomSeeds,
       layoutEngine: s.layoutEngine,
       noWireStacking: s.noWireStacking,
       autoLayoutUsed: s.autoLayoutUsed,
@@ -1448,6 +1475,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     permBoards: undefined,
     permWorkers: undefined,
     v5Moves: undefined,
+    v5TimeS: undefined,
+    v5MsPerMove: undefined,
+    v5RandomSeeds: undefined,
     layoutEngine: undefined,
     noWireStacking: undefined,
     autoLayoutUsed: undefined,

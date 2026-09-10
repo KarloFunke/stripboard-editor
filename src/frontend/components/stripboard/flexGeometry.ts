@@ -17,14 +17,14 @@ const BODY_CONTACT_SEPARATION = 1;
 export const DEFAULT_CLEARANCE = 1;
 
 // Pin-to-pin span limits in hole pitches (Euclidean). Axial parts with a fat
-// body (resistors, inductors) can't sit closer than 4 (5 holes end to end);
-// small parts (caps, LEDs, small diodes) can stand upright at any spacing
-// but shouldn't stretch.
+// body (resistors, inductors, diodes) can't sit closer than 4 (5 holes end to
+// end); small parts (caps, LEDs) can stand upright at any spacing but
+// shouldn't stretch.
 const AXIAL_SPAN = { min: 4, max: 10 };
 const COMPACT_SPAN = { min: 1, max: 6 };
 // Fuse: never tighter than its default 3-hole reach, up to that plus 5.
 const FUSE_SPAN = { min: 3, max: 8 };
-const AXIAL_DEF_IDS = new Set(["def-resistor", "def-inductor"]);
+const AXIAL_DEF_IDS = new Set(["def-resistor", "def-inductor", "def-diode", "def-zener"]);
 
 export function spanLimits(def: ComponentDef): { min: number; max: number } {
   if (def.spanOverride) return def.spanOverride;

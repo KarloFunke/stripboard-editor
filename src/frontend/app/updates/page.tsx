@@ -12,6 +12,17 @@ export const metadata: Metadata = {
 
 const updates: { date: string; items: string[]; link?: { href: string; lead: string; text: string } }[] = [
   {
+    date: "2026-09-10",
+    items: [
+      "Releasing Auto Layouter V5. Boards come out smaller, every link wire runs straight along a column and crosses nothing, and connectors end up on a board edge.",
+    ],
+    link: {
+      href: "/how-auto-layout-works",
+      lead: "I also wrote up how the whole thing works, with demos you can play with:",
+      text: "How auto-layout works.",
+    },
+  },
+  {
     date: "2026-08-21",
     items: [
       "The auto layouter now keeps proper clearance around every part, and can be set to only use drilled cuts instead of cutting the copper between two holes.",
@@ -53,11 +64,6 @@ const updates: { date: string; items: string[]; link?: { href: string; lead: str
     items: [
       "New auto-layout router (alpha). Click Auto-layout and the program will try to find an good layout of all components. It works but please consider it the first version I felt comfortable releasing. I plan to further improve on it in the future.",
     ],
-    link: {
-      href: "/guide/auto-layout",
-      lead: "If you are interested in how it works,",
-      text: "here is a look under the hood.",
-    },
   },
   {
     date: "2026-07-07",

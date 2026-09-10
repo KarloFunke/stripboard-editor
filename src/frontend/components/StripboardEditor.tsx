@@ -5,7 +5,7 @@ import { useProjectStore } from "@/store/useProjectStore";
 import { useStripSegments } from "@/hooks/useStripSegments";
 import { checkNetCompleteness } from "./stripboard/netCompleteness";
 import type { AutoLayoutRequest, AutoLayoutWorkerMessage } from "./stripboard/autoLayoutWorker";
-import { defaultPermBoards, defaultPermWorkers, type AutoLayoutResult } from "./stripboard/layoutTypes";
+import { defaultPermWorkers, type AutoLayoutResult } from "./stripboard/layoutTypes";
 import { SPLIT_MIN_PARTS, SPLIT_VARIANTS } from "./stripboard/autoLayout5Split";
 import ComponentTray from "./stripboard/ComponentTray";
 import StripboardCanvas from "./stripboard/StripboardCanvas";
@@ -33,8 +33,11 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
   const clearanceOverrides = useProjectStore((s) => s.clearanceOverrides);
   const tidyWires = useProjectStore((s) => s.tidyWires);
   const drilledCutsOnly = useProjectStore((s) => s.drilledCutsOnly);
-  const permBoards = useProjectStore((s) => s.permBoards);
   const v5Moves = useProjectStore((s) => s.v5Moves);
+  const v5TimeS = useProjectStore((s) => s.v5TimeS);
+  const v5MsPerMove = useProjectStore((s) => s.v5MsPerMove);
+  const v5RandomSeeds = useProjectStore((s) => s.v5RandomSeeds);
+  const setV5MsPerMove = useProjectStore((s) => s.setV5MsPerMove);
   const noWireStacking = useProjectStore((s) => s.noWireStacking);
   const permWorkers = useProjectStore((s) => s.permWorkers);
   const isActive = useProjectStore((s) => s.activeEditor === "stripboard");
@@ -130,17 +133,32 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
       options: onlyIds ? { onlyIds } : undefined,
       tidyGrowth: tidyWires === false ? undefined : Infinity,
       ...(engine === "v5" && v5Moves ? { v5Moves } : {}),
+      ...(engine === "v5" ? { v5TimeS: v5TimeS ?? 60 } : {}),
+      ...(engine === "v5" && v5MsPerMove ? { v5MsPerMove } : {}),
       ...(engine === "v5" && noWireStacking !== false ? { noWireStacking: true } : {}),
     };
 
     // v5 spreads its seeds over the same worker pool (worker._idx = seed);
     // big free boards add the bipartition variants after the seeds
     const nPlaceable = components.filter((c) => !c.boardExcluded).length;
-    const canSplit = engine === "v5" && !onlyIds && nPlaceable >= SPLIT_MIN_PARTS &&
+    // split variants are off until they are measured against joint runs
+    // at an equal time budget (2026-09-08)
+    const SPLITS_ENABLED = false;
+    const canSplit = SPLITS_ENABLED && engine === "v5" && !onlyIds && nPlaceable >= SPLIT_MIN_PARTS &&
       !board.lockedRows && !board.lockedCols && !components.some((c) => c.locked && c.boardPos && !c.boardExcluded);
-    // "layouts to solve" is the board count; each board is one joint seed
-    // plus its own six split variants when the board can be split
-    const boards = onlyIds ? 1 : Math.max(1, permBoards ?? defaultPermBoards(nPlaceable));
+    // one layout per solver, all in one wave, so each gets the full time
+    const coresAvail = typeof navigator !== "undefined" ? navigator.hardwareConcurrency || 4 : 4;
+    const boards = onlyIds ? 1 : Math.max(1, Math.min(permWorkers ?? defaultPermWorkers(coresAvail), coresAvail));
+    // seeds: the fixed series 0, 1, 2, ... or, on request, a fresh random base per run
+    const seedBase = engine === "v5" && v5RandomSeeds ? Math.floor(Math.random() * 1e9) : 0;
+    // every worker reports the decode speed it measured; the median is kept
+    // for the next run's move count
+    const speeds: number[] = [];
+    const rememberSpeed = () => {
+      if (!speeds.length) return;
+      const s = speeds.slice().sort((a, b) => a - b);
+      setV5MsPerMove(s[Math.floor(s.length / 2)]);
+    };
     const perBoard = canSplit ? 1 + SPLIT_VARIANTS : 1;
     const jobs = boards * perBoard;
     if (jobs > 1) {
@@ -163,6 +181,7 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
 
       const finalize = () => {
         stopAutoWorkers();
+        rememberSpeed();
         if (best) applyBest(best.result, { boards, orderings: solved, drilled });
         else showAutoMsg("Auto-layout failed", []);
       };
@@ -176,8 +195,8 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
         const boardIdx = Math.floor(idx / perBoard);
         const k = idx % perBoard;
         worker.postMessage(k === 0
-          ? { ...request, permutationIndex: boardIdx }
-          : { ...request, v5Split: k - 1, v5SeedBase: boardIdx * 3 });
+          ? { ...request, permutationIndex: seedBase + boardIdx }
+          : { ...request, v5Split: k - 1, v5SeedBase: seedBase + boardIdx * 3 });
         return true;
       };
       const workers = Array.from({ length: nWorkers }, () => {
@@ -198,6 +217,7 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
           const { result } = e.data;
           const score = e.data.score ?? Infinity;
           const crossings = e.data.crossings ?? 0;
+          if (e.data.msPerMove !== undefined) speeds.push(e.data.msPerMove);
           const idx = worker._idx!;
           // Deterministic winner for a given set of finished orderings:
           // quality, then the guarded pick (wire-over-part crossings never
@@ -241,6 +261,8 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
         return;
       }
       stopAutoWorkers();
+      if (e.data.msPerMove !== undefined) speeds.push(e.data.msPerMove);
+      rememberSpeed();
       applyBest(e.data.result, { boards: 1, orderings: 1, drilled });
     };
     worker.onerror = (err) => {
@@ -249,7 +271,8 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
       stopAutoWorkers();
       showAutoMsg("Auto-layout failed", []);
     };
-    worker.postMessage(request);
+    // a single layout is one seed, not the engine's own portfolio
+    worker.postMessage(engine === "v5" && !onlyIds ? { ...request, permutationIndex: seedBase } : request);
   };
 
   const { segments, connectivity, conflictCount } = useStripSegments();
