@@ -5,8 +5,9 @@ import { useProjectStore } from "@/store/useProjectStore";
 
 export default function NetPanel({ readOnly = false }: { readOnly?: boolean }) {
   const nets = useProjectStore((s) => s.nets);
+  const netLabels = useProjectStore((s) => s.netLabels);
   const updateNet = useProjectStore((s) => s.updateNet);
-  const removeNet = useProjectStore((s) => s.removeNet);
+  const renameNet = useProjectStore((s) => s.renameNet);
   const highlightedNetId = useProjectStore((s) => s.highlightedNetId);
   const setHighlightedNetId = useProjectStore((s) => s.setHighlightedNetId);
 
@@ -20,10 +21,12 @@ export default function NetPanel({ readOnly = false }: { readOnly?: boolean }) {
 
   const commitEdit = () => {
     if (editingNetId && editName.trim()) {
-      updateNet(editingNetId, { name: editName.trim() });
+      renameNet(editingNetId, editName.trim());
     }
     setEditingNetId(null);
   };
+
+  const labelledNames = new Set(netLabels.map((l) => l.name));
 
   return (
     <div className="font-sans flex flex-col flex-1 min-h-0">
@@ -96,8 +99,12 @@ export default function NetPanel({ readOnly = false }: { readOnly?: boolean }) {
                     e.stopPropagation();
                     startEditing(net.id, net.name);
                   }}
+                  title={labelledNames.has(net.name) ? "Named by a flag on the schematic" : undefined}
                 >
                   {net.name}
+                  {labelledNames.has(net.name) && (
+                    <span className="ml-1.5 text-[9px] font-mono uppercase tracking-wide text-neutral-400 dark:text-neutral-500 align-middle">flag</span>
+                  )}
                 </span>
               )}
 

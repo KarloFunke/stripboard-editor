@@ -1,9 +1,7 @@
-import { SchematicWire, Net, NetAssignment, Component, ComponentDef } from "@/types";
-import { getWirePoints } from "./SchematicWireLine";
-import { resolveComponentDef } from "@/utils/resolveComponentDef";
-import { getRotatedPinPositions } from "./SymbolRenderer";
+import { SchematicWire, Net, NetAssignment, Component, ComponentDef, NetLabel } from "@/types";
 import { pointKey } from "@/utils/schematicConstants";
 import { randomNetColor, nextNetName } from "@/utils/netColors";
+import { schematicPinPoints } from "./schematicGeometry";
 
 // ── Union-Find ────────────────────────────────────────
 
@@ -59,14 +57,87 @@ function generateId(): string {
   return crypto.randomUUID();
 }
 
+/** Everything a change to the wiring rules would do to the nets */
+export interface NetDiff {
+  /** Separate nets that become one */
+  merges: { into: string; joined: string[] }[];
+  /** Pins that had no net and join an existing one */
+  joins: { net: string; pins: string[] }[];
+  /** Nets formed out of pins that had none */
+  newNets: { pins: string[] }[];
+  /** Nets that keep their pins but take a name from a flag they now touch */
+  renames: { from: string; to: string }[];
+}
 
 /**
- * Recalculate nets from wire segments using spatial matching.
+ * Compare two net states, in the terms a user cares about. Connections are
+ * only ever added between the two (the touch rules are a superset of the
+ * classic ones), so every difference falls into one of the four kinds.
+ * `pinLabel` renders a pin for display, e.g. "C1 pin 2".
+ */
+export function diffNets(
+  before: { nets: Net[]; netAssignments: NetAssignment[] },
+  after: { nets: Net[]; netAssignments: NetAssignment[] },
+  pinLabel: (componentId: string, pinId: string) => string,
+): NetDiff {
+  const key = (a: NetAssignment) => `${a.componentId}:${a.pinId}`;
+  const beforeNetOfPin = new Map(before.netAssignments.map((a) => [key(a), a.netId]));
+  const beforeById = new Map(before.nets.map((n) => [n.id, n]));
+  const afterById = new Map(after.nets.map((n) => [n.id, n]));
+
+  const pinsByAfterNet = new Map<string, NetAssignment[]>();
+  for (const a of after.netAssignments) {
+    const arr = pinsByAfterNet.get(a.netId);
+    if (arr) arr.push(a);
+    else pinsByAfterNet.set(a.netId, [a]);
+  }
+
+  const diff: NetDiff = { merges: [], joins: [], newNets: [], renames: [] };
+  for (const [netId, pins] of pinsByAfterNet) {
+    const net = afterById.get(netId);
+    if (!net) continue;
+    const from = new Set<string>();
+    const fresh: NetAssignment[] = [];
+    for (const a of pins) {
+      const b = beforeNetOfPin.get(key(a));
+      if (b) from.add(b);
+      else fresh.push(a);
+    }
+    if (from.size === 0) {
+      if (pins.length >= 2) diff.newNets.push({ pins: pins.map((a) => pinLabel(a.componentId, a.pinId)) });
+      continue;
+    }
+    if (from.size > 1) {
+      const joined = [...from].filter((id) => id !== netId).map((id) => beforeById.get(id)?.name).filter((n): n is string => !!n);
+      if (joined.length > 0) diff.merges.push({ into: net.name, joined });
+    }
+    if (fresh.length > 0) {
+      diff.joins.push({ net: net.name, pins: fresh.map((a) => pinLabel(a.componentId, a.pinId)) });
+    }
+  }
+  for (const net of after.nets) {
+    const b = beforeById.get(net.id);
+    if (b && b.name !== net.name) diff.renames.push({ from: b.name, to: net.name });
+  }
+  return diff;
+}
+
+export function netDiffIsEmpty(d: NetDiff): boolean {
+  return d.merges.length === 0 && d.joins.length === 0 && d.newNets.length === 0 && d.renames.length === 0;
+}
+
+/**
+ * Recalculate nets from wire endpoints, pins and labels.
  *
- * 1. Union-Find groups all grid points connected by wire segments
- * 2. For each component pin, compute its absolute grid position
- * 3. If a pin's position matches a connected grid point, the pin joins that net group
- * 4. Each group with at least one pin = one net
+ * 1. Union-Find joins the two endpoints of every wire (bends and segment
+ *    bodies never connect; normalizeWires() turns any real contact into an
+ *    endpoint first)
+ * 2. Every label is a connection point, and all labels sharing a name are
+ *    joined
+ * 3. A pin joins the group at its exact grid point; a group counts as a net
+ *    when it holds a wire end or a label, or two pins on the same point
+ * 4. A group carrying a label is named after it; other groups keep the net
+ *    most of their pins already belonged to. Existing nets keep their order.
  */
 export function recalculateNets(
   wires: SchematicWire[],
@@ -74,60 +145,70 @@ export function recalculateNets(
   existingAssignments: NetAssignment[],
   components: Component[],
   componentDefs?: ComponentDef[],
+  netLabels: NetLabel[] = [],
 ): { nets: Net[]; netAssignments: NetAssignment[] } {
   const uf = new UnionFind();
+  const anchored = new Set<string>();
 
-  // Step 1: Union all points along each wire (start, bend, end)
   for (const wire of wires) {
-    const pts = getWirePoints(wire);
-    const keys = pts.map((p) => pointKey(p.x, p.y));
-    for (const k of keys) uf.makeSet(k);
+    const a = pointKey(wire.start.x, wire.start.y);
+    const b = pointKey(wire.end.x, wire.end.y);
+    uf.makeSet(a);
+    uf.makeSet(b);
+    uf.union(a, b);
+    anchored.add(a);
+    anchored.add(b);
+  }
+
+  const byName = new Map<string, string[]>();
+  const kindByName = new Map<string, NetLabel["kind"]>();
+  for (const l of netLabels) {
+    const k = pointKey(l.pos.x, l.pos.y);
+    uf.makeSet(k);
+    anchored.add(k);
+    const name = l.name.trim();
+    if (!name) continue;
+    const arr = byName.get(name);
+    if (arr) arr.push(k);
+    else byName.set(name, [k]);
+    if (!kindByName.has(name)) kindByName.set(name, l.kind);
+  }
+  for (const keys of byName.values()) {
     for (let i = 1; i < keys.length; i++) uf.union(keys[0], keys[i]);
   }
 
-  // Step 2: Find all component pin positions
-  const pinPositions: { componentId: string; pinId: string; key: string }[] = [];
+  const pinPositions = componentDefs ? schematicPinPoints(components, componentDefs) : [];
+  for (const pp of pinPositions) uf.makeSet(pp.key);
 
-  if (componentDefs) {
-    for (const comp of components) {
-      const def = resolveComponentDef(comp, componentDefs);
-      if (!def) continue;
+  const anchoredRoots = new Set<string>();
+  for (const k of anchored) anchoredRoots.add(uf.find(k));
 
-      const rotation = comp.schematicRotation ?? 0;
-      const rotatedPins = getRotatedPinPositions(def.symbol, rotation, comp.schematicMirrored ?? false);
-
-      for (const pin of rotatedPins) {
-        const absX = comp.schematicPos.x + pin.x;
-        const absY = comp.schematicPos.y + pin.y;
-        const key = pointKey(absX, absY);
-        pinPositions.push({ componentId: comp.id, pinId: pin.pinId, key });
-
-        // If this point is on a wire, it's already in UF.
-        // If not, make a set for it (isolated pin).
-        uf.makeSet(key);
-      }
-    }
+  const flagNameByRoot = new Map<string, string>();
+  for (const [name, keys] of byName) {
+    const root = uf.find(keys[0]);
+    const cur = flagNameByRoot.get(root);
+    if (cur === undefined || name < cur) flagNameByRoot.set(root, name);
   }
 
-  // Step 3: Group pins by their connected component root
+  // Group pins by connected root. A group is a net when something anchors
+  // it (a wire end or a label) or when two pins sit on the same point.
   const groups = new Map<string, { componentId: string; pinId: string }[]>();
   for (const pp of pinPositions) {
     const root = uf.find(pp.key);
-    // Only include if this point is connected to at least one wire
-    const isOnWire = wires.some((w) => {
-      const pts = getWirePoints(w);
-      return pts.some((p) => uf.find(pointKey(p.x, p.y)) === root);
-    });
-    if (!isOnWire) continue;
-
-    if (!groups.has(root)) groups.set(root, []);
-    const group = groups.get(root)!;
+    let group = groups.get(root);
+    if (!group) {
+      group = [];
+      groups.set(root, group);
+    }
     if (!group.some((p) => p.componentId === pp.componentId && p.pinId === pp.pinId)) {
       group.push({ componentId: pp.componentId, pinId: pp.pinId });
     }
   }
 
-  // Step 4: Match groups to existing nets and create assignments
+  for (const [root, pins] of groups) {
+    if (!anchoredRoots.has(root) && pins.length < 2) groups.delete(root);
+  }
+
   const pinToExistingNet = new Map<string, string>();
   for (const a of existingAssignments) {
     pinToExistingNet.set(`${a.componentId}:${a.pinId}`, a.netId);
@@ -137,21 +218,30 @@ export function recalculateNets(
   const newAssignments: NetAssignment[] = [];
   const usedNetIds = new Set<string>();
 
-  for (const [, pins] of groups) {
-    if (pins.length === 0) continue;
+  // Labelled groups claim their nets first so a name is never taken by a
+  // group that merely used to hold some of its pins.
+  const ordered = [...groups.entries()].sort(([ra], [rb]) => {
+    const fa = flagNameByRoot.has(ra) ? 0 : 1;
+    const fb = flagNameByRoot.has(rb) ? 0 : 1;
+    return fa - fb;
+  });
 
-    // Find which existing nets these pins belong to
-    const netCounts = new Map<string, number>();
-    for (const pin of pins) {
-      const netId = pinToExistingNet.get(`${pin.componentId}:${pin.pinId}`);
-      if (netId) {
-        netCounts.set(netId, (netCounts.get(netId) ?? 0) + 1);
-      }
-    }
+  for (const [root, pins] of ordered) {
+    if (pins.length === 0) continue;
+    const flagName = flagNameByRoot.get(root);
 
     let assignedNet: Net | undefined;
 
-    if (netCounts.size > 0) {
+    if (flagName !== undefined) {
+      assignedNet = existingNets.find((n) => n.name === flagName && !usedNetIds.has(n.id));
+    }
+
+    if (!assignedNet) {
+      const netCounts = new Map<string, number>();
+      for (const pin of pins) {
+        const netId = pinToExistingNet.get(`${pin.componentId}:${pin.pinId}`);
+        if (netId) netCounts.set(netId, (netCounts.get(netId) ?? 0) + 1);
+      }
       let bestNetId = "";
       let bestCount = 0;
       for (const [netId, count] of netCounts) {
@@ -169,24 +259,30 @@ export function recalculateNets(
     }
 
     if (!assignedNet) {
+      // Ground and power nets get the conventional colours; the rest draw
+      // from the palette.
+      const kind = flagName !== undefined ? kindByName.get(flagName) : undefined;
       assignedNet = {
         id: generateId(),
-        name: nextNetName([...existingNets, ...newNets]),
-        color: randomNetColor([...existingNets, ...newNets]),
+        name: flagName ?? nextNetName([...existingNets, ...newNets]),
+        color: kind === "gnd" ? "#000000" : kind === "power" ? "#dc2626" : randomNetColor([...existingNets, ...newNets]),
       };
+    } else if (flagName !== undefined && assignedNet.name !== flagName) {
+      assignedNet = { ...assignedNet, name: flagName };
     }
 
     newNets.push(assignedNet);
     usedNetIds.add(assignedNet.id);
 
     for (const pin of pins) {
-      newAssignments.push({
-        netId: assignedNet.id,
-        componentId: pin.componentId,
-        pinId: pin.pinId,
-      });
+      newAssignments.push({ netId: assignedNet.id, componentId: pin.componentId, pinId: pin.pinId });
     }
   }
+
+  // Keep the sidebar stable: nets that already existed stay in their order,
+  // new ones append.
+  const order = new Map(existingNets.map((n, i) => [n.id, i]));
+  newNets.sort((a, b) => (order.get(a.id) ?? Infinity) - (order.get(b.id) ?? Infinity));
 
   return { nets: newNets, netAssignments: newAssignments };
 }

@@ -116,6 +116,7 @@ REST_FRAMEWORK = {
         "anon": "120/minute",
         "user": "300/minute",
         "project_create": "50/hour",
+        "project_migrate": "30/minute",
         "auth": "15/minute",
         "password_reset": "5/minute",
         "pow_challenge": "120/minute",

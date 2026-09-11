@@ -50,13 +50,20 @@ export default function GuidePage() {
           <h2 className="font-mono text-xs uppercase tracking-[0.2em] text-[var(--copper)] mb-3">Schematic Editor (left)</h2>
           <ul className="space-y-2 text-sm text-neutral-700 dark:text-neutral-300">
             <li>Drag components from the library sidebar onto the canvas.</li>
-            <li>Press <kbd className="px-1.5 py-0.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded text-xs font-mono">W</kbd> to enter wire drawing mode, then click pins to connect them.</li>
+            <li>Click a pin end to start a wire from it, then click pins, wires or grid points to route it. <kbd className="px-1.5 py-0.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded text-xs font-mono">W</kbd> toggles wire mode, where wires can also start on empty grid. <kbd className="px-1.5 py-0.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded text-xs font-mono">Enter</kbd> or a double-click finishes a wire, <kbd className="px-1.5 py-0.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded text-xs font-mono">Backspace</kbd> takes the last segment back.</li>
+            <li>Whatever touches is connected: a wire end on another wire, a pin or flag parked on a wire, two pins on the same point. Two wires that merely cross, with neither ending there, stay separate. A dot marks a junction, a small hollow square marks a loose wire end.</li>
+            <li>Segments that end up in a straight line with nothing between them are joined into one wire, so editing does not leave a run chopped into pieces. A pin, a flag or a junction always keeps the pieces apart.</li>
             <li>Connected pins automatically form a net. Rename or recolour nets in the sidebar.</li>
+            <li>Ground and power flags (<kbd className="px-1.5 py-0.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded text-xs font-mono">G</kbd> / <kbd className="px-1.5 py-0.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded text-xs font-mono">P</kbd>, or drag them from the library) and net labels (<kbd className="px-1.5 py-0.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded text-xs font-mono">L</kbd>) join everything carrying the same name into one net, so GND and VCC need no wires across the sheet. Double-click a flag to rename it.</li>
+            <li>Click selects, <kbd className="px-1.5 py-0.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded text-xs font-mono">Ctrl</kbd> + click toggles, <kbd className="px-1.5 py-0.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded text-xs font-mono">Shift</kbd> + click adds. A box dragged left to right selects what it encloses, right to left everything it touches. Wires can be selected and moved like parts.</li>
             <li>Click a component label to rename it. Click a pin label to rename the pin.</li>
             <li>Drag labels and pin labels to reposition them if they overlap with wires.</li>
             <li>Select one or more components and press <kbd className="px-1.5 py-0.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded text-xs font-mono">E</kbd> (or use <strong>Exclude</strong> in the floating menu) to keep them off the stripboard. Excluded parts stay in the schematic but are ignored by the board and its net checks, so you can draw a full circuit while only building part of it. Press <kbd className="px-1.5 py-0.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded text-xs font-mono">E</kbd> again to include them back.</li>
             <li>Use the footprint editor (on the stripboard side) to customise a component{"'"}s physical layout.</li>
           </ul>
+          <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-4">
+            <strong>Older projects:</strong> schematics drawn before touching meant connected follow the rules they were drawn under, where only wire ends connect. Drawings that mean the same thing under both sets of rules were switched over for you. The rest show a <em>Classic wiring</em> link in the schematic header that previews every change the switch would make, down to the individual pins, and applies it. The switch is optional, and undoable.
+          </p>
         </section>
 
         {/* Stripboard Editor */}
@@ -128,17 +135,21 @@ export default function GuidePage() {
           <h2 className="font-mono text-xs uppercase tracking-[0.2em] text-[var(--copper)] mb-3">Keyboard Shortcuts</h2>
           <div className="space-y-1.5 text-sm">
             {[
-              ["R", "Rotate selected component"],
-              ["L", "Lock / unlock selected component(s) so auto-layout keeps them in place (stripboard)"],
-              ["M", "Mirror selected component (schematic)"],
+              ["R", "Rotate the selection (a single part in place, several around their centre)"],
+              ["L", "Lock / unlock selected component(s) so auto-layout keeps them in place (stripboard); net label at the cursor (schematic)"],
+              ["M", "Mirror the selection (schematic)"],
               ["E", "Exclude / include selected component(s) on the stripboard (schematic)"],
               ["W", "Toggle wire drawing mode (schematic)"],
-              ["Ctrl + C / Ctrl + V", "Copy and paste selected component (schematic)"],
-              ["Delete", "Remove selected component or wire"],
-              ["Escape", "Cancel current action or exit wire mode"],
+              ["G / P", "Ground flag / power flag at the cursor (schematic)"],
+              ["Enter / Backspace", "While drawing a wire: finish it / take the last segment back (schematic)"],
+              ["Ctrl + click / Shift + click", "Toggle / add to the selection (schematic)"],
+              ["Ctrl + A", "Select everything (schematic)"],
+              ["Ctrl + C / Ctrl + V / Ctrl + D", "Copy, paste at the cursor, duplicate the selection with its wires (schematic)"],
+              ["Delete", "Remove the selection (Alt + Delete: whole wires including all their segments)"],
+              ["Escape", "Cancel current action, clear the selection, or exit wire mode"],
               ["Ctrl + Z", "Undo"],
               ["Ctrl + Y / Ctrl + Shift + Z", "Redo"],
-              ["Arrow keys / Drag", "Move selected components, one or many"],
+              ["Arrow keys / Drag", "Move the selection one grid step (Shift: five), or drag it"],
               ["Alt + click hole", "Cut the strip at a hole (stripboard)"],
               ["Shift", "Hold to click through wires to the holes underneath (stripboard)"],
               ["Right-click row / column number", "Insert or delete a board row / column (stripboard)"],

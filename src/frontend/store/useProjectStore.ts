@@ -10,15 +10,28 @@ import {
   ComponentDef,
   Wire,
   SchematicWire,
+  NetLabel,
+  NetLabelKind,
+  PROJECT_SCHEMA_VERSION,
 } from "@/types";
 import { DEFAULT_COMPONENTS } from "@/data/defaultComponents";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { getComponentBounds, getComponentPinPositions } from "@/components/stripboard/boardLayout";
 import { computeStripSegments } from "@/components/stripboard/stripSegments";
 import { computeConnectivity } from "@/components/stripboard/connectivity";
+import { diffNets, netDiffIsEmpty, type NetDiff } from "@/components/schematic/netInference";
 import { recalculateNets } from "@/components/schematic/netInference";
-import { getRotatedPinPositions } from "@/components/schematic/SymbolRenderer";
-import { pointKey } from "@/utils/schematicConstants";
+import {
+  anchorPoints,
+  attachWireEnds,
+  axisLockFor,
+  mergeWires,
+  moveGeometry,
+  movingAndStaticKeys,
+  normalizeWires,
+  transformSelection,
+} from "@/components/schematic/schematicGeometry";
+import { pointKey, snapToGrid } from "@/utils/schematicConstants";
 import { createFootprintSymbol, registerCustomSymbol } from "@/data/symbolDefs";
 import { computeAutoFinish, AutoFinishResult } from "@/components/stripboard/autoFinish";
 import { AutoLayoutResult, LAYOUT_VERSION } from "@/components/stripboard/layoutTypes";
@@ -70,9 +83,25 @@ interface ProjectActions {
   setAutoSave: (autoSave: boolean) => void;
   updatePinName: (componentId: string, pinId: string, newName: string) => void;
   updateComponentFootprint: (componentId: string, override: FootprintOverride) => void;
-  updateSchematicPos: (id: string, pos: { x: number; y: number }) => void;
   rotateSchematicComponent: (id: string) => void;
   mirrorSchematicComponent: (id: string) => void;
+  // A move gesture: beginSchematicMove fixes what moves and the geometry it
+  // starts from; every moveSchematicItems step re-derives the wires from
+  // that start with the accumulated delta; finishSchematicGesture settles
+  // connectivity when the gesture is over, cancelSchematicGesture forgets a
+  // gesture that never moved.
+  beginSchematicMove: (compIds: string[], wireIds: string[], labelIds: string[]) => void;
+  moveSchematicItems: (delta: { x: number; y: number }) => void;
+  finishSchematicGesture: () => void;
+  cancelSchematicGesture: () => void;
+  // Rotate or mirror a selection around its centre (one undo step)
+  transformSchematicSelection: (compIds: string[], wireIds: string[], labelIds: string[], op: "rotate" | "mirror", center?: { x: number; y: number }) => void;
+  // Insert copied items with fresh ids (one undo step); returns the new ids
+  pasteSchematicItems: (items: {
+    components: Omit<Component, "id" | "label" | "boardPos" | "rotation" | "flexibleEndPos" | "locked">[];
+    wires: Omit<SchematicWire, "id">[];
+    labels: Omit<NetLabel, "id">[];
+  }) => { componentIds: string[]; wireIds: string[]; labelIds: string[] };
   placeOnBoard: (id: string, pos: { row: number; col: number }) => void;
   moveComponentsOnBoard: (ids: string[], deltaRow: number, deltaCol: number, wireIds?: string[], cutPositions?: Cut[]) => void;
   removeFromBoard: (id: string) => void;
@@ -83,13 +112,25 @@ interface ProjectActions {
   rotateComponent: (id: string) => void;
   autoAlignPolarity: (ids: string[]) => void;
 
-  // Schematic wires
-  addSchematicWire: (start: { x: number; y: number }, end: { x: number; y: number }) => void;
+  // Schematic wires. An L between the points places two wires (the order
+  // follows schematicWireDirection); returns the ids placed, first leg first.
+  addSchematicWire: (start: { x: number; y: number }, end: { x: number; y: number }) => string[];
   removeSchematicWire: (id: string) => void;
-  splitSchematicWire: (wireId: string, splitPoint: { x: number; y: number }) => void;
+
+  // Schematic net labels (ground / power flags and plain net labels)
+  addNetLabel: (kind: NetLabelKind, pos: { x: number; y: number }, name?: string, rotation?: NetLabel["rotation"]) => string;
+  updateNetLabel: (id: string, updates: Partial<Pick<NetLabel, "name" | "rotation" | "kind">>) => void;
+  removeNetLabels: (ids: string[]) => void;
 
   // Nets (kept for rename/recolor, but auto-managed by wire system)
   updateNet: (id: string, updates: Partial<Pick<Net, "name" | "color">>) => void;
+  // Rename a net; labels carrying the old name follow, so the name sticks
+  renameNet: (id: string, name: string) => void;
+
+  // Wiring rule set. Switching a classic project to touch wiring applies
+  // every contact at once (one undo step); the preview says what changes.
+  previewWiringSwitch: () => NetDiff;
+  switchWiringToTouch: () => void;
   removeNet: (id: string) => void;
 
   // Board
@@ -139,8 +180,6 @@ interface ProjectActions {
   setActiveEditor: (editor: "schematic" | "stripboard") => void;
   toggleSchematicWireDrawMode: () => void;
   setSchematicWireDrawing: (from: { x: number; y: number } | null) => void;
-  captureSchematicDragBindings: (componentId: string) => void;
-  clearSchematicDragBindings: () => void;
 
   // Project persistence
   setProjectName: (name: string) => void;
@@ -168,11 +207,23 @@ interface UIState {
   schematicWireDrawMode: boolean;
   schematicWireDrawingFrom: { x: number; y: number } | null;
   schematicWireDirection: "horizontal-first" | "vertical-first" | null; // locked on first significant mouse move
-  // Captured at drag start: which wire endpoints to move with the dragged component
-  _dragWireBindings: { wireId: string; endpoint: "start" | "end" }[] | null;
+  // The move gesture in progress: what moves, the geometry it started from,
+  // the delta so far, and the body contacts that existed before (never made
+  // by it)
+  _gesture: {
+    compIds: string[];
+    labelIds: string[];
+    wireIds: string[];
+    base: { components: Component[]; netLabels: NetLabel[]; schematicWires: SchematicWire[] };
+    total: { x: number; y: number };
+    axisLock: "h" | "v" | null;
+    nonce: string;
+  } | null;
   // Which editor pane last received interaction — keyboard shortcuts target it
   // so the schematic and stripboard canvases don't both react to one keypress.
   activeEditor: "schematic" | "stripboard";
+  // The last settle that folded nets together, for a passing notice
+  netMergeNotice: { merges: { into: string; joined: string[] }[]; at: number } | null;
 }
 
 interface HistoryState {
@@ -192,7 +243,7 @@ interface HistoryState {
   transact: (fn: () => void) => void;
 }
 
-type ProjectStore = Project & UIState & ProjectActions & HistoryState;
+type ProjectStore = Omit<Project, "netLabels"> & { netLabels: NetLabel[] } & UIState & ProjectActions & HistoryState;
 
 const initialProject: Project = {
   name: "Untitled Project",
@@ -203,6 +254,8 @@ const initialProject: Project = {
   nets: [],
   netAssignments: [],
   schematicWires: [],
+  netLabels: [],
+  wiring: "touch",
   board: {
     rows: 20,
     cols: 20,
@@ -223,6 +276,8 @@ function snapshotProject(s: Project): Project {
     nets: s.nets,
     netAssignments: s.netAssignments,
     schematicWires: s.schematicWires,
+    netLabels: s.netLabels,
+    wiring: s.wiring,
     board: s.board,
   }));
 }
@@ -235,8 +290,64 @@ function restoreProject(snapshot: Project): Partial<ProjectStore> {
     nets: snapshot.nets,
     netAssignments: snapshot.netAssignments,
     schematicWires: snapshot.schematicWires,
+    netLabels: snapshot.netLabels ?? [],
+    wiring: snapshot.wiring,
     board: snapshot.board,
   };
+}
+
+/**
+ * Settle schematic connectivity after any geometry change: under touch
+ * wiring make every contact an endpoint (what touches is connected), under
+ * classic wiring only clean up; then recompute the nets.
+ */
+function settleSchematic(
+  s: Pick<ProjectStore, "schematicWires" | "components" | "componentDefs" | "netLabels" | "nets" | "netAssignments" | "schematicWireDrawingFrom" | "wiring">,
+) {
+  const anchors = anchorPoints(s.components, s.componentDefs, s.netLabels);
+  const split = normalizeWires(s.schematicWires, anchors, generateId, s.wiring === "touch");
+  // Joining segments back together would swallow the run being drawn (and with
+  // it Backspace's step-back), so it waits until the wire is finished.
+  const wires = s.schematicWireDrawingFrom ? split : mergeWires(split, anchors);
+  const r = recalculateNets(wires, s.nets, s.netAssignments, s.components, s.componentDefs, s.netLabels);
+  return { schematicWires: wires, nets: r.nets, netAssignments: r.netAssignments, netMergeNotice: mergeNotice(s, r) };
+}
+
+/**
+ * Nets that just got absorbed into another net (all their pins now share
+ * one other net), grouped by where they went. Shown to the user, so a join
+ * is never silent. (The wiring-switch preview uses diffNets(), which also
+ * reports pins joining a net and nets forming; during ordinary editing a
+ * merge is the surprising part, the rest is the rule doing its job.)
+ */
+function netMerges(
+  before: Pick<ProjectStore, "nets" | "netAssignments">,
+  after: { nets: Net[]; netAssignments: NetAssignment[] },
+): { into: string; joined: string[] }[] {
+  const afterById = new Map(after.nets.map((n) => [n.id, n]));
+  const pinToAfter = new Map(after.netAssignments.map((a) => [`${a.componentId}:${a.pinId}`, a.netId]));
+  const byTarget = new Map<string, string[]>();
+  for (const net of before.nets) {
+    if (afterById.has(net.id)) continue;
+    const pins = before.netAssignments.filter((a) => a.netId === net.id);
+    if (pins.length < 2) continue;
+    const targets = new Set(pins.map((a) => pinToAfter.get(`${a.componentId}:${a.pinId}`)).filter((x): x is string => !!x));
+    if (targets.size !== 1) continue;
+    const into = afterById.get([...targets][0])?.name;
+    if (!into) continue;
+    const arr = byTarget.get(into);
+    if (arr) arr.push(net.name);
+    else byTarget.set(into, [net.name]);
+  }
+  return [...byTarget.entries()].map(([into, joined]) => ({ into, joined }));
+}
+
+function mergeNotice(
+  before: Pick<ProjectStore, "nets" | "netAssignments">,
+  after: { nets: Net[]; netAssignments: NetAssignment[] },
+): { merges: { into: string; joined: string[] }[]; at: number } | null {
+  const merges = netMerges(before, after);
+  return merges.length > 0 ? { merges, at: Date.now() } : null;
 }
 
 // One structural board edit for the layout-provenance counter. Guarded by
@@ -245,58 +356,6 @@ function restoreProject(snapshot: Project): Partial<ProjectStore> {
 function bumpBoardEdits(s: Pick<ProjectStore, "boardEditsSinceAutoLayout" | "_editSeq" | "_lastBoardEditSeq">) {
   if (s._lastBoardEditSeq === s._editSeq) return {};
   return { boardEditsSinceAutoLayout: (s.boardEditsSinceAutoLayout ?? 0) + 1, _lastBoardEditSeq: s._editSeq };
-}
-
-/**
- * Shared helper: transform a schematic component (rotate, mirror, etc.)
- * and move connected wire endpoints to follow the pin position changes.
- */
-function transformSchematicComponent(
-  s: ProjectStore,
-  id: string,
-  getUpdates: (comp: Component) => Partial<Component>,
-): Partial<ProjectStore> {
-  const comp = s.components.find((c) => c.id === id);
-  if (!comp) return s;
-  const def = resolveComponentDef(comp, s.componentDefs);
-  if (!def) return s;
-
-  const oldRotation = comp.schematicRotation ?? 0;
-  const oldMirrored = comp.schematicMirrored ?? false;
-  const updates = getUpdates(comp);
-  const newRotation = (updates.schematicRotation ?? oldRotation) as 0 | 90 | 180 | 270;
-  const newMirrored = updates.schematicMirrored ?? oldMirrored;
-
-  // Compute pin position deltas
-  const oldPins = getRotatedPinPositions(def.symbol, oldRotation, oldMirrored);
-  const newPins = getRotatedPinPositions(def.symbol, newRotation, newMirrored);
-  const pinMoves = new Map<string, { dx: number; dy: number }>();
-  for (const oldPin of oldPins) {
-    const newPin = newPins.find((p) => p.pinId === oldPin.pinId);
-    if (newPin) {
-      pinMoves.set(
-        pointKey(comp.schematicPos.x + oldPin.x, comp.schematicPos.y + oldPin.y),
-        { dx: newPin.x - oldPin.x, dy: newPin.y - oldPin.y },
-      );
-    }
-  }
-
-  const newComponents = s.components.map((c) =>
-    c.id === id ? { ...c, ...updates } : c
-  );
-
-  const newWires = s.schematicWires.map((w) => {
-    const startMove = pinMoves.get(pointKey(w.start.x, w.start.y));
-    const endMove = pinMoves.get(pointKey(w.end.x, w.end.y));
-    if (!startMove && !endMove) return w;
-    return {
-      ...w,
-      start: startMove ? { x: w.start.x + startMove.dx, y: w.start.y + startMove.dy } : w.start,
-      end: endMove ? { x: w.end.x + endMove.dx, y: w.end.y + endMove.dy } : w.end,
-    };
-  });
-
-  return { components: newComponents, schematicWires: newWires };
 }
 
 function prepareProjectState(data: Project) {
@@ -312,18 +371,29 @@ function prepareProjectState(data: Project) {
     }
   }
 
+  const components = (data.components ?? []).map((c) => ({
+    ...c,
+    schematicRotation: c.schematicRotation ?? 0,
+  }));
+  const netLabels = data.netLabels ?? [];
+  const schematicWires = data.schematicWires ?? [];
+  // Everything drawn before touch wiring existed stays on classic wiring
+  const wiring = data.wiring ?? "classic";
+  // Nets are derived state; refreshing them on load picks up assignments an
+  // older editor left stale after a move.
+  const netResult = recalculateNets(schematicWires, data.nets ?? [], data.netAssignments ?? [], components, mergedDefs, netLabels);
+
   return {
     name: data.name ?? "Untitled Project",
     description: data.description ?? "",
     notes: data.notes ?? "",
     componentDefs: mergedDefs,
-    components: (data.components ?? []).map((c) => ({
-      ...c,
-      schematicRotation: c.schematicRotation ?? 0,
-    })),
-    nets: data.nets ?? [],
-    netAssignments: data.netAssignments ?? [],
-    schematicWires: data.schematicWires ?? [],
+    components,
+    nets: netResult.nets,
+    netAssignments: netResult.netAssignments,
+    schematicWires,
+    netLabels,
+    wiring,
     board: {
       rows: data.board?.rows ?? 20,
       cols: data.board?.cols ?? 20,
@@ -381,6 +451,7 @@ function prepareProjectState(data: Project) {
 
 export const useProjectStore = create<ProjectStore>((set, get) => ({
   ...initialProject,
+  netLabels: [],
 
   wirePlacementMode: false,
   wirePlacementFrom: null,
@@ -390,7 +461,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   schematicWireDrawingFrom: null,
   schematicWireDirection: null,
   activeEditor: "schematic",
-  _dragWireBindings: null,
+  _gesture: null,
+  netMergeNotice: null,
   _history: [],
   _redoStack: [],
   _suppressSnapshot: false,
@@ -410,13 +482,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     get().pushSnapshot();
     set((s) => ({
       componentDefs: s.componentDefs.filter((d) => d.id !== defId),
-      // Remove all instances of this component and their net assignments/wires
+      // Remove all instances of this component; nets follow from what is left
       components: s.components.filter((c) => c.defId !== defId),
-      netAssignments: s.netAssignments.filter((a) =>
-        s.components.some((c) => c.defId !== defId && c.id === a.componentId) ||
-        !s.components.some((c) => c.id === a.componentId)
-      ),
     }));
+    set(settleSchematic(get()));
   },
 
   updateComponentDef: (defId, updates) => {
@@ -443,6 +512,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   addComponent: (defId, schematicPos) => {
     get().pushSnapshot();
+    const id = generateId();
     set((s) => {
       const def = s.componentDefs.find((d) => d.id === defId);
       const prefix = def?.defaultLabelPrefix ?? "X";
@@ -450,7 +520,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         components: [
           ...s.components,
           {
-            id: generateId(),
+            id,
             defId,
             label: nextLabel(s.components, prefix),
             schematicPos,
@@ -461,6 +531,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         ],
       };
     });
+    set(settleSchematic(get()));
   },
 
   addComponentInstance: (init) => {
@@ -489,6 +560,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         ],
       };
     });
+    set(settleSchematic(get()));
     return id;
   },
 
@@ -599,58 +671,99 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       // Deleting a part that sat on the board changes the board
       ...(s.components.find((c) => c.id === id)?.boardPos ? bumpBoardEdits(s) : {}),
     }));
-    // Recalculate nets — wires are positional so they stay, but pin assignments change
-    const s = get();
-    const result = recalculateNets(s.schematicWires, s.nets, s.netAssignments, s.components, s.componentDefs);
-    set({ nets: result.nets, netAssignments: result.netAssignments });
+    // Wires are positional so they stay; the nets follow from what is left
+    set(settleSchematic(get()));
   },
 
-  // No auto-snapshot: called per-pixel during drag.
-  // Moves wire endpoints that were captured at drag start via captureSchematicDragBindings.
-  updateSchematicPos: (id, pos) =>
+  beginSchematicMove: (compIds, wireIds, labelIds) => {
+    const s = get();
+    set({
+      _gesture: {
+        compIds: [...compIds],
+        labelIds: [...labelIds],
+        wireIds: [...wireIds],
+        base: { components: s.components, netLabels: s.netLabels, schematicWires: s.schematicWires },
+        total: { x: 0, y: 0 },
+        axisLock: axisLockFor(s.schematicWires, new Set(wireIds), compIds.length + labelIds.length > 0),
+        nonce: generateId(),
+      },
+    });
+  },
+
+  // No auto-snapshot: called per grid step during a drag or per arrow press.
+  // Re-derived from the gesture's starting geometry every time.
+  moveSchematicItems: (delta) =>
     set((s) => {
-      const comp = s.components.find((c) => c.id === id);
-      if (!comp) return s;
-
-      const dx = pos.x - comp.schematicPos.x;
-      const dy = pos.y - comp.schematicPos.y;
-
-      const newComponents = s.components.map((c) =>
-        c.id === id ? { ...c, schematicPos: pos } : c
-      );
-
-      // Move wire endpoints using pre-captured bindings
-      let newWires = s.schematicWires;
-      if (s._dragWireBindings && s._dragWireBindings.length > 0 && (dx !== 0 || dy !== 0)) {
-        const bindingSet = new Set(s._dragWireBindings.map((b) => `${b.wireId}:${b.endpoint}`));
-        newWires = s.schematicWires.map((w) => {
-          const moveStart = bindingSet.has(`${w.id}:start`);
-          const moveEnd = bindingSet.has(`${w.id}:end`);
-          if (!moveStart && !moveEnd) return w;
-          return {
-            ...w,
-            start: moveStart ? { x: w.start.x + dx, y: w.start.y + dy } : w.start,
-            end: moveEnd ? { x: w.end.x + dx, y: w.end.y + dy } : w.end,
-          };
-        });
-      }
-
-      return { components: newComponents, schematicWires: newWires };
+      const g = s._gesture;
+      if (!g) return s;
+      const total = {
+        x: g.axisLock === "h" ? 0 : g.total.x + delta.x,
+        y: g.axisLock === "v" ? 0 : g.total.y + delta.y,
+      };
+      const compIds = new Set(g.compIds), labelIds = new Set(g.labelIds);
+      const f = (p: { x: number; y: number }) => ({ x: p.x + total.x, y: p.y + total.y });
+      const { stat, movingPoints } = movingAndStaticKeys(g.base.components, s.componentDefs, g.base.netLabels, compIds, labelIds);
+      return {
+        components: g.base.components.map((c) => (compIds.has(c.id) ? { ...c, schematicPos: f(c.schematicPos) } : c)),
+        netLabels: g.base.netLabels.map((l) => (labelIds.has(l.id) ? { ...l, pos: f(l.pos) } : l)),
+        schematicWires: moveGeometry(g.base.schematicWires, stat, movingPoints, new Set(g.wireIds), f, g.nonce),
+        _gesture: { ...g, total },
+      };
     }),
 
-  rotateSchematicComponent: (id) => {
+  finishSchematicGesture: () => {
+    set({ ...settleSchematic(get()), _gesture: null });
+  },
+
+  cancelSchematicGesture: () => set({ _gesture: null }),
+
+  transformSchematicSelection: (compIds, wireIds, labelIds, op, center) => {
     get().pushSnapshot();
-    set((s) => transformSchematicComponent(s, id, (comp) => {
-      const newRotation = (((comp.schematicRotation ?? 0) + 90) % 360) as Component["schematicRotation"];
-      return { schematicRotation: newRotation };
-    }));
+    set((s) => transformSelection(s.components, s.componentDefs, s.netLabels, s.schematicWires, new Set(compIds), new Set(wireIds), new Set(labelIds), op, generateId(), center));
+    set(settleSchematic(get()));
+  },
+
+  pasteSchematicItems: (items) => {
+    get().pushSnapshot();
+    const componentIds: string[] = [];
+    const wireIds: string[] = [];
+    const labelIds: string[] = [];
+    set((s) => {
+      const components = [...s.components];
+      for (const c of items.components) {
+        const def = s.componentDefs.find((d) => d.id === c.defId);
+        const prefix = def?.defaultLabelPrefix ?? "X";
+        const id = generateId();
+        componentIds.push(id);
+        components.push({ ...c, id, label: nextLabel(components, prefix), boardPos: null, rotation: 0 });
+      }
+      const schematicWires = [...s.schematicWires];
+      for (const w of items.wires) {
+        const id = generateId();
+        wireIds.push(id);
+        schematicWires.push({ ...w, id });
+      }
+      const netLabels = [...s.netLabels];
+      for (const l of items.labels) {
+        const id = generateId();
+        labelIds.push(id);
+        netLabels.push({ ...l, id });
+      }
+      return { components, schematicWires, netLabels };
+    });
+    set(settleSchematic(get()));
+    return { componentIds, wireIds, labelIds };
+  },
+
+  // A single part turns in place, around its own origin
+  rotateSchematicComponent: (id) => {
+    const comp = get().components.find((c) => c.id === id);
+    if (comp) get().transformSchematicSelection([id], [], [], "rotate", comp.schematicPos);
   },
 
   mirrorSchematicComponent: (id) => {
-    get().pushSnapshot();
-    set((s) => transformSchematicComponent(s, id, (comp) => {
-      return { schematicMirrored: !(comp.schematicMirrored ?? false) };
-    }));
+    const comp = get().components.find((c) => c.id === id);
+    if (comp) get().transformSchematicSelection([id], [], [], "mirror", comp.schematicPos);
   },
 
   // No auto-snapshot: called per-pixel during board dragging. Discrete callers
@@ -913,73 +1026,67 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   // ── Schematic wires ──────────────────────────────────
 
   addSchematicWire: (start, end) => {
-    // Prevent zero-length wires
-    if (Math.round(start.x) === Math.round(end.x) && Math.round(start.y) === Math.round(end.y)) return;
+    if (Math.round(start.x) === Math.round(end.x) && Math.round(start.y) === Math.round(end.y)) return [];
     get().pushSnapshot();
     const s = get();
-    // Use direction from mouse movement if available, otherwise fallback to distance-based
-    const dx = Math.abs(end.x - start.x);
-    const dy = Math.abs(end.y - start.y);
-    const routeDirection = s.schematicWireDirection ?? (dx >= dy ? "horizontal-first" as const : "vertical-first" as const);
-    const newWire: SchematicWire = { id: generateId(), start, end, routeDirection };
-    const newWires = [...s.schematicWires, newWire];
-    const result = recalculateNets(newWires, s.nets, s.netAssignments, s.components, s.componentDefs);
-    set({
-      schematicWires: newWires,
-      nets: result.nets,
-      netAssignments: result.netAssignments,
-    });
+    const legs: SchematicWire[] = [];
+    if (Math.round(start.x) === Math.round(end.x) || Math.round(start.y) === Math.round(end.y)) {
+      legs.push({ id: generateId(), start, end });
+    } else {
+      // An L: the mouse's initial direction picks the corner, else the longer axis first
+      const dx = Math.abs(end.x - start.x);
+      const dy = Math.abs(end.y - start.y);
+      const horizontalFirst = s.schematicWireDirection ? s.schematicWireDirection === "horizontal-first" : dx >= dy;
+      const corner = horizontalFirst ? { x: end.x, y: start.y } : { x: start.x, y: end.y };
+      legs.push({ id: generateId(), start, end: corner }, { id: generateId(), start: corner, end });
+    }
+    set({ schematicWires: attachWireEnds([...s.schematicWires, ...legs], new Set(legs.map((l) => l.id)), generateId) });
+    set(settleSchematic(get()));
+    // Settling may have split a leg; report whichever piece starts where the leg did
+    const now = get().schematicWires;
+    return legs
+      .map((leg) => now.find((w) => w.id === leg.id) ?? now.find((w) => Math.round(w.start.x) === Math.round(leg.start.x) && Math.round(w.start.y) === Math.round(leg.start.y)))
+      .filter((w): w is SchematicWire => !!w)
+      .map((w) => w.id);
   },
 
   removeSchematicWire: (id) => {
     get().pushSnapshot();
     const s = get();
-    const newWires = s.schematicWires.filter((w) => w.id !== id);
-    const result = recalculateNets(newWires, s.nets, s.netAssignments, s.components, s.componentDefs);
-    set({
-      schematicWires: newWires,
-      nets: result.nets,
-      netAssignments: result.netAssignments,
-    });
+    set({ schematicWires: s.schematicWires.filter((w) => w.id !== id) });
+    set(settleSchematic(get()));
   },
 
-  // Split a wire at a grid point into two wires meeting at that point
-  splitSchematicWire: (wireId, splitPoint) => {
+  // ── Net labels ──────────────────────────────────────
+
+  addNetLabel: (kind, pos, name, rotation) => {
     get().pushSnapshot();
-    const s = get();
-    const wire = s.schematicWires.find((w) => w.id === wireId);
-    if (!wire) return;
-
-    // Don't split if the split point is at the start or end (would create zero-length wire)
-    const atStart = Math.round(wire.start.x) === Math.round(splitPoint.x) && Math.round(wire.start.y) === Math.round(splitPoint.y);
-    const atEnd = Math.round(wire.end.x) === Math.round(splitPoint.x) && Math.round(wire.end.y) === Math.round(splitPoint.y);
-    if (atStart || atEnd) return; // no split needed
-
-    // Create two new wires: start→splitPoint and splitPoint→end
-    const wire1: SchematicWire = {
-      id: generateId(),
-      start: wire.start,
-      end: splitPoint,
-      routeDirection: wire.routeDirection,
+    const id = generateId();
+    const label: NetLabel = {
+      id,
+      kind,
+      name: name ?? (kind === "gnd" ? "GND" : kind === "power" ? "VCC" : "NET"),
+      pos: { x: snapToGrid(pos.x), y: snapToGrid(pos.y) },
+      rotation: rotation ?? 0,
     };
-    const wire2: SchematicWire = {
-      id: generateId(),
-      start: splitPoint,
-      end: wire.end,
-      routeDirection: wire.routeDirection,
-    };
+    set((s) => ({ netLabels: [...s.netLabels, label] }));
+    set(settleSchematic(get()));
+    return id;
+  },
 
-    const newWires = [
-      ...s.schematicWires.filter((w) => w.id !== wireId),
-      wire1,
-      wire2,
-    ];
-    const result = recalculateNets(newWires, s.nets, s.netAssignments, s.components, s.componentDefs);
-    set({
-      schematicWires: newWires,
-      nets: result.nets,
-      netAssignments: result.netAssignments,
-    });
+  updateNetLabel: (id, updates) => {
+    get().pushSnapshot();
+    set((s) => ({
+      netLabels: s.netLabels.map((l) => (l.id === id ? { ...l, ...updates, name: (updates.name ?? l.name).trim() || l.name } : l)),
+    }));
+    set(settleSchematic(get()));
+  },
+
+  removeNetLabels: (ids) => {
+    get().pushSnapshot();
+    const drop = new Set(ids);
+    set((s) => ({ netLabels: s.netLabels.filter((l) => !drop.has(l.id)) }));
+    set(settleSchematic(get()));
   },
 
   // ── Nets ─────────────────────────────────────────────
@@ -989,6 +1096,40 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set((s) => ({
       nets: s.nets.map((n) => (n.id === id ? { ...n, ...updates } : n)),
     }));
+  },
+
+  renameNet: (id, name) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    get().pushSnapshot();
+    set((s) => {
+      const net = s.nets.find((n) => n.id === id);
+      if (!net) return s;
+      return {
+        nets: s.nets.map((n) => (n.id === id ? { ...n, name: trimmed } : n)),
+        netLabels: s.netLabels.map((l) => (l.name === net.name ? { ...l, name: trimmed } : l)),
+      };
+    });
+    set(settleSchematic(get()));
+  },
+
+  previewWiringSwitch: () => {
+    const s = get();
+    const empty: NetDiff = { merges: [], joins: [], newNets: [], renames: [] };
+    if (s.wiring === "touch") return empty;
+    return diffNets(s, settleSchematic({ ...s, wiring: "touch" }), (componentId, pinId) => {
+      const comp = s.components.find((c) => c.id === componentId);
+      const def = comp && resolveComponentDef(comp, s.componentDefs);
+      const pin = def?.pins.find((p) => p.id === pinId);
+      return `${comp?.label ?? "?"} pin ${pin?.name ?? pinId}`;
+    });
+  },
+
+  switchWiringToTouch: () => {
+    if (get().wiring === "touch") return;
+    get().pushSnapshot();
+    set({ wiring: "touch" });
+    set(settleSchematic(get()));
   },
 
   removeNet: (id) => {
@@ -1341,55 +1482,6 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   // Capture which wire endpoints should move with a component during drag.
   // Called once at drag start. Only captures endpoints at this component's pin positions
   // that are NOT also at another component's pin position.
-  captureSchematicDragBindings: (componentId) => {
-    const s = get();
-    const comp = s.components.find((c) => c.id === componentId);
-    if (!comp) { set({ _dragWireBindings: null }); return; }
-
-    const def = resolveComponentDef(comp, s.componentDefs);
-    if (!def) { set({ _dragWireBindings: null }); return; }
-
-    // This component's pin positions
-    const rotation = comp.schematicRotation ?? 0;
-    const mirrored = comp.schematicMirrored ?? false;
-    const pins = getRotatedPinPositions(def.symbol, rotation, mirrored);
-    const myPinKeys = new Set<string>();
-    for (const pin of pins) {
-      myPinKeys.add(pointKey(comp.schematicPos.x + pin.x, comp.schematicPos.y + pin.y));
-    }
-
-    // Other components' pin positions (exclude from moving)
-    const otherPinKeys = new Set<string>();
-    for (const other of s.components) {
-      if (other.id === componentId) continue;
-      const otherDef = resolveComponentDef(other, s.componentDefs);
-      if (!otherDef) continue;
-      const otherRot = other.schematicRotation ?? 0;
-      const otherMir = other.schematicMirrored ?? false;
-      const otherPins = getRotatedPinPositions(otherDef.symbol, otherRot, otherMir);
-      for (const pin of otherPins) {
-        otherPinKeys.add(pointKey(other.schematicPos.x + pin.x, other.schematicPos.y + pin.y));
-      }
-    }
-
-    // Find wire endpoints at this component's pins but not other components' pins
-    const bindings: { wireId: string; endpoint: "start" | "end" }[] = [];
-    for (const w of s.schematicWires) {
-      const startKey = pointKey(w.start.x, w.start.y);
-      const endKey = pointKey(w.end.x, w.end.y);
-      if (myPinKeys.has(startKey) && !otherPinKeys.has(startKey)) {
-        bindings.push({ wireId: w.id, endpoint: "start" });
-      }
-      if (myPinKeys.has(endKey) && !otherPinKeys.has(endKey)) {
-        bindings.push({ wireId: w.id, endpoint: "end" });
-      }
-    }
-
-    set({ _dragWireBindings: bindings });
-  },
-
-  clearSchematicDragBindings: () => set({ _dragWireBindings: null }),
-
   // ── Project persistence ──────────────────────────────
 
   setProjectName: (name) => set({ name }),
@@ -1403,7 +1495,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const defaultIds = new Set(DEFAULT_COMPONENTS.map((d) => d.id));
     const customDefs = s.componentDefs.filter((d) => !defaultIds.has(d.id));
     return {
-      version: 2,
+      version: PROJECT_SCHEMA_VERSION,
       name: s.name,
       description: s.description,
       notes: s.notes,
@@ -1412,6 +1504,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       nets: s.nets,
       netAssignments: s.netAssignments,
       schematicWires: s.schematicWires,
+      netLabels: s.netLabels,
+      wiring: s.wiring,
       board: s.board,
       showValuesOnBoard: s.showValuesOnBoard,
       autoSave: s.autoSave,
@@ -1465,6 +1559,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     nets: [],
     netAssignments: [],
     schematicWires: [],
+    netLabels: [],
+    wiring: "touch",
     board: { rows: 20, cols: 20, cuts: [], wires: [] },
     showValuesOnBoard: false,
     autoSave: false,

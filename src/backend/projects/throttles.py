@@ -5,6 +5,10 @@ class ProjectCreateThrottle(AnonRateThrottle):
     scope = "project_create"
 
 
+class ProjectMigrateThrottle(AnonRateThrottle):
+    scope = "project_migrate"
+
+
 class AuthThrottle(AnonRateThrottle):
     scope = "auth"
 

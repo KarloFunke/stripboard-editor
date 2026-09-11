@@ -12,6 +12,12 @@ export const metadata: Metadata = {
 
 const updates: { date: string; items: string[]; link?: { href: string; lead: string; text: string } }[] = [
   {
+    date: "2026-09-11",
+    items: [
+      "Schematic editor overhaul. Wires, selection and dragging now work the way they do in other editors, and ground and power flags tie GND or VCC together by name instead of running wires across the sheet.",
+    ],
+  },
+  {
     date: "2026-09-10",
     items: [
       "Releasing Auto Layouter V5. Boards come out smaller, every link wire runs straight along a column and crosses nothing, and connectors end up on a board edge.",

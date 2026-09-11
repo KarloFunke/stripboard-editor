@@ -26,7 +26,7 @@ from rest_framework.decorators import api_view, permission_classes, throttle_cla
 from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny
 from rest_framework.response import Response
 
-from .migrations_data.ic_unification import migrate_ic_unification
+from .migrations_data.pipeline import migrate_to_current
 from .models import Project, Feedback, LayoutRating
 from .serializers import (
     ProjectListSerializer,
@@ -46,6 +46,7 @@ from .serializers import (
 )
 from .throttles import (
     ProjectCreateThrottle,
+    ProjectMigrateThrottle,
     AuthThrottle,
     PasswordResetThrottle,
     PowChallengeThrottle,
@@ -123,6 +124,7 @@ def project_view(request, view_uuid):
 
 
 @api_view(["POST"])
+@throttle_classes([ProjectMigrateThrottle])
 def project_migrate(request):
     """Stateless: takes a project data blob and returns the migrated version.
     Used by the frontend when importing a JSON file that may be on an older
@@ -141,7 +143,7 @@ def project_migrate(request):
             status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
         )
 
-    migrated, _ = migrate_ic_unification(data)
+    migrated, _ = migrate_to_current(data)
     return Response(migrated)
 
 
@@ -152,9 +154,12 @@ def project_fork(request, view_uuid):
     except Project.DoesNotExist:
         return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
 
+    # A fork of a row the one-shot command has not reached yet still starts
+    # on the current schema.
+    data, _ = migrate_to_current(original.data)
     forked = Project.objects.create(
         name=f"{original.name} (fork)",
-        data=original.data,
+        data=data,
         owner=request.user if request.user.is_authenticated else None,
         fork_of=original,
     )

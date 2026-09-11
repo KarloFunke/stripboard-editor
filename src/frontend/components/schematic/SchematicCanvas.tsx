@@ -2,20 +2,54 @@
 
 import { useRef, useState, useCallback, useEffect, useMemo } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
-import { Component, SchematicWire } from "@/types";
+import { Component, NetLabel, NetLabelKind, SchematicWire } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { usePanZoom } from "@/hooks/usePanZoom";
-import { useCanvasSelection } from "@/hooks/useCanvasSelection";
 import SchematicComponentBlock from "./SchematicComponentBlock";
-import SchematicWireLine, { getWirePoints } from "./SchematicWireLine";
+import SchematicWireLine from "./SchematicWireLine";
+import SchematicNetLabel, { netLabelBounds } from "./SchematicNetLabel";
 import { UnionFind } from "./netInference";
-import { getRotatedPinPositions, getSymbolBounds } from "./SymbolRenderer";
+import { getSymbolBounds } from "./SymbolRenderer";
+import { pointInRect, schematicPinPoints, wireInRect } from "./schematicGeometry";
 import { GRID_SIZE, snapToGrid, pointKey } from "@/utils/schematicConstants";
 import { SelectionActionBar, RotateIcon, MirrorIcon, DeleteIcon, ExcludeIcon, type CanvasAction } from "@/components/canvas/SelectionActionBar";
 import { track } from "@/lib/track";
 
 const MOVE_STEP = GRID_SIZE;
-const PIN_SNAP_RADIUS = 15;
+const DRAG_THRESHOLD = 4; // client pixels before a mousedown becomes a drag
+const MIN_RECT_SIZE = 10;
+
+interface Selection {
+  components: string[];
+  wires: string[];
+  labels: string[];
+}
+const EMPTY_SEL: Selection = { components: [], wires: [], labels: [] };
+type SelKind = keyof Selection;
+type SelMode = "replace" | "add" | "toggle";
+
+function selSize(s: Selection) {
+  return s.components.length + s.wires.length + s.labels.length;
+}
+function selHas(s: Selection, kind: SelKind, id: string) {
+  return s[kind].includes(id);
+}
+function selWith(s: Selection, kind: SelKind, id: string, mode: SelMode): Selection {
+  if (mode === "replace") return { ...EMPTY_SEL, [kind]: [id] };
+  const has = s[kind].includes(id);
+  if (mode === "add") return has ? s : { ...s, [kind]: [...s[kind], id] };
+  return { ...s, [kind]: has ? s[kind].filter((x) => x !== id) : [...s[kind], id] };
+}
+function selUnion(a: Selection, b: Selection): Selection {
+  return {
+    components: [...new Set([...a.components, ...b.components])],
+    wires: [...new Set([...a.wires, ...b.wires])],
+    labels: [...new Set([...a.labels, ...b.labels])],
+  };
+}
+function selEqual(a: Selection, b: Selection) {
+  return a.components.join() === b.components.join() && a.wires.join() === b.wires.join() && a.labels.join() === b.labels.join();
+}
 
 /**
  * All segments reachable from `startId` without crossing a component pin.
@@ -59,38 +93,18 @@ function collectWholeWire(
   return [...found];
 }
 
-/** Find nearest pin connection point to a given SVG coordinate */
-function findNearestPin(
-  x: number, y: number,
-  components: ReturnType<typeof useProjectStore.getState>["components"],
-  componentDefs: ReturnType<typeof useProjectStore.getState>["componentDefs"],
-  excludeComponentId?: string,
-  excludePinId?: string,
-): { componentId: string; pinId: string; x: number; y: number } | null {
-  let best: { componentId: string; pinId: string; x: number; y: number; dist: number } | null = null;
+function selModeFromEvent(e: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }): SelMode {
+  if (e.ctrlKey || e.metaKey) return "toggle";
+  if (e.shiftKey) return "add";
+  return "replace";
+}
 
-  for (const comp of components) {
-    const def = resolveComponentDef(comp, componentDefs);
-    if (!def) continue;
-
-    const rotation = comp.schematicRotation ?? 0;
-    const mirrored = comp.schematicMirrored ?? false;
-    const pinPositions = getRotatedPinPositions(def.symbol, rotation, mirrored);
-
-    for (const pin of pinPositions) {
-      if (comp.id === excludeComponentId && pin.pinId === excludePinId) continue;
-
-      const px = comp.schematicPos.x + pin.x;
-      const py = comp.schematicPos.y + pin.y;
-      const dist = Math.sqrt((x - px) ** 2 + (y - py) ** 2);
-
-      if (dist < PIN_SNAP_RADIUS && (!best || dist < best.dist)) {
-        best = { componentId: comp.id, pinId: pin.pinId, x: px, y: py, dist };
-      }
-    }
-  }
-
-  return best ? { componentId: best.componentId, pinId: best.pinId, x: best.x, y: best.y } : null;
+interface Clipboard {
+  components: Omit<Component, "id" | "label" | "boardPos" | "rotation" | "flexibleEndPos" | "locked">[];
+  wires: Omit<SchematicWire, "id">[];
+  labels: Omit<NetLabel, "id">[];
+  origin: { x: number; y: number }; // reference point the copy is positioned by
+  lastPaste: { x: number; y: number } | null; // cascades keyboard pastes off-canvas
 }
 
 export default function SchematicCanvas({ readOnly = false }: { readOnly?: boolean }) {
@@ -100,18 +114,25 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
   const components = useProjectStore((s) => s.components);
   const componentDefs = useProjectStore((s) => s.componentDefs);
   const schematicWires = useProjectStore((s) => s.schematicWires);
+  const netLabels = useProjectStore((s) => s.netLabels);
   const nets = useProjectStore((s) => s.nets);
   const netAssignments = useProjectStore((s) => s.netAssignments);
-  const updateSchematicPos = useProjectStore((s) => s.updateSchematicPos);
   const removeComponent = useProjectStore((s) => s.removeComponent);
   const addComponent = useProjectStore((s) => s.addComponent);
-  const addComponentInstance = useProjectStore((s) => s.addComponentInstance);
   const addSchematicWire = useProjectStore((s) => s.addSchematicWire);
   const removeSchematicWire = useProjectStore((s) => s.removeSchematicWire);
-  const splitSchematicWire = useProjectStore((s) => s.splitSchematicWire);
   const rotateSchematicComponent = useProjectStore((s) => s.rotateSchematicComponent);
   const mirrorSchematicComponent = useProjectStore((s) => s.mirrorSchematicComponent);
   const setBoardExcluded = useProjectStore((s) => s.setBoardExcluded);
+  const addNetLabel = useProjectStore((s) => s.addNetLabel);
+  const updateNetLabel = useProjectStore((s) => s.updateNetLabel);
+  const removeNetLabels = useProjectStore((s) => s.removeNetLabels);
+  const beginSchematicMove = useProjectStore((s) => s.beginSchematicMove);
+  const moveSchematicItems = useProjectStore((s) => s.moveSchematicItems);
+  const finishSchematicGesture = useProjectStore((s) => s.finishSchematicGesture);
+  const cancelSchematicGesture = useProjectStore((s) => s.cancelSchematicGesture);
+  const transformSchematicSelection = useProjectStore((s) => s.transformSchematicSelection);
+  const pasteSchematicItems = useProjectStore((s) => s.pasteSchematicItems);
   const wireDrawMode = useProjectStore((s) => s.schematicWireDrawMode);
   const wireDrawingFrom = useProjectStore((s) => s.schematicWireDrawingFrom);
   const wireDirection = useProjectStore((s) => s.schematicWireDirection);
@@ -120,254 +141,301 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
   const pushSnapshot = useProjectStore((s) => s.pushSnapshot);
   const transact = useProjectStore((s) => s.transact);
   const highlightedNetId = useProjectStore((s) => s.highlightedNetId);
-  const captureSchematicDragBindings = useProjectStore((s) => s.captureSchematicDragBindings);
-  const clearSchematicDragBindings = useProjectStore((s) => s.clearSchematicDragBindings);
 
-  // A component drag arms this on mousedown and commits exactly one snapshot
-  // the first time the position actually changes. A plain select-click never
-  // moves anything, so it never snapshots — keeping the redo stack intact and
-  // history at one entry per drag. (updateSchematicPos is snapshot-free.)
-  const pendingSnapshotRef = useRef(false);
-  const commitSnapshotOnce = useCallback(() => {
-    if (pendingSnapshotRef.current) {
-      pendingSnapshotRef.current = false;
-      pushSnapshot();
-    }
-  }, [pushSnapshot]);
+  // The wire tool is active either in wire mode or while a wire started from
+  // a pin in select mode is being drawn.
+  const drawing = !!wireDrawingFrom;
+  const wireTool = wireDrawMode || drawing;
 
+  const [selection, setSelection] = useState<Selection>(EMPTY_SEL);
   const [wirePreview, setWirePreview] = useState<{ x: number; y: number } | null>(null);
+  const wirePreviewRef = useRef<{ x: number; y: number } | null>(null);
+  useEffect(() => { wirePreviewRef.current = wirePreview; }, [wirePreview]);
+  const [hoverNetId, setHoverNetId] = useState<string | null>(null);
+  const [editingLabelId, setEditingLabelId] = useState<string | null>(null);
   // Set to the ids about to be excluded when any of them is still placed on the
   // board — the confirm dialog asks before unplacing them.
   const [excludeConfirmIds, setExcludeConfirmIds] = useState<string[] | null>(null);
-  const [selectedWireId, setSelectedWireId] = useState<string | null>(null);
-  const [selectedWireIds, setSelectedWireIds] = useState<string[]>([]);
 
-  // Copy/paste clipboard for a single component. Holds a snapshot of the copied
-  // instance (not its id), so paste still works after the source is deleted. The
-  // stored position cascades on each paste so repeated pastes don't stack.
-  const clipboardRef = useRef<{
-    defId: string;
-    value?: string;
-    schematicRotation: 0 | 90 | 180 | 270;
-    schematicMirrored?: boolean;
-    labelOffset?: Component["labelOffset"];
-    pinLabelOffsets?: Component["pinLabelOffsets"];
-    footprintOverride?: Component["footprintOverride"];
-    pos: { x: number; y: number };
+  const [selectionRect, setSelectionRect] = useState<{
+    startX: number; startY: number; currentX: number; currentY: number; mode: SelMode;
   } | null>(null);
 
-  // Compute wire colors and net IDs: propagate through connected wire groups
-  const { wireColorMap, wireNetIdMap } = useMemo(() => {
-    const colorMap = new Map<string, string>(); // wireId → color
-    const netIdMap = new Map<string, string>(); // wireId → netId
+  // A drag of the selection: armed on mousedown, moves the selection by grid
+  // steps once the threshold is crossed, settles connectivity on mouseup.
+  const dragRef = useRef<{
+    startClientX: number; startClientY: number;
+    offsetX: number; offsetY: number; // svg offset from the grabbed point to the grid anchor
+    lastX: number; lastY: number;
+    didMove: boolean;
+    sel: Selection;
+  } | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
-    // Build point → net info lookup from pin positions
+  // Arrow-key nudging: one gesture per run of presses. Bindings and the undo
+  // snapshot are taken on the first press; the run ends (and connectivity
+  // settles) on any other key, a mouse press, a selection change or blur.
+  const arrowSessionRef = useRef(false);
+  const endArrowSession = useCallback(() => {
+    if (!arrowSessionRef.current) return;
+    arrowSessionRef.current = false;
+    finishSchematicGesture();
+  }, [finishSchematicGesture]);
+
+  // The wire run being drawn: ids of the segments placed so far (Backspace
+  // steps back through them) and whether the run started from select mode
+  // (then finishing returns to select mode).
+  const wireRunRef = useRef<{ ids: string[]; fromSelectMode: boolean }>({ ids: [], fromSelectMode: false });
+
+  const clipboardRef = useRef<Clipboard | null>(null);
+  const lastMouseRef = useRef<{ x: number; y: number } | null>(null);
+  const mouseInsideRef = useRef(false);
+
+  const applySelection = useCallback((next: Selection) => {
+    setSelection((prev) => (selEqual(prev, next) ? prev : next));
+  }, []);
+
+  // Selection changes end an arrow run; ids that vanished (deleted, or wires
+  // split while settling) drop out.
+  useEffect(() => { endArrowSession(); }, [selection, endArrowSession]);
+  useEffect(() => {
+    const comps = new Set(components.map((c) => c.id));
+    const wires = new Set(schematicWires.map((w) => w.id));
+    const labels = new Set(netLabels.map((l) => l.id));
+    setSelection((prev) => {
+      const next = {
+        components: prev.components.filter((id) => comps.has(id)),
+        wires: prev.wires.filter((id) => wires.has(id)),
+        labels: prev.labels.filter((id) => labels.has(id)),
+      };
+      return selEqual(prev, next) ? prev : next;
+    });
+  }, [components, schematicWires, netLabels]);
+  useEffect(() => {
+    const onBlur = () => endArrowSession();
+    window.addEventListener("blur", onBlur);
+    return () => window.removeEventListener("blur", onBlur);
+  }, [endArrowSession]);
+
+  const singleComponentId = selSize(selection) === 1 && selection.components.length === 1 ? selection.components[0] : null;
+  const singleWireId = selSize(selection) === 1 && selection.wires.length === 1 ? selection.wires[0] : null;
+  const singleLabelId = selSize(selection) === 1 && selection.labels.length === 1 ? selection.labels[0] : null;
+
+  // ── Derived connectivity for rendering ─────────────────
+
+  const pinPoints = useMemo(() => schematicPinPoints(components, componentDefs), [components, componentDefs]);
+
+  // pointKey() of every component pin — the walls that bound a "whole wire".
+  const pinNodeKeys = useMemo(() => new Set(pinPoints.map((p) => p.key)), [pinPoints]);
+
+  // Net of every wire and label, by joining wire endpoints and reading the
+  // net off any pin in the group.
+  const { wireColorMap, wireNetIdMap, labelNetMap } = useMemo(() => {
+    const colorMap = new Map<string, string>();
+    const netIdMap = new Map<string, string>();
+    const labelMap = new Map<string, { color: string; netId: string }>();
+
+    const netById = new Map(nets.map((n) => [n.id, n]));
+    const assignmentByPin = new Map(netAssignments.map((a) => [`${a.componentId}:${a.pinId}`, a.netId]));
     const pointNetInfo = new Map<string, { color: string; netId: string }>();
-    for (const comp of components) {
-      const def = resolveComponentDef(comp, componentDefs);
-      if (!def) continue;
-      const rotation = comp.schematicRotation ?? 0;
-      const pins = getRotatedPinPositions(def.symbol, rotation, comp.schematicMirrored ?? false);
-      for (const pin of pins) {
-        const assignment = netAssignments.find(
-          (a) => a.componentId === comp.id && a.pinId === pin.pinId
-        );
-        if (assignment) {
-          const net = nets.find((n) => n.id === assignment.netId);
-          if (net) {
-            const key = pointKey(comp.schematicPos.x + pin.x, comp.schematicPos.y + pin.y);
-            pointNetInfo.set(key, { color: net.color, netId: net.id });
-          }
-        }
-      }
+    for (const p of pinPoints) {
+      const netId = assignmentByPin.get(`${p.componentId}:${p.pinId}`);
+      const net = netId ? netById.get(netId) : undefined;
+      if (net) pointNetInfo.set(p.key, { color: net.color, netId: net.id });
     }
 
-    // Union-Find to group connected wire points
     const uf = new UnionFind();
     for (const wire of schematicWires) {
-      const pts = getWirePoints(wire);
-      const keys = pts.map((p) => pointKey(p.x, p.y));
-      for (const k of keys) uf.makeSet(k);
-      for (let i = 1; i < keys.length; i++) uf.union(keys[0], keys[i]);
+      const a = pointKey(wire.start.x, wire.start.y);
+      const b = pointKey(wire.end.x, wire.end.y);
+      uf.makeSet(a); uf.makeSet(b); uf.union(a, b);
     }
+    const byName = new Map<string, string[]>();
+    for (const l of netLabels) {
+      const k = pointKey(l.pos.x, l.pos.y);
+      uf.makeSet(k);
+      const arr = byName.get(l.name);
+      if (arr) arr.push(k); else byName.set(l.name, [k]);
+    }
+    for (const keys of byName.values()) for (let i = 1; i < keys.length; i++) uf.union(keys[0], keys[i]);
 
-    // Find color and netId for each group root
     const rootInfo = new Map<string, { color: string; netId: string }>();
     for (const [pk, info] of pointNetInfo) {
       const root = uf.find(pk);
       if (!rootInfo.has(root)) rootInfo.set(root, info);
     }
 
-    // Assign colors and netIds to wires
     for (const wire of schematicWires) {
-      const sk = pointKey(wire.start.x, wire.start.y);
-      const root = uf.find(sk);
-      const info = rootInfo.get(root);
+      const info = rootInfo.get(uf.find(pointKey(wire.start.x, wire.start.y)));
       if (info) {
         colorMap.set(wire.id, info.color);
         netIdMap.set(wire.id, info.netId);
       }
     }
-
-    return { wireColorMap: colorMap, wireNetIdMap: netIdMap };
-  }, [schematicWires, components, componentDefs, nets, netAssignments]);
-
-  // Compute junction points: grid points where 3+ wire endpoints/bends meet
-  const junctionPoints = useMemo(() => {
-    const pointCount = new Map<string, { x: number; y: number; count: number }>();
-    for (const wire of schematicWires) {
-      const pts = getWirePoints(wire);
-      for (const p of pts) {
-        const key = pointKey(p.x, p.y);
-        const existing = pointCount.get(key);
-        if (existing) {
-          existing.count++;
-        } else {
-          pointCount.set(key, { x: p.x, y: p.y, count: 1 });
-        }
-      }
+    for (const l of netLabels) {
+      const info = rootInfo.get(uf.find(pointKey(l.pos.x, l.pos.y)));
+      if (info) labelMap.set(l.id, info);
     }
-    // Only show dots where 3+ wire segments meet (T-junctions, crosses)
-    return Array.from(pointCount.values()).filter((p) => p.count >= 3);
-  }, [schematicWires]);
+    return { wireColorMap: colorMap, wireNetIdMap: netIdMap, labelNetMap: labelMap };
+  }, [schematicWires, netLabels, pinPoints, nets, netAssignments]);
 
-  // pointKey() of every component pin — the walls that bound a "whole wire".
-  const pinNodeKeys = useMemo(() => {
-    const keys = new Set<string>();
-    for (const comp of components) {
-      const def = resolveComponentDef(comp, componentDefs);
-      if (!def) continue;
-      const pins = getRotatedPinPositions(
-        def.symbol,
-        comp.schematicRotation ?? 0,
-        comp.schematicMirrored ?? false
-      );
-      for (const pin of pins) {
-        keys.add(pointKey(comp.schematicPos.x + pin.x, comp.schematicPos.y + pin.y));
-      }
+  // Junction dots where three or more things meet at a point; hollow
+  // squares on wire ends that touch nothing.
+  const { junctionPoints, danglingEnds } = useMemo(() => {
+    const count = new Map<string, { x: number; y: number; n: number; wireId: string | null }>();
+    const bump = (x: number, y: number, wireId: string | null) => {
+      const k = pointKey(x, y);
+      const e = count.get(k);
+      if (e) { e.n++; if (!e.wireId) e.wireId = wireId; }
+      else count.set(k, { x, y, n: 1, wireId });
+    };
+    for (const w of schematicWires) { bump(w.start.x, w.start.y, w.id); bump(w.end.x, w.end.y, w.id); }
+    for (const p of pinPoints) bump(p.x, p.y, null);
+    for (const l of netLabels) bump(l.pos.x, l.pos.y, null);
+    const junctions: { x: number; y: number; wireId: string | null }[] = [];
+    const dangling: { x: number; y: number; wireId: string }[] = [];
+    for (const e of count.values()) {
+      if (e.n >= 3) junctions.push(e);
+      else if (e.n === 1 && e.wireId) dangling.push({ x: e.x, y: e.y, wireId: e.wireId });
     }
-    return keys;
-  }, [components, componentDefs]);
+    return { junctionPoints: junctions, danglingEnds: dangling };
+  }, [schematicWires, pinPoints, netLabels]);
 
-  const {
-    selectedId, setSelectedId,
-    selectedIds, setSelectedIds,
-    selectionRect,
-    startSelectionRect, updateSelectionRect, finalizeSelectionRect, cancelSelectionRect,
-    checkDragThreshold, shouldSuppressClick, markDragComplete,
-    clearSelection,
-  } = useCanvasSelection();
+  const activeNetId = highlightedNetId ?? hoverNetId;
 
-  const [dragging, setDragging] = useState<{
-    componentId: string;
-    offsetX: number;
-    offsetY: number;
-    startX: number;
-    startY: number;
-    didDrag: boolean;
-    multi: boolean;
-  } | null>(null);
+  // ── Coordinates ───────────────────────────────────────
 
-  // Multi-drag: dragging a component that's part of a multi-selection moves the
-  // whole selection. Holds the move plan + last applied (snapped) anchor position
-  // so each mousemove applies only the incremental delta.
-  const multiDragRef = useRef<{
-    moveIds: string[];
-    moveWireIds: string[];
-    lastX: number;
-    lastY: number;
-  } | null>(null);
+  const getSVGPoint = useCallback((e: React.MouseEvent | MouseEvent) => {
+    const svg = svgRef.current;
+    if (!svg) return { x: 0, y: 0 };
+    return panZoom.screenToSvg(e.clientX, e.clientY, svg);
+  }, [panZoom.screenToSvg]);
 
-  // Move a set of components (and any explicitly selected wires) by a delta,
-  // dragging connected wire chains along but keeping endpoints anchored to
-  // non-moved components fixed. Shared by arrow-key nudging and multi-drag.
-  const nudgeSelection = useCallback(
-    (moveIds: string[], moveWireIds: string[], delta: { x: number; y: number }) => {
-      const moveIdSet = new Set(moveIds);
-      const moveWireIdSet = new Set(moveWireIds);
-      const s = useProjectStore.getState();
+  const [containerSize, setContainerSize] = useState({ width: 1000, height: 800 });
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const obs = new ResizeObserver((entries) => {
+      const { width, height } = entries[0].contentRect;
+      setContainerSize({ width, height });
+    });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
 
-      // Pin positions of moved components (seed the move set)...
-      const movedPinPositions = new Set<string>();
-      for (const comp of s.components) {
-        if (!moveIdSet.has(comp.id)) continue;
-        const def = resolveComponentDef(comp, s.componentDefs);
-        if (!def) continue;
-        const pins = getRotatedPinPositions(def.symbol, comp.schematicRotation ?? 0, comp.schematicMirrored ?? false);
-        for (const pin of pins) {
-          movedPinPositions.add(pointKey(comp.schematicPos.x + pin.x, comp.schematicPos.y + pin.y));
-        }
-      }
+  /** Where keyboard-placed things land: under the cursor, else mid-view */
+  const cursorOrCenter = useCallback(() => {
+    const p = mouseInsideRef.current && lastMouseRef.current
+      ? lastMouseRef.current
+      : { x: panZoom.panX + containerSize.width / 2 / panZoom.zoom, y: panZoom.panY + containerSize.height / 2 / panZoom.zoom };
+    return { x: snapToGrid(p.x), y: snapToGrid(p.y) };
+  }, [panZoom.panX, panZoom.panY, panZoom.zoom, containerSize]);
 
-      // ...and of non-moved components (anchors that stay put).
-      const staticPinPositions = new Set<string>();
-      for (const comp of s.components) {
-        if (moveIdSet.has(comp.id)) continue;
-        const def = resolveComponentDef(comp, s.componentDefs);
-        if (!def) continue;
-        const pins = getRotatedPinPositions(def.symbol, comp.schematicRotation ?? 0, comp.schematicMirrored ?? false);
-        for (const pin of pins) {
-          staticPinPositions.add(pointKey(comp.schematicPos.x + pin.x, comp.schematicPos.y + pin.y));
-        }
-      }
+  const getPinGridPos = useCallback((componentId: string, pinId: string): { x: number; y: number } | null => {
+    const p = pinPoints.find((pp) => pp.componentId === componentId && pp.pinId === pinId);
+    return p ? { x: p.x, y: p.y } : null;
+  }, [pinPoints]);
 
-      // Flood-fill through wire chains from the moved pins + selected wires.
-      const pointsToMove = new Set<string>(movedPinPositions);
-      for (const w of s.schematicWires) {
-        if (moveWireIdSet.has(w.id)) {
-          const sk = pointKey(w.start.x, w.start.y);
-          const ek = pointKey(w.end.x, w.end.y);
-          if (!staticPinPositions.has(sk)) pointsToMove.add(sk);
-          if (!staticPinPositions.has(ek)) pointsToMove.add(ek);
-        }
-      }
+  // ── Wire drawing ──────────────────────────────────────
 
-      const pointToEndpoints = new Map<string, string[]>();
-      for (const w of s.schematicWires) {
-        const sk = pointKey(w.start.x, w.start.y);
-        const ek = pointKey(w.end.x, w.end.y);
-        if (!pointToEndpoints.has(sk)) pointToEndpoints.set(sk, []);
-        pointToEndpoints.get(sk)!.push(ek);
-        if (!pointToEndpoints.has(ek)) pointToEndpoints.set(ek, []);
-        pointToEndpoints.get(ek)!.push(sk);
-      }
+  const startDrawing = useCallback((pt: { x: number; y: number }, fromSelectMode: boolean) => {
+    wireRunRef.current = { ids: [], fromSelectMode };
+    setSchematicWireDrawing(pt);
+    applySelection(EMPTY_SEL);
+  }, [setSchematicWireDrawing, applySelection]);
 
-      let changed = true;
-      while (changed) {
-        changed = false;
-        for (const pt of Array.from(pointsToMove)) {
-          const others = pointToEndpoints.get(pt);
-          if (!others) continue;
-          for (const otherKey of others) {
-            if (!pointsToMove.has(otherKey) && !staticPinPositions.has(otherKey)) {
-              pointsToMove.add(otherKey);
-              changed = true;
-            }
-          }
-        }
-      }
+  // Ending the run settles the schematic, which is where the segments just
+  // drawn get joined back together (no merging happens mid-run, so Backspace
+  // still steps back one segment at a time).
+  const endDrawing = useCallback(() => {
+    wireRunRef.current = { ids: [], fromSelectMode: false };
+    setSchematicWireDrawing(null);
+    setWirePreview(null);
+    finishSchematicGesture();
+  }, [setSchematicWireDrawing, finishSchematicGesture]);
 
-      const newComponents = s.components.map((c) =>
-        moveIdSet.has(c.id)
-          ? { ...c, schematicPos: { x: snapToGrid(c.schematicPos.x + delta.x), y: snapToGrid(c.schematicPos.y + delta.y) } }
-          : c
-      );
+  const placeSegment = useCallback((to: { x: number; y: number }) => {
+    const from = useProjectStore.getState().schematicWireDrawingFrom;
+    if (!from) return false;
+    if (Math.round(from.x) === Math.round(to.x) && Math.round(from.y) === Math.round(to.y)) return false;
+    wireRunRef.current.ids.push(...addSchematicWire(from, to));
+    setSchematicWireDrawing(to);
+    return true;
+  }, [addSchematicWire, setSchematicWireDrawing]);
 
-      const newWires = s.schematicWires.map((w) => {
-        const moveStart = pointsToMove.has(pointKey(w.start.x, w.start.y));
-        const moveEnd = pointsToMove.has(pointKey(w.end.x, w.end.y));
-        if (!moveStart && !moveEnd) return w;
-        return {
-          ...w,
-          start: moveStart ? { x: w.start.x + delta.x, y: w.start.y + delta.y } : w.start,
-          end: moveEnd ? { x: w.end.x + delta.x, y: w.end.y + delta.y } : w.end,
-        };
-      });
+  const finishAt = useCallback((to: { x: number; y: number }) => {
+    placeSegment(to);
+    endDrawing();
+  }, [placeSegment, endDrawing]);
 
-      useProjectStore.setState({ components: newComponents, schematicWires: newWires });
-    },
-    []
-  );
+  const stepBack = useCallback(() => {
+    const run = wireRunRef.current;
+    const lastId = run.ids.pop();
+    if (!lastId) { endDrawing(); return; }
+    const w = useProjectStore.getState().schematicWires.find((x) => x.id === lastId);
+    if (w) {
+      removeSchematicWire(lastId);
+      setSchematicWireDrawing(w.start);
+    } else {
+      endDrawing();
+    }
+  }, [removeSchematicWire, setSchematicWireDrawing, endDrawing]);
+
+  // ── Copy / paste ──────────────────────────────────────
+
+  const copySelection = useCallback(() => {
+    const s = useProjectStore.getState();
+    const compSet = new Set(selection.components);
+    const labelSet = new Set(selection.labels);
+    const comps = s.components.filter((c) => compSet.has(c.id));
+    const labels = s.netLabels.filter((l) => labelSet.has(l.id));
+    if (comps.length === 0 && labels.length === 0 && selection.wires.length === 0) return;
+
+    // Wires between copied parts come along even when not selected themselves
+    const ownKeys = new Set<string>();
+    for (const p of pinPoints) if (compSet.has(p.componentId)) ownKeys.add(p.key);
+    for (const l of labels) ownKeys.add(pointKey(l.pos.x, l.pos.y));
+    const wireSet = new Set(selection.wires);
+    const wires = s.schematicWires.filter((w) =>
+      wireSet.has(w.id) || (ownKeys.has(pointKey(w.start.x, w.start.y)) && ownKeys.has(pointKey(w.end.x, w.end.y)))
+    );
+
+    const pts = [
+      ...comps.map((c) => c.schematicPos),
+      ...labels.map((l) => l.pos),
+      ...wires.flatMap((w) => [w.start, w.end]),
+    ];
+    const origin = {
+      x: snapToGrid(Math.min(...pts.map((p) => p.x))),
+      y: snapToGrid(Math.min(...pts.map((p) => p.y))),
+    };
+    clipboardRef.current = {
+      components: comps.map((c) => ({
+        defId: c.defId, value: c.value,
+        schematicPos: c.schematicPos, schematicRotation: c.schematicRotation, schematicMirrored: c.schematicMirrored,
+        labelOffset: c.labelOffset, pinLabelOffsets: c.pinLabelOffsets, footprintOverride: c.footprintOverride,
+        boardLabelOffset: c.boardLabelOffset, boardExcluded: c.boardExcluded,
+      })),
+      wires: wires.map((w) => ({ start: w.start, end: w.end })),
+      labels: labels.map((l) => ({ kind: l.kind, name: l.name, pos: l.pos, rotation: l.rotation })),
+      origin,
+      lastPaste: null,
+    };
+  }, [selection, pinPoints]);
+
+  const pasteClipboard = useCallback((delta: { x: number; y: number }) => {
+    const clip = clipboardRef.current;
+    if (!clip) return;
+    const sh = (p: { x: number; y: number }) => ({ x: p.x + delta.x, y: p.y + delta.y });
+    const ids = pasteSchematicItems({
+      components: clip.components.map((c) => ({ ...c, schematicPos: sh(c.schematicPos) })),
+      wires: clip.wires.map((w) => ({ ...w, start: sh(w.start), end: sh(w.end) })),
+      labels: clip.labels.map((l) => ({ ...l, pos: sh(l.pos) })),
+    });
+    applySelection({ components: ids.componentIds, wires: ids.wireIds, labels: ids.labelIds });
+  }, [pasteSchematicItems, applySelection]);
+
+  // ── Selection actions ─────────────────────────────────
 
   // Toggle board-exclusion for a set of components as one undo step. Include
   // when all are already excluded; otherwise exclude the remaining ones (asking
@@ -393,7 +461,47 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
     }
   }, [transact, setBoardExcluded]);
 
-  // Keyboard shortcuts
+  const rotateSelection = useCallback((op: "rotate" | "mirror") => {
+    if (selSize(selection) === 0) return;
+    if (singleComponentId) {
+      if (op === "rotate") rotateSchematicComponent(singleComponentId);
+      else mirrorSchematicComponent(singleComponentId);
+      return;
+    }
+    if (singleLabelId && op === "rotate") {
+      const l = netLabels.find((x) => x.id === singleLabelId);
+      if (l) updateNetLabel(l.id, { rotation: ((l.rotation + 90) % 360) as NetLabel["rotation"] });
+      return;
+    }
+    transformSchematicSelection(selection.components, selection.wires, selection.labels, op);
+  }, [selection, singleComponentId, singleLabelId, netLabels, rotateSchematicComponent, mirrorSchematicComponent, updateNetLabel, transformSchematicSelection]);
+
+  const deleteSelection = useCallback((wholeWires: boolean) => {
+    if (selSize(selection) === 0) return;
+    let wireIds = [...selection.wires];
+    if (wholeWires && wireIds.length > 0) {
+      const expanded = new Set<string>();
+      for (const wid of wireIds) for (const id of collectWholeWire(wid, schematicWires, pinNodeKeys)) expanded.add(id);
+      wireIds = [...expanded];
+    }
+    // One undo step for the whole delete: transact() takes a single
+    // snapshot; the individual removals skip their own.
+    transact(() => {
+      for (const wid of wireIds) removeSchematicWire(wid);
+      for (const cid of selection.components) removeComponent(cid);
+      if (selection.labels.length > 0) removeNetLabels(selection.labels);
+    });
+    applySelection(EMPTY_SEL);
+  }, [selection, schematicWires, pinNodeKeys, transact, removeSchematicWire, removeComponent, removeNetLabels, applySelection]);
+
+  const placeLabel = useCallback((kind: NetLabelKind, pos: { x: number; y: number }, name?: string) => {
+    const id = addNetLabel(kind, pos, name);
+    applySelection({ ...EMPTY_SEL, labels: [id] });
+    if (kind !== "gnd" && !name) setEditingLabelId(id);
+  }, [addNetLabel, applySelection]);
+
+  // ── Keyboard ──────────────────────────────────────────
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (readOnly) return;
@@ -403,454 +511,387 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
 
-      // Auto-repeat (held key): only arrow-move may repeat (it dedupes its own
-      // snapshot below). Every other shortcut is discrete — holding it must not
-      // spin the action or flood undo history.
       const isArrowKey = e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "ArrowLeft" || e.key === "ArrowRight";
+      if (!isArrowKey) endArrowSession();
+      // Auto-repeat (held key): only arrow-move may repeat. Every other
+      // shortcut is discrete — holding it must not spin the action or flood
+      // undo history.
       if (e.repeat && !isArrowKey) return;
+      const mod = e.ctrlKey || e.metaKey;
+      const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
 
-      // Ctrl/Cmd+C: copy the selected component
-      if ((e.ctrlKey || e.metaKey) && (e.key === "c" || e.key === "C")) {
-        if (selectedId) {
-          const comp = components.find((c) => c.id === selectedId);
-          if (comp) {
-            clipboardRef.current = {
-              defId: comp.defId,
-              value: comp.value,
-              schematicRotation: comp.schematicRotation,
-              schematicMirrored: comp.schematicMirrored,
-              labelOffset: comp.labelOffset,
-              pinLabelOffsets: comp.pinLabelOffsets,
-              footprintOverride: comp.footprintOverride,
-              pos: comp.schematicPos,
-            };
-          }
-        }
+      if (mod && key === "a") {
+        e.preventDefault();
+        applySelection({
+          components: components.map((c) => c.id),
+          wires: schematicWires.map((w) => w.id),
+          labels: netLabels.map((l) => l.id),
+        });
         return;
       }
-
-      // Ctrl/Cmd+V: paste a new instance of the copied component, offset so it
-      // doesn't land on top of the source (and cascades on repeated pastes).
-      if ((e.ctrlKey || e.metaKey) && (e.key === "v" || e.key === "V")) {
+      if (mod && key === "c") {
+        copySelection();
+        return;
+      }
+      if (mod && key === "v") {
         const clip = clipboardRef.current;
-        if (clip) {
-          e.preventDefault();
-          const pos = { x: clip.pos.x + MOVE_STEP * 2, y: clip.pos.y + MOVE_STEP * 2 };
-          const newId = addComponentInstance({
-            defId: clip.defId,
-            value: clip.value,
-            schematicRotation: clip.schematicRotation,
-            schematicMirrored: clip.schematicMirrored,
-            labelOffset: clip.labelOffset,
-            pinLabelOffsets: clip.pinLabelOffsets,
-            footprintOverride: clip.footprintOverride,
-            schematicPos: pos,
-          });
-          clipboardRef.current = { ...clip, pos };
-          setSelectedId(newId);
-          setSelectedIds([]);
-          setSelectedWireId(null);
-          setSelectedWireIds([]);
+        if (!clip) return;
+        e.preventDefault();
+        let target: { x: number; y: number };
+        if (mouseInsideRef.current && lastMouseRef.current) {
+          target = { x: snapToGrid(lastMouseRef.current.x), y: snapToGrid(lastMouseRef.current.y) };
+        } else {
+          const last = clip.lastPaste ?? clip.origin;
+          target = { x: last.x + MOVE_STEP * 2, y: last.y + MOVE_STEP * 2 };
         }
+        clip.lastPaste = target;
+        pasteClipboard({ x: target.x - clip.origin.x, y: target.y - clip.origin.y });
         return;
       }
+      if (mod && key === "d") {
+        e.preventDefault();
+        copySelection();
+        pasteClipboard({ x: MOVE_STEP * 2, y: MOVE_STEP * 2 });
+        return;
+      }
+      if (mod) return; // leave Ctrl+Z / Ctrl+S and friends to their owners
 
       // W: toggle wire draw mode
-      if (e.key === "w" || e.key === "W") {
+      if (key === "w") {
+        if (drawing) endDrawing();
         toggleWireDrawMode();
         return;
       }
 
-      // Escape: cancel active wire drawing, clear selection, or exit wire mode (never toggles on)
-      if (e.key === "Escape") {
-        if (wireDrawingFrom) {
-          setSchematicWireDrawing(null);
-          setWirePreview(null);
-          return;
-        }
-        if (selectedIds.length > 0 || selectedWireIds.length > 0) {
-          setSelectedIds([]);
-          setSelectedWireIds([]);
-          return;
-        }
-        if (selectedWireId) {
-          setSelectedWireId(null);
-          return;
-        }
-        if (wireDrawMode) {
-          toggleWireDrawMode();
-          return;
-        }
-      }
-
-      // R: rotate selected component on schematic
-      if (e.key === "r" || e.key === "R") {
-        if (selectedId) {
-          rotateSchematicComponent(selectedId);
-          return;
-        }
-      }
-
-      // M: mirror selected component on schematic
-      if (e.key === "m" || e.key === "M") {
-        if (selectedId) {
-          mirrorSchematicComponent(selectedId);
-          return;
-        }
-      }
-
-      // E: toggle whether the selected component(s) are excluded from the stripboard
-      if (e.key === "e" || e.key === "E") {
-        const ids = selectedIds.length > 0 ? selectedIds : selectedId ? [selectedId] : [];
-        if (ids.length > 0) {
-          toggleExcludeSelection(ids);
-          return;
-        }
-      }
-
-      // Delete: remove all selected components and wires
-      if (e.key === "Delete") {
-        const hasSelection = selectedId || selectedWireId || selectedIds.length > 0 || selectedWireIds.length > 0;
-        if (!hasSelection) return;
-
-        let wireIdsToDelete = [...selectedWireIds];
-        if (selectedWireId && !wireIdsToDelete.includes(selectedWireId)) {
-          wireIdsToDelete.push(selectedWireId);
-        }
-        // Alt+Del: expand each selected wire to its whole continuous run.
-        if (e.altKey && wireIdsToDelete.length > 0) {
-          const expanded = new Set<string>();
-          for (const wid of wireIdsToDelete) {
-            for (const id of collectWholeWire(wid, schematicWires, pinNodeKeys)) expanded.add(id);
-          }
-          wireIdsToDelete = [...expanded];
-        }
-        const compIdsToDelete = [...selectedIds];
-        if (selectedId && !compIdsToDelete.includes(selectedId)) {
-          compIdsToDelete.push(selectedId);
-        }
-
-        // One undo step for the whole delete: transact() takes a single
-        // snapshot; removeSchematicWire/removeComponent skip their own.
-        transact(() => {
-          for (const wid of wireIdsToDelete) removeSchematicWire(wid);
-          for (const cid of compIdsToDelete) removeComponent(cid);
-        });
-
-        setSelectedId(null);
-        setSelectedWireId(null);
-        setSelectedIds([]);
-        setSelectedWireIds([]);
+      // Escape: cancel the pending segment, then clear selection, then leave wire mode
+      if (key === "Escape") {
+        if (drawing) { endDrawing(); return; }
+        if (selSize(selection) > 0) { applySelection(EMPTY_SEL); return; }
+        if (wireDrawMode) { toggleWireDrawMode(); return; }
         return;
       }
 
-      // Arrow keys: move selected components and wires atomically
-      const moveIds = selectedIds.length > 0 ? selectedIds : selectedId ? [selectedId] : [];
-      const moveWireIds = selectedWireIds;
-      if ((moveIds.length > 0 || moveWireIds.length > 0) && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
+      if (drawing) {
+        if (key === "Enter") {
+          e.preventDefault();
+          if (wirePreviewRef.current) placeSegment(wirePreviewRef.current);
+          endDrawing();
+          return;
+        }
+        if (key === "Backspace") {
+          e.preventDefault();
+          stepBack();
+          return;
+        }
+        return;
+      }
+
+      if (key === "r") { rotateSelection("rotate"); return; }
+      if (key === "m") { rotateSelection("mirror"); return; }
+
+      // E: toggle whether the selected component(s) are excluded from the stripboard
+      if (key === "e") {
+        if (selection.components.length > 0) toggleExcludeSelection(selection.components);
+        return;
+      }
+
+      // G / P / L: drop a ground, power or net label at the cursor
+      if (key === "g" || key === "p" || key === "l") {
+        placeLabel(key === "g" ? "gnd" : key === "p" ? "power" : "label", cursorOrCenter());
+        return;
+      }
+
+      if (key === "Delete" || key === "Backspace") {
+        if (selSize(selection) === 0) return;
         e.preventDefault();
-        // One snapshot per held-key gesture: snapshot on the initial press,
-        // keep moving on auto-repeat. One Ctrl+Z reverts the whole nudge.
-        if (!e.repeat) pushSnapshot();
+        deleteSelection(e.altKey);
+        return;
+      }
+
+      // Arrow keys: nudge the selection one grid step (Shift: five)
+      if (isArrowKey && selSize(selection) > 0) {
+        e.preventDefault();
+        if (!arrowSessionRef.current) {
+          arrowSessionRef.current = true;
+          pushSnapshot();
+          beginSchematicMove(selection.components, selection.wires, selection.labels);
+        }
+        const step = e.shiftKey ? MOVE_STEP * 5 : MOVE_STEP;
         const delta = {
-          ArrowUp: { x: 0, y: -MOVE_STEP },
-          ArrowDown: { x: 0, y: MOVE_STEP },
-          ArrowLeft: { x: -MOVE_STEP, y: 0 },
-          ArrowRight: { x: MOVE_STEP, y: 0 },
+          ArrowUp: { x: 0, y: -step },
+          ArrowDown: { x: 0, y: step },
+          ArrowLeft: { x: -step, y: 0 },
+          ArrowRight: { x: step, y: 0 },
         }[e.key]!;
-        nudgeSelection(moveIds, moveWireIds, delta);
+        moveSchematicItems(delta);
         return;
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selectedId, selectedIds, selectedWireId, selectedWireIds, wireDrawingFrom, wireDrawMode, components, schematicWires, updateSchematicPos, removeComponent, removeSchematicWire, rotateSchematicComponent, toggleExcludeSelection, pushSnapshot, transact, setSchematicWireDrawing, toggleWireDrawMode, addComponentInstance, nudgeSelection, pinNodeKeys]);
+  }, [readOnly, selection, components, schematicWires, netLabels, drawing, wireDrawMode, endArrowSession, applySelection, copySelection, pasteClipboard, endDrawing, toggleWireDrawMode, placeSegment, stepBack, rotateSelection, toggleExcludeSelection, placeLabel, cursorOrCenter, deleteSelection, pushSnapshot, beginSchematicMove, moveSchematicItems]);
 
-  const getSVGPoint = useCallback((e: React.MouseEvent) => {
-    const svg = svgRef.current;
-    if (!svg) return { x: 0, y: 0 };
-    return panZoom.screenToSvg(e.clientX, e.clientY, svg);
-  }, [panZoom.screenToSvg]);
+  // ── Mouse ─────────────────────────────────────────────
 
-  // Get absolute grid position of a component's pin
-  const getPinGridPos = useCallback((componentId: string, pinId: string): { x: number; y: number } | null => {
-    const comp = components.find((c) => c.id === componentId);
-    if (!comp) return null;
-    const def = resolveComponentDef(comp, componentDefs);
-    if (!def) return null;
-    const rotation = comp.schematicRotation ?? 0;
-    const pins = getRotatedPinPositions(def.symbol, rotation, comp.schematicMirrored ?? false);
-    const pin = pins.find((p) => p.pinId === pinId);
-    if (!pin) return null;
-    return { x: comp.schematicPos.x + pin.x, y: comp.schematicPos.y + pin.y };
-  }, [components, componentDefs]);
+  /** Mousedown on a component body, a wire or a label in select mode */
+  const handleItemMouseDown = useCallback((kind: SelKind, id: string, e: React.MouseEvent) => {
+    if (readOnly || e.button === 2) return;
+    if (wireTool) return;
+    e.preventDefault();
+    e.stopPropagation();
+    endArrowSession();
+    setEditingLabelId(null);
 
-  // Pin click handler for wire drawing (only active in wire draw mode)
+    const mode = selModeFromEvent(e);
+    if (mode === "toggle") {
+      applySelection(selWith(selection, kind, id, "toggle"));
+      return;
+    }
+    const next = mode === "add" || selHas(selection, kind, id) ? selWith(selection, kind, id, "add") : selWith(selection, kind, id, "replace");
+    applySelection(next);
+
+    beginSchematicMove(next.components, next.wires, next.labels);
+    const pt = getSVGPoint(e);
+    const ax = snapToGrid(pt.x), ay = snapToGrid(pt.y);
+    dragRef.current = {
+      startClientX: e.clientX, startClientY: e.clientY,
+      offsetX: pt.x - ax, offsetY: pt.y - ay,
+      lastX: ax, lastY: ay,
+      didMove: false,
+      sel: next,
+    };
+    setIsDragging(true);
+  }, [readOnly, wireTool, endArrowSession, selection, applySelection, beginSchematicMove, getSVGPoint]);
+
+  /** Mousedown on a pin end: start or finish a wire (any mode) */
   const handlePinMouseDown = useCallback((componentId: string, pinId: string, e: React.MouseEvent) => {
-    if (readOnly || !wireDrawMode) return;
+    if (readOnly || e.button === 2) return;
+    if (!wireTool && (e.ctrlKey || e.metaKey || e.shiftKey)) {
+      handleItemMouseDown("components", componentId, e);
+      return;
+    }
     e.stopPropagation();
     e.preventDefault();
-
     const pinPos = getPinGridPos(componentId, pinId);
     if (!pinPos) return;
+    if (drawing) finishAt(pinPos);
+    else startDrawing(pinPos, !wireDrawMode);
+  }, [readOnly, wireTool, drawing, wireDrawMode, handleItemMouseDown, getPinGridPos, finishAt, startDrawing]);
 
-    if (wireDrawingFrom) {
-      // Don't create zero-length wires
-      if (Math.round(wireDrawingFrom.x) === Math.round(pinPos.x) &&
-          Math.round(wireDrawingFrom.y) === Math.round(pinPos.y)) return;
-      // Complete wire — L-shape is auto-routed
-      addSchematicWire(wireDrawingFrom, pinPos);
-      setSchematicWireDrawing(null);
-      setWirePreview(null);
-    } else {
-      // Start wire drawing from this pin's position
-      setSchematicWireDrawing(pinPos);
-      setSelectedId(null);
-      setSelectedWireId(null);
+  /** Mousedown on a flag's connection point: start or finish a wire, like a pin */
+  const handleLabelPointMouseDown = useCallback((label: NetLabel, e: React.MouseEvent) => {
+    if (readOnly || e.button === 2) return;
+    if (!wireTool && (e.ctrlKey || e.metaKey || e.shiftKey)) {
+      handleItemMouseDown("labels", label.id, e);
+      return;
     }
-  }, [wireDrawMode, wireDrawingFrom, getPinGridPos, addSchematicWire, setSchematicWireDrawing, setSelectedId]);
+    e.stopPropagation();
+    e.preventDefault();
+    if (drawing) finishAt(label.pos);
+    else startDrawing(label.pos, !wireDrawMode);
+  }, [readOnly, wireTool, drawing, wireDrawMode, handleItemMouseDown, finishAt, startDrawing]);
 
-  const handleMouseDown = useCallback(
-    (componentId: string, e: React.MouseEvent) => {
-      if (readOnly) return;
-      if (e.button === 2) return;
+  const handleWireMouseDown = useCallback((wire: SchematicWire, e: React.MouseEvent) => {
+    if (readOnly || e.button === 2) return;
+    if (!wireTool) {
+      handleItemMouseDown("wires", wire.id, e);
+      return;
+    }
+    e.stopPropagation();
+    e.preventDefault();
+    const pt = getSVGPoint(e);
+    const snapped = { x: snapToGrid(pt.x), y: snapToGrid(pt.y) };
+    // Settling splits the wire under the new endpoint, so the join is a real junction
+    if (drawing) finishAt(snapped);
+    else startDrawing(snapped, false);
+  }, [readOnly, wireTool, drawing, handleItemMouseDown, getSVGPoint, finishAt, startDrawing]);
 
-      // If wire drawing mode, don't start drag
-      if (wireDrawMode) return;
+  const handleSvgMouseDown = useCallback((e: React.MouseEvent) => {
+    if (readOnly) return;
+    endArrowSession();
+    if (e.button === 2) return;
+    const target = e.target as Element;
+    const isBackground = target.tagName === "svg" || target.getAttribute("fill") === "url(#grid)";
+    if (!isBackground) return;
+    setEditingLabelId(null);
 
-      e.preventDefault();
+    const pt = getSVGPoint(e);
+    if (drawing) {
+      // Click on grid = complete the segment here and keep drawing
+      placeSegment({ x: snapToGrid(pt.x), y: snapToGrid(pt.y) });
+      return;
+    }
+    if (wireDrawMode) {
+      startDrawing({ x: snapToGrid(pt.x), y: snapToGrid(pt.y) }, false);
+      return;
+    }
+    const mode = selModeFromEvent(e);
+    setSelectionRect({ startX: pt.x, startY: pt.y, currentX: pt.x, currentY: pt.y, mode: mode === "replace" ? "replace" : "add" });
+  }, [readOnly, endArrowSession, getSVGPoint, drawing, wireDrawMode, placeSegment, startDrawing]);
 
-      const comp = components.find((c) => c.id === componentId);
-      if (!comp) return;
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    const pt = getSVGPoint(e);
+    lastMouseRef.current = pt;
+    if (panZoom.handlePanMove(e)) return;
 
-      // Dragging a component that's part of a multi-selection moves the whole
-      // selection together; otherwise it's a single-component drag.
-      const selIds = selectedIds.length > 0 ? selectedIds : selectedId ? [selectedId] : [];
-      const isMulti = selIds.length > 1 && selIds.includes(componentId);
-
-      // Defer the snapshot until the drag actually moves something (see
-      // commitSnapshotOnce). A plain select-click must not touch history/redo.
-      pendingSnapshotRef.current = true;
-      if (isMulti) {
-        multiDragRef.current = {
-          moveIds: selIds,
-          moveWireIds: selectedWireIds,
-          lastX: comp.schematicPos.x,
-          lastY: comp.schematicPos.y,
-        };
-      } else {
-        captureSchematicDragBindings(componentId);
+    // Wire drawing preview + detect initial direction
+    if (drawing && wireDrawingFrom) {
+      setWirePreview({ x: snapToGrid(pt.x), y: snapToGrid(pt.y) });
+      const mdx = Math.abs(pt.x - wireDrawingFrom.x);
+      const mdy = Math.abs(pt.y - wireDrawingFrom.y);
+      const threshold = GRID_SIZE / 2;
+      if (mdx < threshold && mdy < threshold) {
+        // Back near start — reset direction so user can re-choose
+        if (wireDirection) useProjectStore.setState({ schematicWireDirection: null });
+      } else if (!wireDirection) {
+        // Lock direction on first significant movement
+        useProjectStore.setState({ schematicWireDirection: mdx >= mdy ? "horizontal-first" : "vertical-first" });
       }
-      const pt = getSVGPoint(e);
-      setDragging({
-        componentId,
-        offsetX: pt.x - comp.schematicPos.x,
-        offsetY: pt.y - comp.schematicPos.y,
-        startX: e.clientX,
-        startY: e.clientY,
-        didDrag: false,
-        multi: isMulti,
-      });
-      setSelectedWireId(null);
-    },
-    [components, selectedIds, selectedId, selectedWireIds, getSVGPoint, pushSnapshot, wireDrawMode, wireDrawingFrom, captureSchematicDragBindings]
-  );
+      return;
+    }
 
-  const handleSvgMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      if (readOnly) return;
-      if (e.button === 2) return;
-      const target = e.target as Element;
-      const isBackground = target.tagName === "svg" ||
-        target.getAttribute("fill") === "url(#grid)";
-      if (!isBackground) return;
+    if (selectionRect) {
+      setSelectionRect((prev) => (prev ? { ...prev, currentX: pt.x, currentY: pt.y } : null));
+      return;
+    }
 
-      if (wireDrawMode && wireDrawingFrom) {
-        // Click on grid = complete wire to this grid point, continue drawing
-        const pt = getSVGPoint(e);
-        const snapped = { x: snapToGrid(pt.x), y: snapToGrid(pt.y) };
-        if (Math.round(wireDrawingFrom.x) !== Math.round(snapped.x) ||
-            Math.round(wireDrawingFrom.y) !== Math.round(snapped.y)) {
-          addSchematicWire(wireDrawingFrom, snapped);
-          setSchematicWireDrawing(snapped);
-        }
-        return;
-      }
+    const drag = dragRef.current;
+    if (!drag) return;
+    if (!drag.didMove) {
+      const dx = e.clientX - drag.startClientX;
+      const dy = e.clientY - drag.startClientY;
+      if (Math.sqrt(dx * dx + dy * dy) <= DRAG_THRESHOLD) return;
+    }
+    const nx = snapToGrid(pt.x - drag.offsetX);
+    const ny = snapToGrid(pt.y - drag.offsetY);
+    if (nx === drag.lastX && ny === drag.lastY) return;
+    // One snapshot per drag, taken the first time the selection actually
+    // moves, so a plain select-click never touches history.
+    if (!drag.didMove) {
+      drag.didMove = true;
+      pushSnapshot();
+    }
+    moveSchematicItems({ x: nx - drag.lastX, y: ny - drag.lastY });
+    drag.lastX = nx;
+    drag.lastY = ny;
+  }, [getSVGPoint, panZoom.handlePanMove, drawing, wireDrawingFrom, wireDirection, selectionRect, pushSnapshot, moveSchematicItems]);
 
-      startSelectionRect(getSVGPoint(e));
-    },
-    [getSVGPoint, startSelectionRect, wireDrawingFrom, addSchematicWire, setSchematicWireDrawing]
-  );
+  const finishRect = useCallback(() => {
+    const rect = selectionRect;
+    setSelectionRect(null);
+    if (!rect) return false;
+    const x1 = Math.min(rect.startX, rect.currentX), x2 = Math.max(rect.startX, rect.currentX);
+    const y1 = Math.min(rect.startY, rect.currentY), y2 = Math.max(rect.startY, rect.currentY);
+    if (x2 - x1 <= MIN_RECT_SIZE && y2 - y1 <= MIN_RECT_SIZE) {
+      if (rect.mode === "replace") applySelection(EMPTY_SEL);
+      return true;
+    }
+    // Dragged left to right: only what the box fully encloses. Right to
+    // left: everything the box touches.
+    const enclosed = rect.currentX >= rect.startX;
+    const picked: Selection = { components: [], wires: [], labels: [] };
+    for (const comp of components) {
+      const def = resolveComponentDef(comp, componentDefs);
+      if (!def) continue;
+      const b = getSymbolBounds(def.symbol, comp.schematicRotation ?? 0, comp.schematicMirrored ?? false);
+      const cx1 = comp.schematicPos.x + b.minX, cx2 = comp.schematicPos.x + b.maxX;
+      const cy1 = comp.schematicPos.y + b.minY, cy2 = comp.schematicPos.y + b.maxY;
+      const hit = enclosed
+        ? cx1 >= x1 && cx2 <= x2 && cy1 >= y1 && cy2 <= y2
+        : cx2 >= x1 && cx1 <= x2 && cy2 >= y1 && cy1 <= y2;
+      if (hit) picked.components.push(comp.id);
+    }
+    for (const w of schematicWires) if (wireInRect(w, x1, y1, x2, y2, enclosed)) picked.wires.push(w.id);
+    for (const l of netLabels) {
+      const b = netLabelBounds(l);
+      const hit = enclosed
+        ? b.minX >= x1 && b.maxX <= x2 && b.minY >= y1 && b.maxY <= y2
+        : pointInRect(l.pos, x1, y1, x2, y2) || (b.maxX >= x1 && b.minX <= x2 && b.maxY >= y1 && b.minY <= y2);
+      if (hit) picked.labels.push(l.id);
+    }
+    applySelection(rect.mode === "replace" ? picked : selUnion(selection, picked));
+    return true;
+  }, [selectionRect, components, componentDefs, schematicWires, netLabels, selection, applySelection]);
 
-  const handleMouseMove = useCallback(
-    (e: React.MouseEvent) => {
-      if (panZoom.handlePanMove(e)) return;
-
-      // Wire drawing preview + detect initial direction
-      if (wireDrawMode && wireDrawingFrom) {
-        const pt = getSVGPoint(e);
-        setWirePreview({ x: snapToGrid(pt.x), y: snapToGrid(pt.y) });
-
-        const mdx = Math.abs(pt.x - wireDrawingFrom.x);
-        const mdy = Math.abs(pt.y - wireDrawingFrom.y);
-        const threshold = GRID_SIZE / 2;
-
-        if (mdx < threshold && mdy < threshold) {
-          // Back near start — reset direction so user can re-choose
-          if (wireDirection) {
-            useProjectStore.setState({ schematicWireDirection: null });
-          }
-        } else if (!wireDirection) {
-          // Lock direction on first significant movement
-          useProjectStore.setState({
-            schematicWireDirection: mdx >= mdy ? "horizontal-first" : "vertical-first",
-          });
-        }
-        return;
-      }
-
-      if (selectionRect) {
-        updateSelectionRect(getSVGPoint(e));
-      }
-
-      if (!dragging) return;
-      if (!dragging.didDrag && checkDragThreshold(e.clientX, e.clientY, dragging)) {
-        setDragging({ ...dragging, didDrag: true });
-      }
-      const pt = getSVGPoint(e);
-      const newX = snapToGrid(pt.x - dragging.offsetX);
-      const newY = snapToGrid(pt.y - dragging.offsetY);
-
-      // Multi-drag: move the whole selection by the incremental delta since the
-      // last grid step, using the same wire-following logic as arrow nudging.
-      if (dragging.multi) {
-        const plan = multiDragRef.current;
-        if (plan && (newX !== plan.lastX || newY !== plan.lastY)) {
-          commitSnapshotOnce();
-          nudgeSelection(plan.moveIds, plan.moveWireIds, { x: newX - plan.lastX, y: newY - plan.lastY });
-          plan.lastX = newX;
-          plan.lastY = newY;
-        }
-        return;
-      }
-
-      // Single drag: only mutate (and snapshot) when the snapped position actually
-      // changes, so sub-grid jitter from a click never touches history.
-      const comp = components.find((c) => c.id === dragging.componentId);
-      if (comp && (comp.schematicPos.x !== newX || comp.schematicPos.y !== newY)) {
-        commitSnapshotOnce();
-        updateSchematicPos(dragging.componentId, { x: newX, y: newY });
-      }
-    },
-    [dragging, selectionRect, getSVGPoint, updateSchematicPos, panZoom.handlePanMove, updateSelectionRect, checkDragThreshold, wireDrawMode, wireDrawingFrom, wireDirection, components, commitSnapshotOnce, nudgeSelection]
-  );
+  const endDrag = useCallback(() => {
+    const drag = dragRef.current;
+    dragRef.current = null;
+    setIsDragging(false);
+    if (!drag) return;
+    if (drag.didMove) finishSchematicGesture();
+    else cancelSchematicGesture();
+  }, [finishSchematicGesture, cancelSchematicGesture]);
 
   const handleMouseUp = useCallback(() => {
     panZoom.handlePanEnd();
-    // Gesture over: disarm a pending snapshot that was never triggered
-    // (e.g. a click that selected without moving the component).
-    pendingSnapshotRef.current = false;
+    if (finishRect()) return;
+    endDrag();
+  }, [panZoom.handlePanEnd, finishRect, endDrag]);
 
-    const rectHandled = finalizeSelectionRect((x1, y1, x2, y2) => {
-      const selected: string[] = [];
-      for (const comp of components) {
-        const def = resolveComponentDef(comp, componentDefs);
-        if (!def) continue;
-        const bounds = getSymbolBounds(def.symbol, comp.schematicRotation ?? 0, comp.schematicMirrored ?? false);
-        const cx = comp.schematicPos.x + bounds.minX;
-        const cy = comp.schematicPos.y + bounds.minY;
-        if (cx + bounds.width >= x1 && cx <= x2 && cy + bounds.height >= y1 && cy <= y2) {
-          selected.push(comp.id);
-        }
-      }
-      // Also select wires with any endpoint inside the rect
-      const selWires: string[] = [];
-      for (const wire of schematicWires) {
-        const startIn = wire.start.x >= x1 && wire.start.x <= x2 && wire.start.y >= y1 && wire.start.y <= y2;
-        const endIn = wire.end.x >= x1 && wire.end.x <= x2 && wire.end.y >= y1 && wire.end.y <= y2;
-        if (startIn || endIn) selWires.push(wire.id);
-      }
-      setSelectedWireIds(selWires);
-      return selected;
-    });
-    if (rectHandled) return;
+  const handleMouseLeave = useCallback(() => {
+    mouseInsideRef.current = false;
+    panZoom.handlePanEnd();
+    setSelectionRect(null);
+    endDrag();
+  }, [panZoom.handlePanEnd, endDrag]);
 
-    if (dragging) {
-      markDragComplete();
-      // A plain click (no drag) toggles single selection. In multi mode we leave
-      // the selection intact so a stray click doesn't collapse it.
-      if (!dragging.multi && !dragging.didDrag) {
-        setSelectedId((prev) =>
-          prev === dragging.componentId ? null : dragging.componentId
-        );
-      }
-    }
-    setDragging(null);
-    multiDragRef.current = null;
-    clearSchematicDragBindings();
-  }, [dragging, components, componentDefs, finalizeSelectionRect, markDragComplete, setSelectedId, clearSchematicDragBindings]);
+  const handleDoubleClick = useCallback((e: React.MouseEvent) => {
+    if (readOnly) return;
+    const target = e.target as Element;
+    const isBackground = target.tagName === "svg" || target.getAttribute("fill") === "url(#grid)";
+    // The first click of the pair already placed the segment; the second ends the run
+    if (isBackground && drawing) endDrawing();
+  }, [readOnly, drawing, endDrawing]);
 
-  const handleCanvasClick = useCallback((e: React.MouseEvent) => {
-    if (shouldSuppressClick()) return;
-    if (e.target === svgRef.current || (e.target as Element).tagName === "rect") {
-      const isGridRect = (e.target as Element).getAttribute("fill") === "url(#grid)";
-      if (e.target === svgRef.current || isGridRect) {
-        clearSelection();
-        setSelectedWireId(null);
-        setSelectedWireIds([]);
-      }
-    }
-  }, [shouldSuppressClick, clearSelection]);
-
-  // Drag-and-drop from component library
+  // Drag-and-drop from the component library
   const handleDragOver = useCallback((e: React.DragEvent) => {
-    if (e.dataTransfer.types.includes("application/schematic-component")) {
+    const types = e.dataTransfer.types;
+    if (types.includes("application/schematic-component") || types.includes("application/schematic-netlabel")) {
       e.preventDefault();
       e.dataTransfer.dropEffect = "copy";
     }
   }, []);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
-    if (readOnly) return;
-    const defId = e.dataTransfer.getData("application/schematic-component");
-    if (!defId || !svgRef.current) return;
-    e.preventDefault();
+    if (readOnly || !svgRef.current) return;
     const pos = panZoom.screenToSvg(e.clientX, e.clientY, svgRef.current);
-    addComponent(defId, { x: snapToGrid(pos.x), y: snapToGrid(pos.y) });
-  }, [addComponent, panZoom.screenToSvg]);
+    const snapped = { x: snapToGrid(pos.x), y: snapToGrid(pos.y) };
+    const defId = e.dataTransfer.getData("application/schematic-component");
+    if (defId) {
+      e.preventDefault();
+      addComponent(defId, snapped);
+      return;
+    }
+    const raw = e.dataTransfer.getData("application/schematic-netlabel");
+    if (raw) {
+      let tile: { kind?: string; name?: string } = {};
+      try { tile = JSON.parse(raw); } catch { tile = {}; }
+      const kind = tile.kind;
+      if (kind === "gnd" || kind === "power" || kind === "label") {
+        e.preventDefault();
+        placeLabel(kind, snapped, tile.name);
+      }
+    }
+  }, [readOnly, panZoom.screenToSvg, addComponent, placeLabel]);
 
-  // Render selected component last
-  const sortedComponents = selectedId
-    ? [
-        ...components.filter((c) => c.id !== selectedId),
-        ...components.filter((c) => c.id === selectedId),
-      ]
+  // ── Render ────────────────────────────────────────────
+
+  // Selected components render last so they sit on top
+  const selectedCompSet = new Set(selection.components);
+  const sortedComponents = selection.components.length > 0
+    ? [...components.filter((c) => !selectedCompSet.has(c.id)), ...components.filter((c) => selectedCompSet.has(c.id))]
     : components;
-
-
-  // Wire drawing start position is just the stored grid point
-  const wireStartPos = wireDrawingFrom;
-
-  // Container size for viewBox
-  const [containerSize, setContainerSize] = useState({ width: 1000, height: 800 });
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const obs = new ResizeObserver((entries) => {
-      const { width, height } = entries[0].contentRect;
-      setContainerSize({ width, height });
-    });
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, []);
 
   const cursorStyle = panZoom.isPanning.current
     ? "grabbing"
-    : wireDrawMode
+    : wireTool
     ? "crosshair"
-    : dragging
+    : isDragging
     ? "grabbing"
     : "default";
+
+  const wireStartPos = wireDrawingFrom;
+  const selCount = selSize(selection);
 
   return (
     <div ref={containerRef} className="h-full w-full overflow-hidden relative">
@@ -868,17 +909,11 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
         }}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
-        onMouseLeave={() => {
-          panZoom.handlePanEnd();
-          pendingSnapshotRef.current = false;
-          setDragging(null);
-          multiDragRef.current = null;
-          clearSchematicDragBindings();
-          cancelSelectionRect();
-        }}
+        onMouseEnter={() => { mouseInsideRef.current = true; }}
+        onMouseLeave={handleMouseLeave}
+        onDoubleClick={handleDoubleClick}
         onWheel={panZoom.handleWheel}
         onContextMenu={panZoom.handleContextMenu}
-        onClick={handleCanvasClick}
         onDragOver={handleDragOver}
         onDrop={handleDrop}
       >
@@ -890,76 +925,65 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
         </defs>
         <rect x="-10000" y="-10000" width="20000" height="20000" fill="url(#grid)" />
 
+        {/* Component drag targets, painted below the wires so a wire crossing a
+            symbol or running between its pin stubs stays selectable. The visible
+            symbols, their pins and labels render above and keep their handlers. */}
+        {!readOnly && components.map((comp) => {
+          const def = resolveComponentDef(comp, componentDefs);
+          if (!def) return null;
+          const b = getSymbolBounds(def.symbol, comp.schematicRotation ?? 0, comp.schematicMirrored ?? false);
+          return (
+            <rect
+              key={`hit-${comp.id}`}
+              x={comp.schematicPos.x + b.minX - 5}
+              y={comp.schematicPos.y + b.minY - 5}
+              width={b.width + 10}
+              height={b.height + 10}
+              fill="transparent"
+              style={{ cursor: "grab" }}
+              onMouseDown={(e) => handleItemMouseDown("components", comp.id, e)}
+            />
+          );
+        })}
+
         {/* Schematic wires */}
         {schematicWires.map((wire) => (
           <SchematicWireLine
             key={wire.id}
             wire={wire}
             color={wireColorMap.get(wire.id)}
-            isSelected={selectedWireId === wire.id || selectedWireIds.includes(wire.id)}
-            highlighted={!!highlightedNetId && wireNetIdMap.get(wire.id) === highlightedNetId}
-            onMouseDown={(e) => {
-              if (readOnly) return;
-              e.stopPropagation();
-
-              if (!wireDrawMode) {
-                // Not in wire mode — just select the wire
-                setSelectedWireId(wire.id);
-                setSelectedId(null);
-                return;
-              }
-
-              if (wireDrawingFrom) {
-                // Complete current wire drawing at the nearest grid point on this wire
-                const pt = getSVGPoint(e);
-                const snapped = { x: snapToGrid(pt.x), y: snapToGrid(pt.y) };
-                // Split the target wire at this point
-                splitSchematicWire(wire.id, snapped);
-                // Complete the wire being drawn
-                if (Math.round(wireDrawingFrom.x) !== Math.round(snapped.x) ||
-                    Math.round(wireDrawingFrom.y) !== Math.round(snapped.y)) {
-                  addSchematicWire(wireDrawingFrom, snapped);
-                }
-                setSchematicWireDrawing(null);
-                setWirePreview(null);
-                return;
-              }
-
-              // In wire mode, not drawing — split wire and start new wire from split point
-              const pt = getSVGPoint(e);
-              const snapped = { x: snapToGrid(pt.x), y: snapToGrid(pt.y) };
-              const atStart = Math.round(wire.start.x) === Math.round(snapped.x) && Math.round(wire.start.y) === Math.round(snapped.y);
-              const atEnd = Math.round(wire.end.x) === Math.round(snapped.x) && Math.round(wire.end.y) === Math.round(snapped.y);
-              if (atStart || atEnd) {
-                setSchematicWireDrawing(snapped);
-                setSelectedId(null);
-                setSelectedWireId(null);
-              } else {
-                splitSchematicWire(wire.id, snapped);
-                setSchematicWireDrawing(snapped);
-                setSelectedId(null);
-                setSelectedWireId(null);
-              }
-            }}
+            isSelected={selection.wires.includes(wire.id)}
+            highlighted={!!activeNetId && wireNetIdMap.get(wire.id) === activeNetId}
+            onMouseDown={(e) => handleWireMouseDown(wire, e)}
+            onMouseEnter={readOnly || isDragging || drawing ? undefined : () => setHoverNetId(wireNetIdMap.get(wire.id) ?? null)}
+            onMouseLeave={() => setHoverNetId(null)}
           />
         ))}
 
-        {/* Junction dots — where 3+ wire segments meet */}
+        {/* Junction dots where three or more wire ends, pins or labels meet */}
         {junctionPoints.map((jp) => {
-          const key = pointKey(jp.x, jp.y);
-          const wire = schematicWires.find((w) =>
-            pointKey(w.start.x, w.start.y) === key || pointKey(w.end.x, w.end.y) === key
-          );
-          const color = wire ? (wireColorMap.get(wire.id) ?? "var(--junction-dot)") : "var(--junction-dot)";
+          const color = jp.wireId ? (wireColorMap.get(jp.wireId) ?? "var(--junction-dot)") : "var(--junction-dot)";
           return (
             <circle
-              key={key}
+              key={pointKey(jp.x, jp.y)}
               cx={jp.x} cy={jp.y} r={2.5}
               fill={color}
               pointerEvents="none"
             />
           );
         })}
+
+        {/* Wire ends that touch nothing */}
+        {danglingEnds.map((d) => (
+          <rect
+            key={`d-${pointKey(d.x, d.y)}`}
+            x={d.x - 2.5} y={d.y - 2.5} width={5} height={5}
+            fill="var(--schematic-bg)"
+            stroke={wireColorMap.get(d.wireId) ?? "var(--wire-default)"}
+            strokeWidth={1.2}
+            pointerEvents="none"
+          />
+        ))}
 
         {/* Wire drawing preview — L-shape following mouse direction */}
         {wireStartPos && wirePreview && (() => {
@@ -1010,13 +1034,38 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
           <SchematicComponentBlock
             key={comp.id}
             component={comp}
-            isSelected={comp.id === selectedId || selectedIds.includes(comp.id)}
-            onMouseDown={(e) => handleMouseDown(comp.id, e)}
+            isSelected={selectedCompSet.has(comp.id)}
+            onMouseDown={(e) => handleItemMouseDown("components", comp.id, e)}
             onPinMouseDown={handlePinMouseDown}
             getSVGPoint={getSVGPoint}
             readOnly={readOnly}
           />
         ))}
+
+        {/* Net labels */}
+        {netLabels.map((label) => {
+          const info = labelNetMap.get(label.id);
+          return (
+            <SchematicNetLabel
+              key={label.id}
+              label={label}
+              color={info?.color}
+              isSelected={selection.labels.includes(label.id)}
+              highlighted={!!activeNetId && info?.netId === activeNetId}
+              editing={editingLabelId === label.id}
+              onMouseDown={readOnly ? undefined : (e) => handleItemMouseDown("labels", label.id, e)}
+              onDoubleClick={readOnly ? undefined : (e) => { e.stopPropagation(); setEditingLabelId(label.id); }}
+              onPointMouseDown={readOnly ? undefined : (e) => handleLabelPointMouseDown(label, e)}
+              onMouseEnter={readOnly || isDragging || drawing ? undefined : () => setHoverNetId(info?.netId ?? null)}
+              onMouseLeave={() => setHoverNetId(null)}
+              onCommitName={(name) => {
+                setEditingLabelId(null);
+                if (name.trim() && name.trim() !== label.name) updateNetLabel(label.id, { name });
+              }}
+              onCancelEdit={() => setEditingLabelId(null)}
+            />
+          );
+        })}
 
         {/* Selection rectangle */}
         {selectionRect && (
@@ -1028,15 +1077,14 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
             fill="var(--selection-fill)"
             stroke="var(--selection-stroke)"
             strokeWidth={1}
-            strokeDasharray="4 2"
+            strokeDasharray={selectionRect.currentX >= selectionRect.startX ? "4 2" : "1 3"}
             pointerEvents="none"
           />
         )}
-
       </svg>
 
-      {/* Selection actions — shown when a single component is selected */}
-      {!readOnly && selectedId && (
+      {/* Selection actions — a single component */}
+      {!readOnly && singleComponentId && (
         <SelectionActionBar
           actions={[
             {
@@ -1045,7 +1093,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
               title: "Rotate selected component 90°",
               shortcut: "R",
               icon: RotateIcon,
-              onClick: () => rotateSchematicComponent(selectedId),
+              onClick: () => rotateSchematicComponent(singleComponentId),
             },
             {
               key: "mirror",
@@ -1053,10 +1101,10 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
               title: "Mirror selected component",
               shortcut: "M",
               icon: MirrorIcon,
-              onClick: () => mirrorSchematicComponent(selectedId),
+              onClick: () => mirrorSchematicComponent(singleComponentId),
             },
             (() => {
-              const comp = components.find((c) => c.id === selectedId);
+              const comp = components.find((c) => c.id === singleComponentId);
               const excluded = !!comp?.boardExcluded;
               return {
                 key: "exclude",
@@ -1066,7 +1114,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
                   : "Exclude this component from the stripboard (off-board part)",
                 shortcut: "E",
                 icon: ExcludeIcon,
-                onClick: () => toggleExcludeSelection([selectedId]),
+                onClick: () => toggleExcludeSelection([singleComponentId]),
               };
             })(),
             {
@@ -1076,18 +1124,15 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
               shortcut: "Del",
               icon: DeleteIcon,
               variant: "danger",
-              onClick: () => {
-                removeComponent(selectedId); // pushes its own undo snapshot
-                clearSelection();
-              },
+              onClick: () => deleteSelection(false),
             },
           ] satisfies CanvasAction[]}
         />
       )}
 
-      {/* Selection actions — shown when a single wire is selected */}
-      {!readOnly && selectedWireId && !selectedId && (() => {
-        const wholeWireIds = collectWholeWire(selectedWireId, schematicWires, pinNodeKeys);
+      {/* Selection actions — a single wire */}
+      {!readOnly && singleWireId && (() => {
+        const wholeWireIds = collectWholeWire(singleWireId, schematicWires, pinNodeKeys);
         const deleteSegment: CanvasAction = {
           key: "delete-segment",
           label: "Delete Segment",
@@ -1095,10 +1140,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
           shortcut: "Del",
           icon: DeleteIcon,
           variant: "danger",
-          onClick: () => {
-            removeSchematicWire(selectedWireId); // pushes its own undo snapshot
-            setSelectedWireId(null);
-          },
+          onClick: () => deleteSelection(false),
         };
         const deleteWhole: CanvasAction = {
           key: "delete-wire",
@@ -1107,12 +1149,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
           shortcut: "Alt+Del",
           icon: DeleteIcon,
           variant: "danger",
-          onClick: () => {
-            transact(() => {
-              for (const id of wholeWireIds) removeSchematicWire(id);
-            });
-            setSelectedWireId(null);
-          },
+          onClick: () => deleteSelection(true),
         };
         return (
           <SelectionActionBar
@@ -1120,6 +1157,86 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
           />
         );
       })()}
+
+      {/* Selection actions — a single net label */}
+      {!readOnly && singleLabelId && (
+        <SelectionActionBar
+          actions={[
+            {
+              key: "rotate",
+              label: "Rotate",
+              title: "Rotate label 90°",
+              shortcut: "R",
+              icon: RotateIcon,
+              onClick: () => rotateSelection("rotate"),
+            },
+            {
+              key: "rename",
+              label: "Rename",
+              title: "Change the net name (double-click also works)",
+              icon: (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 20h9" />
+                  <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                </svg>
+              ),
+              onClick: () => setEditingLabelId(singleLabelId),
+            },
+            {
+              key: "delete",
+              label: "Delete",
+              title: "Delete this label",
+              shortcut: "Del",
+              icon: DeleteIcon,
+              variant: "danger",
+              onClick: () => deleteSelection(false),
+            },
+          ] satisfies CanvasAction[]}
+        />
+      )}
+
+      {/* Selection actions — several things */}
+      {!readOnly && selCount > 1 && (
+        <SelectionActionBar
+          actions={[
+            ...(selection.components.length + selection.labels.length > 0 ? [
+              {
+                key: "rotate",
+                label: `Rotate ${selCount}`,
+                title: "Rotate the selection 90° around its centre",
+                shortcut: "R",
+                icon: RotateIcon,
+                onClick: () => rotateSelection("rotate"),
+              },
+              {
+                key: "mirror",
+                label: `Mirror ${selCount}`,
+                title: "Mirror the selection around its centre",
+                shortcut: "M",
+                icon: MirrorIcon,
+                onClick: () => rotateSelection("mirror"),
+              },
+            ] : []),
+            ...(selection.components.length > 0 ? [{
+              key: "exclude",
+              label: `Exclude ${selection.components.length}`,
+              title: "Exclude or include the selected components on the stripboard",
+              shortcut: "E",
+              icon: ExcludeIcon,
+              onClick: () => toggleExcludeSelection(selection.components),
+            }] : []),
+            {
+              key: "delete",
+              label: `Delete ${selCount}`,
+              title: "Delete everything selected",
+              shortcut: "Del",
+              icon: DeleteIcon,
+              variant: "danger" as const,
+              onClick: () => deleteSelection(false),
+            },
+          ] satisfies CanvasAction[]}
+        />
+      )}
 
       {/* Confirm excluding component(s) currently placed on the board */}
       {excludeConfirmIds && (() => {

@@ -218,10 +218,10 @@ export default function SymbolRenderer({
                 onPinMouseDown?.(pin.pinId, e);
               }}
             />
-            {/* Larger hit area */}
+            {/* Hit area: small enough that a one-grid wire between two pins stays clickable */}
             <circle
               cx={rEnd.x} cy={rEnd.y}
-              r={10} fill="transparent"
+              r={5} fill="transparent"
               style={{ cursor: onPinMouseDown ? "pointer" : "default" }}
               onMouseDown={(e) => {
                 e.stopPropagation();

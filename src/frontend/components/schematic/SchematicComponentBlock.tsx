@@ -165,15 +165,6 @@ export default function SchematicComponentBlock({
       style={{ cursor: "grab", opacity: component.boardExcluded ? 0.45 : 1 }}
       onMouseDown={onMouseDown}
     >
-      {/* Invisible hit area for dragging */}
-      <rect
-        x={bounds.minX - 5}
-        y={bounds.minY - 5}
-        width={bounds.width + 10}
-        height={bounds.height + 10}
-        fill="transparent"
-      />
-
       {/* Leader line from component center to label (when label is offset) */}
       {hasCustomOffset && !editingLabel && (
         <line

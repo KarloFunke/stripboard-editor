@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
-import { ComponentDef } from "@/types";
+import { ComponentDef, NetLabel, NetLabelKind } from "@/types";
+import { snapToGrid } from "@/utils/schematicConstants";
 import { COMPONENT_GROUPS, DEFAULT_COMPONENTS } from "@/data/defaultComponents";
 import { getSymbolDef } from "@/data/symbolDefs";
 import { getSymbolBounds } from "./SymbolRenderer";
@@ -78,8 +79,44 @@ function SymbolThumbnail({ def }: { def: ComponentDef }) {
   );
 }
 
+const FLAGS_GROUP = "Power & labels";
+function FlagGlyph({ kind, name }: { kind: NetLabelKind; name: string }) {
+  const showName = kind !== "gnd" || name !== "GND";
+  const text = showName ? (
+    <text y={kind === "gnd" ? 16 : kind === "power" ? -4 : -6} fontSize={9} textAnchor="middle" fontWeight={600} fill="var(--symbol-stroke)" stroke="none">
+      {name.length > 7 ? name.slice(0, 6) + "…" : name}
+    </text>
+  ) : null;
+  if (kind === "gnd") {
+    return <><line x1={0} y1={-10} x2={0} y2={0} /><line x1={-8} y1={0} x2={8} y2={0} /><line x1={-5} y1={4} x2={5} y2={4} /><line x1={-2} y1={8} x2={2} y2={8} />{text}</>;
+  }
+  if (kind === "power") {
+    return <><line x1={0} y1={10} x2={0} y2={0} /><line x1={-7} y1={0} x2={7} y2={0} />{text}</>;
+  }
+  return <><line x1={0} y1={10} x2={0} y2={2} /><path d="M -4 2 L 4 2 L 4 -2 L -4 -2 Z" />{text}</>;
+}
+
+/** The three stock flags plus one tile per distinct flag name used in the project */
+function flagTiles(netLabels: NetLabel[]): { kind: NetLabelKind; name: string; stock: boolean }[] {
+  const tiles: { kind: NetLabelKind; name: string; stock: boolean }[] = [
+    { kind: "gnd", name: "GND", stock: true },
+    { kind: "power", name: "VCC", stock: true },
+    { kind: "label", name: "NET", stock: true },
+  ];
+  const seen = new Set(tiles.map((t) => `${t.kind}:${t.name}`));
+  for (const l of netLabels) {
+    const k = `${l.kind}:${l.name}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    tiles.push({ kind: l.kind, name: l.name, stock: false });
+  }
+  return tiles;
+}
+
 export default function ComponentLibrary() {
   const addComponent = useProjectStore((s) => s.addComponent);
+  const addNetLabel = useProjectStore((s) => s.addNetLabel);
+  const netLabels = useProjectStore((s) => s.netLabels);
   const addComponentDef = useProjectStore((s) => s.addComponentDef);
   const removeComponentDef = useProjectStore((s) => s.removeComponentDef);
   const componentDefs = useProjectStore((s) => s.componentDefs);
@@ -87,7 +124,7 @@ export default function ComponentLibrary() {
   const [showCustomEditor, setShowCustomEditor] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<ComponentDef | null>(null);
   const [openGroups, setOpenGroups] = useState<Set<string>>(
-    new Set([COMPONENT_GROUPS[0].label])
+    new Set([FLAGS_GROUP, COMPONENT_GROUPS[0].label])
   );
 
   // Custom components = defs not in DEFAULT_COMPONENTS
@@ -104,7 +141,7 @@ export default function ComponentLibrary() {
   };
 
   const handleAdd = (defId: string) => {
-    addComponent(defId, { x: 100 + Math.random() * 200, y: 100 + Math.random() * 200 });
+    addComponent(defId, { x: snapToGrid(100 + Math.random() * 200), y: snapToGrid(100 + Math.random() * 200) });
   };
 
   const handleDragStart = (e: React.DragEvent, defId: string) => {
@@ -123,6 +160,52 @@ export default function ComponentLibrary() {
         Components
       </div>
       <div className="flex flex-col flex-1 min-h-0 overflow-y-auto">
+        {/* Ground, power and net labels: one connection point, joined by name.
+            Every flag name used in the project gets its own tile. */}
+        {(() => {
+          const tiles = flagTiles(netLabels);
+          const isOpen = openGroups.has(FLAGS_GROUP);
+          return (
+            <div>
+              <button
+                onClick={() => toggleGroup(FLAGS_GROUP)}
+                className="w-full flex items-center gap-1.5 px-3.5 py-1.5 text-sm font-medium text-neutral-600 dark:text-neutral-400 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors"
+              >
+                <span className="text-xs">{isOpen ? "▼" : "▶"}</span>
+                {FLAGS_GROUP}
+                <span className="text-neutral-400 dark:text-neutral-500 ml-auto text-xs">{tiles.length}</span>
+              </button>
+              {isOpen && (
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(64px,1fr))] gap-1.5 px-2.5 pb-2.5">
+                  {tiles.map((t) => (
+                    <button
+                      key={`${t.kind}:${t.name}`}
+                      draggable
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData("application/schematic-netlabel", JSON.stringify({ kind: t.kind, name: t.name }));
+                        e.dataTransfer.effectAllowed = "copy";
+                      }}
+                      onClick={() => addNetLabel(t.kind, { x: 100 + Math.random() * 200, y: 100 + Math.random() * 200 }, t.name)}
+                      className="w-full flex flex-col items-center gap-1 px-1 py-1.5 rounded border border-transparent hover:border-neutral-300 dark:hover:border-neutral-600 hover:bg-neutral-50 dark:hover:bg-neutral-800 active:bg-neutral-100 dark:active:bg-neutral-700 transition-colors cursor-grab active:cursor-grabbing"
+                      title={
+                        t.kind === "gnd" ? `Ground flag ${t.name}: every ${t.name} flag is one net`
+                        : t.kind === "power" ? `Power flag ${t.name}: flags with the same name are one net`
+                        : `Net label ${t.name}: same name, same net`
+                      }
+                    >
+                      <svg width={36} height={36} viewBox="-18 -18 36 36" className="flex-shrink-0" stroke="var(--symbol-stroke)" strokeWidth={1.5} strokeLinecap="round" fill="none">
+                        <FlagGlyph kind={t.kind} name={t.name} />
+                      </svg>
+                      <span className="text-xs text-neutral-500 dark:text-neutral-400 leading-tight text-center max-w-full truncate">
+                        {t.stock ? (t.kind === "gnd" ? "GND" : t.kind === "power" ? "Power" : "Net label") : t.name}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
         {COMPONENT_GROUPS.map((group) => {
           const isOpen = openGroups.has(group.label);
           return (

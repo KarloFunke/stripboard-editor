@@ -1,9 +1,10 @@
+import copy
 import logging
 import re
 
 from django.contrib.auth.models import User
 from rest_framework import serializers
-from .migrations_data.ic_unification import migrate_ic_unification
+from .migrations_data.pipeline import migrate_to_current
 from .models import Project, Feedback, FeedbackReply
 
 _log = logging.getLogger(__name__)
@@ -21,6 +22,21 @@ def sanitize_name(value: str) -> str:
     if not cleaned:
         return "Untitled Project"
     return cleaned
+
+
+class MigratingDataMixin:
+    """Serve `data` on the current schema without writing anything back: a
+    row the one-shot command has not reached yet, or a read-only view, still
+    renders correctly. Idempotent, so migrated rows pass straight through."""
+
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        if isinstance(rep.get("data"), dict):
+            try:
+                rep["data"], _ = migrate_to_current(copy.deepcopy(rep["data"]))
+            except Exception:
+                _log.exception("migration read-hook failed")
+        return rep
 
 
 class ProjectListSerializer(serializers.ModelSerializer):
@@ -64,7 +80,7 @@ class ProjectListSerializer(serializers.ModelSerializer):
         }
 
 
-class ProjectDetailSerializer(serializers.ModelSerializer):
+class ProjectDetailSerializer(MigratingDataMixin, serializers.ModelSerializer):
     fork_count = serializers.IntegerField(source="forks.count", read_only=True)
     owner_name = serializers.CharField(source="owner.username", read_only=True, default=None)
 
@@ -97,14 +113,14 @@ class ProjectDetailSerializer(serializers.ModelSerializer):
                 f"Project data too large ({size} bytes). Maximum is {MAX_PROJECT_DATA_BYTES} bytes."
             )
         try:
-            migrated, _ = migrate_ic_unification(value)
+            migrated, _ = migrate_to_current(value)
             return migrated
         except Exception:
-            _log.exception("ic_unification save-hook failed for incoming PUT")
+            _log.exception("migration save-hook failed for incoming PUT")
             return value
 
 
-class ProjectViewSerializer(serializers.ModelSerializer):
+class ProjectViewSerializer(MigratingDataMixin, serializers.ModelSerializer):
     """Read-only serializer for view-only access. Minimal fields, no edit_uuid."""
     owner_name = serializers.CharField(source="owner.username", read_only=True, default=None)
 
@@ -149,10 +165,10 @@ class ProjectCreateSerializer(serializers.Serializer):
                 f"Project data too large ({size} bytes). Maximum is {MAX_PROJECT_DATA_BYTES} bytes."
             )
         try:
-            migrated, _ = migrate_ic_unification(value)
+            migrated, _ = migrate_to_current(value)
             return migrated
         except Exception:
-            _log.exception("ic_unification create-hook failed")
+            _log.exception("migration create-hook failed")
             return value
 
 

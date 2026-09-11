@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useProjectStore } from "@/store/useProjectStore";
-import { createProject } from "@/lib/api";
+import { createProject, migrateProjectData } from "@/lib/api";
+import { PROJECT_SCHEMA_VERSION, type Project } from "@/types";
 import { track } from "@/lib/track";
 import { loadDraft, saveDraft, clearDraft, draftAge, type ProjectDraft } from "@/lib/newProjectDraft";
 import SchematicEditor from "@/components/SchematicEditor";
@@ -56,7 +57,7 @@ export default function NewProjectPage() {
     if (!draft) return;
     const s = useProjectStore.getState();
     const empty =
-      s.components.length === 0 && s.nets.length === 0 && s.schematicWires.length === 0 &&
+      s.components.length === 0 && s.nets.length === 0 && s.schematicWires.length === 0 && s.netLabels.length === 0 &&
       s.board.cuts.length === 0 && s.board.wires.length === 0;
     if (empty) setDraftPrompt(draft);
   }, []);
@@ -79,10 +80,21 @@ export default function NewProjectPage() {
     return () => clearTimeout(t);
   }, [editSeq, editUuid]);
 
-  const restoreDraft = useCallback(() => {
+  const restoreDraft = useCallback(async () => {
     if (!draftPrompt) return;
+    let project = draftPrompt.project;
+    // A draft left behind by an older editor is on an older schema; the
+    // backend migrates it, the frontend never does.
+    if ((project.version ?? 1) < PROJECT_SCHEMA_VERSION) {
+      try {
+        project = (await migrateProjectData(project)) as Project;
+      } catch {
+        alert("Could not restore the previous design: migrating it to the current version failed.");
+        return;
+      }
+    }
     firstEditRef.current = true; // a restore isn't a fresh first edit
-    importProject(draftPrompt.project);
+    importProject(project);
     setDraftPrompt(null);
     track("draft-restore");
   }, [draftPrompt, importProject]);

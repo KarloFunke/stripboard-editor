@@ -93,16 +93,33 @@ export interface NetAssignment {
   pinId: string;       // references PinDef.id within the ComponentDef
 }
 
+// ── Net labels (flags) ────────────────────────────────
+
+// A named connection point on the schematic: a ground or power symbol, or a
+// plain net label. Every label sharing a name is one net, and a net that
+// carries a label takes the label's name. pos is the connection point and
+// must be grid aligned. Not a component: never on the board or in the BOM.
+export type NetLabelKind = "gnd" | "power" | "label";
+
+export interface NetLabel {
+  id: string;
+  kind: NetLabelKind;
+  name: string;
+  pos: { x: number; y: number };
+  rotation: 0 | 90 | 180 | 270;
+}
+
 // ── Schematic Wires ───────────────────────────────────
 
-// A wire connects two grid-aligned points with an auto-routed L-shape.
-// No component references — net inference is purely spatial.
-// The bend point is derived from start/end, not stored.
+// A wire is one horizontal or vertical segment between two grid points.
+// No component references — net inference is purely spatial: a wire connects
+// only at its two endpoints, never along its body. Drawing an L places two
+// wires. (Before schema version 3 a wire could be L-shaped with a derived
+// bend; the backend splits those on migration.)
 export interface SchematicWire {
   id: string;
   start: { x: number; y: number };
   end: { x: number; y: number };
-  routeDirection: "horizontal-first" | "vertical-first";
 }
 
 // ── Board ──────────────────────────────────────────────
@@ -140,8 +157,13 @@ export interface Board {
 
 // ── Project (top-level, serializable to JSON) ──────────
 
+// Schema version written by exportProject. Anything older reaching the
+// editor (an imported file, a stored draft) goes through the backend's
+// /projects/migrate/ first; the frontend itself carries no migration logic.
+export const PROJECT_SCHEMA_VERSION = 3;
+
 export interface Project {
-  version?: number; // schema version; absent or <CURRENT triggers migration on load
+  version?: number; // schema version; below PROJECT_SCHEMA_VERSION means migrate in the backend first
   name: string;
   description?: string; // one-line summary, shown in project lists and on view links
   notes?: string; // freeform build notes; URLs render as links
@@ -150,6 +172,14 @@ export interface Project {
   nets: Net[];
   netAssignments: NetAssignment[];
   schematicWires: SchematicWire[];
+  netLabels?: NetLabel[]; // absent in projects saved before version 3
+  // How the schematic decides what is connected. "classic": only at wire
+  // ends (the rules every project drawn before version 3 was made under, so
+  // nothing in an old drawing ever joins by surprise). "touch": whatever
+  // touches is connected, the rule new projects start with. Absent means
+  // classic; the user can switch a project to touch, which previews and
+  // then applies the joins that follow.
+  wiring?: "classic" | "touch";
   board: Board;
   showValuesOnBoard?: boolean;
   autoSave?: boolean; // per-project preference: continuously save on every change

@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, useEffect } from "react";
+import { PROJECT_SCHEMA_VERSION } from "@/types";
 import { useRouter } from "next/navigation";
 import { useProjectStore } from "@/store/useProjectStore";
 import { getMe, logout, claimProject, migrateProjectData, type User } from "@/lib/api";
@@ -301,7 +302,7 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
         return;
       }
       const version = (data as { version?: number }).version ?? 1;
-      const migrated = version < 2;
+      const migrated = version < PROJECT_SCHEMA_VERSION;
       if (migrated) {
         try {
           data = await migrateProjectData(data);
