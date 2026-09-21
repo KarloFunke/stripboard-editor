@@ -34,6 +34,10 @@ You can also follow [what's new and what's planned](https://stripboard-editor.co
 - **Frontend**: Next.js
 - **Backend**: Python Django, SQLite
 
+## Credits
+
+The built-in IC pinouts (pin numbers, pin names and descriptions) come from the [KiCad symbol library](https://gitlab.com/kicad/libraries/kicad-symbols) by the KiCad Library Team, licensed under [CC-BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). They were selected, renamed and shortened for this editor by `src/frontend/scripts/importKicadIcs.js`. The resulting `src/frontend/data/icLibrary.ts` is licensed under CC-BY-SA 4.0 as well.
+
 ## Local Development
 
 Frontend runs at `http://localhost:3000`, backend API at `http://localhost:8000/api/`.

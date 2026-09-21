@@ -5,11 +5,12 @@ age brings it to the current schema in one pass.
 """
 
 from .ic_unification import migrate_ic_unification
-from .schematic_v3 import SCHEMA_VERSION, migrate_schematic_v3
+from .optocoupler_v4 import SCHEMA_VERSION, migrate_optocoupler_v4
+from .schematic_v3 import migrate_schematic_v3
 
 CURRENT_SCHEMA_VERSION = SCHEMA_VERSION
 
-_STEPS = (migrate_ic_unification, migrate_schematic_v3)
+_STEPS = (migrate_ic_unification, migrate_schematic_v3, migrate_optocoupler_v4)
 
 
 def migrate_to_current(data):

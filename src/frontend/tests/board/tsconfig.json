@@ -19,6 +19,7 @@
     "../../components/stripboard/offBoard.ts",
     "../../components/stripboard/bodyCuts.ts",
     "../../components/stripboard/componentValues.ts",
-    "../../data/defaultComponents.ts"
+    "../../data/defaultComponents.ts",
+    "../../data/symbolDefs.ts"
   ]
 }

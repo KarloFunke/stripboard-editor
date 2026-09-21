@@ -13,6 +13,7 @@ from projects.migrations_data.ic_unification import (
     _symbol_family,
     migrate_ic_unification,
 )
+from projects.migrations_data.optocoupler_v4 import migrate_optocoupler_v4
 from projects.migrations_data.pipeline import CURRENT_SCHEMA_VERSION, migrate_to_current
 from projects.migrations_data.schematic_v3 import SCHEMA_VERSION as V3, decide_wiring, migrate_schematic_v3
 from projects.models import Project
@@ -608,7 +609,7 @@ class SchematicV3Tests(TestCase):
         for def_id, symbol in DEFAULT_DEF_SYMBOL.items():
             self.assertIsNotNone(_symbol_pins(symbol), f"{def_id} ({symbol}) has no pins")
         for symbol, pins in STATIC_SYMBOL_PINS.items():
-            if symbol.startswith("generic-ic-") or symbol.startswith("connector-"):
+            if symbol.startswith(("generic-ic-", "connector-", "box-")):
                 generated = _symbol_pins(symbol)
                 table = [(str(p[0]), p[1], p[2]) for p in pins]
                 self.assertEqual(sorted(generated), sorted(table), f"generator disagrees with the table for {symbol}")
@@ -738,3 +739,64 @@ class ReadHookTests(TestCase):
         data = res.json()["data"]
         self.assertEqual(data["version"], CURRENT_SCHEMA_VERSION)
         self.assertEqual(len(data["schematicWires"]), 2)
+
+
+def _opto_v3(wires, *, rotation=0, wiring="classic", labels=None):
+    return {
+        "version": 3, "wiring": wiring, "netLabels": labels or [],
+        "components": [_comp("u1", "def-optocoupler", 360, 300, rotation=rotation)],
+        "schematicWires": wires,
+    }
+
+
+def _ends(data):
+    return sorted(tuple(sorted(((w["start"]["x"], w["start"]["y"]), (w["end"]["x"], w["end"]["y"]))))
+                  for w in data["schematicWires"])
+
+
+class OptocouplerV4Tests(TestCase):
+    """The optocoupler became a generic 4-pin IC: pins 1 and 4 move from
+    y = -20 to y = 0 in its own frame, and whatever met them follows."""
+
+    def test_wire_on_pin_1_is_carried_to_the_new_pin(self):
+        out, changed = migrate_optocoupler_v4(_opto_v3([_wire(200, 280, 300, 280)]))
+        self.assertTrue(changed)
+        self.assertEqual(out["version"], 4)
+        self.assertEqual(_ends(out), [((200, 280), (300, 280)), ((300, 280), (300, 300))])
+        self.assertEqual(out["components"][0]["schematicPos"], {"x": 360, "y": 300}, "the part stays put")
+
+    def test_pins_that_nothing_meets_get_no_wire(self):
+        # only pin 2 (unmoved) is wired
+        out, _ = migrate_optocoupler_v4(_opto_v3([_wire(200, 320, 300, 320)]))
+        self.assertEqual(len(out["schematicWires"]), 1)
+
+    def test_a_flag_on_the_old_spot_is_carried_too(self):
+        flag = [{"id": "l", "kind": "gnd", "name": "GND", "pos": {"x": 420, "y": 280}, "rotation": 0}]
+        out, _ = migrate_optocoupler_v4(_opto_v3([], labels=flag))
+        self.assertEqual(_ends(out), [((420, 280), (420, 300))])
+
+    def test_rotated_part(self):
+        # at 180 degrees pin 1 sits at (+60, +20) from the origin and moves to (+60, 0)
+        out, _ = migrate_optocoupler_v4(_opto_v3([_wire(420, 320, 500, 320)], rotation=180))
+        self.assertIn(((420, 300), (420, 320)), _ends(out))
+
+    def test_taken_spot_moves_the_part_instead(self):
+        """A wire of pin 2's net already passes the spot pin 1 would move to,
+        so the part moves up a step and pins 2 and 3 follow it."""
+        wires = [_wire(200, 280, 300, 280, "a"), _wire(200, 300, 300, 300, "k"), _wire(300, 300, 300, 320, "k2")]
+        out, _ = migrate_optocoupler_v4(_opto_v3(wires, wiring="touch"))
+        self.assertEqual(out["components"][0]["schematicPos"], {"x": 360, "y": 280})
+        self.assertEqual(len(out["schematicWires"]), 3, "the wire to pin 2's new spot is already there")
+
+    def test_idempotent_and_in_the_pipeline(self):
+        out, _ = migrate_to_current(_opto_v3([_wire(200, 280, 300, 280)]))
+        self.assertEqual(out["version"], CURRENT_SCHEMA_VERSION)
+        before = json.loads(json.dumps(out))
+        again, changed = migrate_to_current(out)
+        self.assertFalse(changed)
+        self.assertEqual(again, before)
+
+    def test_v3_decision_still_uses_the_old_pins(self):
+        from projects.migrations_data.schematic_v3 import DEFAULT_DEF_SYMBOL, _symbol_pins
+        self.assertEqual(DEFAULT_DEF_SYMBOL["def-optocoupler"], "optocoupler")
+        self.assertIn(("1", -60, -20), _symbol_pins("optocoupler"))

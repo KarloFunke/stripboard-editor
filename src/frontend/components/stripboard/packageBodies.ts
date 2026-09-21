@@ -102,13 +102,8 @@ function canDiameter(farads: number): number {
   return 16.0;
 }
 
-const DIP_DEFS = new Set(["def-555", "def-opamp", "def-optocoupler"]);
-const TO92_DEFS = new Set(["def-npn", "def-pnp", "def-nmos", "def-pmos"]);
-const MODULE_DEFS = new Set(["def-esp32-devkit-v1", "def-esp32-devkit-v1-36", "def-esp32-devkitc-38", "def-arduino-nano"]);
-
-function isDip(def: ComponentDef): boolean {
-  return DIP_DEFS.has(def.id) || def.id.startsWith("def-ic-dip");
-}
+const TO92: PackageOption = { id: "to92", name: "TO-92" };
+const TO220: PackageOption = { id: "to220", name: "TO-220 with tab", movesPins: true };
 
 function connectorPins(def: ComponentDef): number | null {
   const m = /^def-connector-(\d+)$/.exec(def.id);
@@ -129,9 +124,11 @@ export function packageOptions(def: ComponentDef): PackageOption[] {
       { id: "term-508", name: "Screw terminal, 5.08 mm", movesPins: true },
     ];
   }
-  if (isDip(def)) return [{ id: "dip", name: "DIP" }];
-  if (MODULE_DEFS.has(def.id)) return [{ id: "module", name: "Breakout board" }];
-  if (TO92_DEFS.has(def.id)) return [{ id: "to92", name: "TO-92" }, { id: "to220", name: "TO-220 with tab", movesPins: true }];
+  switch (def.footprint?.kind) {
+    case "dip": return [{ id: "dip", name: "DIP" }];
+    case "breakout": return [{ id: "module", name: "Breakout board" }];
+    case "to": return [TO92, TO220];
+  }
   switch (def.id) {
     case "def-resistor":
       return [
@@ -159,8 +156,6 @@ export function packageOptions(def: ComponentDef): PackageOption[] {
       return [{ id: "fuse-glass", name: "Glass cartridge, 3.6 x 10 mm" }, { id: "fuse-tr5", name: "Radial micro fuse (TR5)" }, { id: "fuse-pico", name: "Axial pico fuse" }];
     case "def-transformer":
       return [{ id: "transformer", name: "Laminated transformer" }];
-    case "def-vreg":
-      return [{ id: "to92", name: "TO-92" }, { id: "to220", name: "TO-220 with tab", movesPins: true }];
     case "def-switch":
       return [{ id: "slide", name: "Slide switch" }];
     case "def-pushbutton":

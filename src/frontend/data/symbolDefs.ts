@@ -379,53 +379,6 @@ const transformer: SymbolDef = {
 
 // ── Common Component Symbols ──────────────────────────
 
-const timer555: SymbolDef = {
-  symbolId: "timer-555",
-  label: "555 Timer",
-  labelYOffset: 14,
-  category: "ic",
-  bodyPaths: [
-    { d: `M -40 ${-G - 10} L 40 ${-G - 10} L 40 ${2 * G + 10} L -40 ${2 * G + 10} Z`, fill: "none" },
-    { d: `M -6 ${-G - 10} A 6 6 0 0 1 6 ${-G - 10}`, fill: "none" }, // notch
-    ...[-G, 0, G, 2 * G].map((y) => ({ d: `M -40 ${y} L ${-3 * G} ${y}`, fill: "none" })),
-    ...[-G, 0, G, 2 * G].map((y) => ({ d: `M 40 ${y} L ${3 * G} ${y}`, fill: "none" })),
-  ],
-  extraElements: [
-    { type: "text", props: { x: 0, y: 4, fontSize: 10, textAnchor: "middle", children: "555" } },
-  ],
-  pins: [
-    { pinId: "1", defaultName: "GND", stubStart: { x: -40, y: -G }, stubEnd: { x: -3 * G, y: -G }, side: "left" },
-    { pinId: "2", defaultName: "TRIG", stubStart: { x: -40, y: 0 }, stubEnd: { x: -3 * G, y: 0 }, side: "left" },
-    { pinId: "3", defaultName: "OUT", stubStart: { x: -40, y: G }, stubEnd: { x: -3 * G, y: G }, side: "left" },
-    { pinId: "4", defaultName: "RESET", stubStart: { x: -40, y: 2 * G }, stubEnd: { x: -3 * G, y: 2 * G }, side: "left" },
-    { pinId: "8", defaultName: "VCC", stubStart: { x: 40, y: -G }, stubEnd: { x: 3 * G, y: -G }, side: "right" },
-    { pinId: "7", defaultName: "DISCH", stubStart: { x: 40, y: 0 }, stubEnd: { x: 3 * G, y: 0 }, side: "right" },
-    { pinId: "6", defaultName: "THRESH", stubStart: { x: 40, y: G }, stubEnd: { x: 3 * G, y: G }, side: "right" },
-    { pinId: "5", defaultName: "CTRL", stubStart: { x: 40, y: 2 * G }, stubEnd: { x: 3 * G, y: 2 * G }, side: "right" },
-  ],
-};
-
-const optocoupler: SymbolDef = {
-  symbolId: "optocoupler",
-  label: "Optocoupler",
-  labelYOffset: 8,
-  category: "ic",
-  bodyPaths: [
-    { d: `M -40 ${-G - 6} L 40 ${-G - 6} L 40 ${G + 6} L -40 ${G + 6} Z`, fill: "none" },
-    { d: `M -6 ${-G - 6} A 6 6 0 0 1 6 ${-G - 6}`, fill: "none" }, // notch
-    { d: `M -40 ${-G} L ${-3 * G} ${-G}`, fill: "none" },
-    { d: `M -40 ${G} L ${-3 * G} ${G}`, fill: "none" },
-    { d: `M 40 ${-G} L ${3 * G} ${-G}`, fill: "none" },
-    { d: `M 40 ${G} L ${3 * G} ${G}`, fill: "none" },
-  ],
-  pins: [
-    { pinId: "1", defaultName: "A", stubStart: { x: -40, y: -G }, stubEnd: { x: -3 * G, y: -G }, side: "left" },
-    { pinId: "2", defaultName: "K", stubStart: { x: -40, y: G }, stubEnd: { x: -3 * G, y: G }, side: "left" },
-    { pinId: "4", defaultName: "C", stubStart: { x: 40, y: -G }, stubEnd: { x: 3 * G, y: -G }, side: "right" },
-    { pinId: "3", defaultName: "E", stubStart: { x: 40, y: G }, stubEnd: { x: 3 * G, y: G }, side: "right" },
-  ],
-};
-
 const opamp: SymbolDef = {
   symbolId: "opamp",
   label: "Op-Amp",
@@ -531,7 +484,7 @@ const STATIC_SYMBOLS: SymbolDef[] = [
   resistor, capacitor, capPolarized, diode, led, zener, inductor, fuse, transformer, switchSPST,
   potentiometer, pushbutton,
   npn, pnp, nmos, pmos, vreg,
-  timer555, optocoupler, opamp,
+  opamp,
   generic2pin, generic3pin,
 ];
 
@@ -593,6 +546,37 @@ export function createGenericIcSymbol(pinCount: number): SymbolDef {
     category: "ic",
     labelYOffset: 14,
     bodyPaths,
+    pins,
+  };
+}
+
+const PIN_BOX_SIDES = {
+  l: { start: { x: -18, y: 0 }, end: { x: -2 * G, y: 0 }, side: "left" },
+  r: { start: { x: 18, y: 0 }, end: { x: 2 * G, y: 0 }, side: "right" },
+  t: { start: { x: 0, y: -16 }, end: { x: 0, y: -2 * G }, side: "top" },
+  b: { start: { x: 0, y: 16 }, end: { x: 0, y: 2 * G }, side: "bottom" },
+} as const;
+
+/**
+ * A small box with at most one pin per side, for three-leg parts whose legs
+ * follow no common order (regulators, references, sensors). The id names the
+ * side of each pin: "box-l1-b2-r3" puts pin 1 left, 2 below and 3 right.
+ */
+export function createPinBoxSymbol(symbolId: string): SymbolDef {
+  const pins: SymbolPinStub[] = symbolId.split("-").slice(1).map((token) => {
+    const at = PIN_BOX_SIDES[token[0] as keyof typeof PIN_BOX_SIDES];
+    const pinId = token.slice(1);
+    return { pinId, defaultName: pinId, stubStart: at.start, stubEnd: at.end, side: at.side };
+  });
+  return {
+    symbolId,
+    label: "IC",
+    labelYOffset: -5,
+    category: "ic",
+    bodyPaths: [
+      { d: "M -18 -16 L 18 -16 L 18 16 L -18 16 Z", fill: "none" },
+      ...pins.map((p) => ({ d: `M ${p.stubStart.x} ${p.stubStart.y} L ${p.stubEnd.x} ${p.stubEnd.y}`, fill: "none" })),
+    ],
     pins,
   };
 }
@@ -729,6 +713,8 @@ export function getSymbolDef(symbolId: string): SymbolDef | undefined {
 
   const connMatch = symbolId.match(/^connector-(\d+)$/);
   if (connMatch) return createConnectorSymbol(parseInt(connMatch[1], 10));
+
+  if (/^box(-[lrtb]\d+)+$/.test(symbolId)) return createPinBoxSymbol(symbolId);
 
   // Custom footprint symbols
   const cached = customSymbolCache.get(symbolId);

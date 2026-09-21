@@ -13,10 +13,53 @@ export interface BodyCell {
   col: number;
 }
 
+// The hole layout a part is built from. It also decides which real packages
+// the part can be drawn as and, for ICs, its default schematic symbol.
+export type Footprint =
+  // one column, pins `step` holes apart with body in the gaps
+  | { kind: "inline"; pins: number; step?: number }
+  | { kind: "dip"; pins: number }
+  // three legs in a row, drawn as TO-92 or TO-220
+  | { kind: "to" }
+  // a dev board: `left`/`right` are the pin names top to bottom, `width` the
+  // hole span across both rows
+  | { kind: "breakout"; width: number; left: string[]; right: string[] }
+  | { kind: "cells"; width: number; height: number; pins: PinDef[]; bodyCells?: BodyCell[] };
+
+/**
+ * A built-in part as written down: a footprint, the pin names in pin-number
+ * order (the datasheet order) and a symbol. `partDef` expands it into a
+ * ComponentDef. Ids are stored in projects and never change.
+ */
+export interface PartSpec {
+  id: string;
+  name: string;
+  // Panel group, one of COMPONENT_GROUP_LABELS
+  group: string;
+  category?: ComponentDef["category"]; // default "ic"
+  labelPrefix?: string; // default "U"
+  description?: string;
+  aliases?: string[];
+  footprint: Footprint;
+  pins?: string[];
+  // Default: generic-ic-N for dip, to and breakout, connector-N for connectors
+  symbol?: string;
+  hasValue?: boolean;
+  flexible?: boolean;
+  footprintPresets?: string[];
+  // KiCad "Library:Symbol" the pin data was taken from
+  kicad?: string;
+}
+
 export interface ComponentDef {
   id: string;
   name: string;
   category: "passive" | "semiconductor" | "ic" | "connector" | "generic";
+  // Built-in parts only: what the part is built from, and the words the
+  // library search matches besides the name
+  footprint?: Footprint;
+  description?: string;
+  aliases?: string[];
   symbol: string; // references SymbolDef.symbolId for schematic rendering
   defaultLabelPrefix: string; // e.g. "R", "C", "D", "Q", "U", "J", "X"
   width: number;  // columns spanned (stripboard footprint)
@@ -190,7 +233,7 @@ export interface Board {
 // Schema version written by exportProject. Anything older reaching the
 // editor (an imported file, a stored draft) goes through the backend's
 // /projects/migrate/ first; the frontend itself carries no migration logic.
-export const PROJECT_SCHEMA_VERSION = 3;
+export const PROJECT_SCHEMA_VERSION = 4;
 
 export interface Project {
   version?: number; // schema version; below PROJECT_SCHEMA_VERSION means migrate in the backend first

@@ -79,6 +79,59 @@ function SymbolThumbnail({ def }: { def: ComponentDef }) {
   );
 }
 
+/** What the part physically is, for the row under its name */
+function packageLabel(def: ComponentDef): string {
+  const f = def.footprint;
+  if (f?.kind === "dip") return `DIP-${f.pins}`;
+  if (f?.kind === "to") return "TO-92 / TO-220";
+  if (f?.kind === "breakout") return `Module, ${f.left.length + f.right.length} pins`;
+  return `${new Set(def.pins.map((p) => p.id)).size} pins`;
+}
+
+const squash = (text: string) => text.toLowerCase().replace(/[\s\-_]/g, "");
+
+/** Whether every word appears in the part's name, description or aliases */
+function matchesWords(def: ComponentDef, words: string[]): boolean {
+  const text = [def.name, def.description ?? "", ...(def.aliases ?? [])].join(" ").toLowerCase();
+  return words.every((w) => text.includes(w) || squash(text).includes(w));
+}
+
+/**
+ * Parts matching the query, names that start with it first. Spaces and dashes
+ * do not count, so "op amp" finds "opamp" and "tl 072" finds "TL072".
+ */
+function searchParts(defs: ComponentDef[], query: string): ComponentDef[] {
+  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [];
+  const whole = squash(query);
+  const rank = (d: ComponentDef) => (squash(d.name).startsWith(whole) ? 0 : squash(d.name).includes(whole) ? 1 : 2);
+  return defs
+    .filter((d) => matchesWords(d, words) || matchesWords(d, [whole]))
+    .map((d, i) => ({ d, i, r: rank(d) }))
+    .sort((a, b) => a.r - b.r || a.i - b.i)
+    .map((x) => x.d);
+}
+
+function PartRow({ def, onAdd, onDragStart }: { def: ComponentDef; onAdd: () => void; onDragStart: (e: React.DragEvent) => void }) {
+  return (
+    <button
+      draggable
+      onDragStart={onDragStart}
+      onClick={onAdd}
+      className="w-full text-left px-2 py-1 rounded border border-transparent hover:border-neutral-300 dark:hover:border-neutral-600 hover:bg-neutral-50 dark:hover:bg-neutral-800 active:bg-neutral-100 dark:active:bg-neutral-700 transition-colors cursor-grab active:cursor-grabbing"
+      title={def.description ? `${def.name}: ${def.description}` : def.name}
+    >
+      <span className="flex items-baseline gap-2 min-w-0">
+        <span className="text-sm font-medium text-neutral-700 dark:text-neutral-200 truncate">{def.name}</span>
+        <span className="ml-auto shrink-0 font-mono text-[10px] text-neutral-400 dark:text-neutral-500">{packageLabel(def)}</span>
+      </span>
+      {def.description && (
+        <span className="block text-xs text-neutral-500 dark:text-neutral-400 truncate">{def.description}</span>
+      )}
+    </button>
+  );
+}
+
 const FLAGS_GROUP = "Power & labels";
 function FlagGlyph({ kind, name }: { kind: NetLabelKind; name: string }) {
   const showName = kind !== "gnd" || name !== "GND";
@@ -122,6 +175,7 @@ export default function ComponentLibrary() {
   const componentDefs = useProjectStore((s) => s.componentDefs);
 
   const [showCustomEditor, setShowCustomEditor] = useState(false);
+  const [query, setQuery] = useState("");
   const [deleteConfirm, setDeleteConfirm] = useState<ComponentDef | null>(null);
   const [openGroups, setOpenGroups] = useState<Set<string>>(
     new Set([FLAGS_GROUP, COMPONENT_GROUPS[0].label])
@@ -149,6 +203,9 @@ export default function ComponentLibrary() {
     e.dataTransfer.effectAllowed = "copy";
   };
 
+  const results = searchParts([...COMPONENT_GROUPS.flatMap((g) => g.components), ...customDefs], query);
+  const searching = query.trim() !== "";
+
   const handleCreateCustom = (def: ComponentDef) => {
     addComponentDef(def);
     setShowCustomEditor(false);
@@ -159,10 +216,34 @@ export default function ComponentLibrary() {
       <div className="px-3.5 py-2.5 font-mono text-xs font-semibold text-[var(--copper)] uppercase tracking-[0.15em]">
         Components
       </div>
+      <div className="relative px-2.5 pb-2">
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setQuery("");
+          }}
+          placeholder="Search parts, e.g. TL072"
+          aria-label="Search parts"
+          className="w-full px-2.5 py-1.5 text-sm rounded border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-900 text-neutral-800 dark:text-neutral-200 placeholder:text-neutral-400 dark:placeholder:text-neutral-500 focus:outline-none focus:border-[var(--copper)]"
+        />
+      </div>
       <div className="flex flex-col flex-1 min-h-0 overflow-y-auto">
+        {searching && (
+          <div className="px-2.5 pb-2.5">
+            {results.length === 0 ? (
+              <p className="px-1 py-2 text-sm text-neutral-500 dark:text-neutral-400">No part matches &ldquo;{query.trim()}&rdquo;.</p>
+            ) : (
+              results.map((def) => (
+                <PartRow key={def.id} def={def} onAdd={() => handleAdd(def.id)} onDragStart={(e) => handleDragStart(e, def.id)} />
+              ))
+            )}
+          </div>
+        )}
         {/* Ground, power and net labels: one connection point, joined by name.
             Every flag name used in the project gets its own tile. */}
-        {(() => {
+        {!searching && (() => {
           const tiles = flagTiles(netLabels);
           const isOpen = openGroups.has(FLAGS_GROUP);
           return (
@@ -206,7 +287,7 @@ export default function ComponentLibrary() {
             </div>
           );
         })()}
-        {COMPONENT_GROUPS.map((group) => {
+        {!searching && COMPONENT_GROUPS.map((group) => {
           const isOpen = openGroups.has(group.label);
           return (
             <div key={group.label}>
@@ -218,7 +299,14 @@ export default function ComponentLibrary() {
                 {group.label}
                 <span className="text-neutral-400 dark:text-neutral-500 ml-auto text-xs">{group.components.length}</span>
               </button>
-              {isOpen && (
+              {isOpen && group.rows && (
+                <div className="px-2.5 pb-2.5">
+                  {group.components.map((def) => (
+                    <PartRow key={def.id} def={def} onAdd={() => handleAdd(def.id)} onDragStart={(e) => handleDragStart(e, def.id)} />
+                  ))}
+                </div>
+              )}
+              {isOpen && !group.rows && (
                 <div className="grid grid-cols-[repeat(auto-fill,minmax(80px,1fr))] gap-1.5 px-2.5 pb-2.5">
                   {group.components.map((def) => (
                     <button
@@ -242,7 +330,7 @@ export default function ComponentLibrary() {
         })}
 
         {/* Custom components section */}
-        {customDefs.length > 0 && (
+        {!searching && customDefs.length > 0 && (
           <div>
             <button
               onClick={() => toggleGroup("Custom")}
@@ -285,6 +373,28 @@ export default function ComponentLibrary() {
           </div>
         )}
       </div>
+
+      <p className="px-3.5 py-2 border-t border-neutral-200 dark:border-neutral-700 text-[11px] leading-snug text-neutral-500 dark:text-neutral-400">
+        IC pinouts from the{" "}
+        <a
+          href="https://gitlab.com/kicad/libraries/kicad-symbols"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline hover:text-neutral-700 dark:hover:text-neutral-200"
+        >
+          KiCad symbol library
+        </a>
+        , licensed{" "}
+        <a
+          href="https://creativecommons.org/licenses/by-sa/4.0/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline hover:text-neutral-700 dark:hover:text-neutral-200"
+        >
+          CC-BY-SA 4.0
+        </a>
+        .
+      </p>
 
       {/* Create custom button */}
       <div className="px-2.5 py-2 border-t border-neutral-200 dark:border-neutral-700">

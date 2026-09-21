@@ -42,8 +42,13 @@ MAX_DECISION_TESTS = 2_000_000
 
 with open(os.path.join(os.path.dirname(__file__), "symbol_pins.json")) as _f:
     _PINS = json.load(_f)
-DEFAULT_DEF_SYMBOL = _PINS["defs"]          # defId -> symbolId
-STATIC_SYMBOL_PINS = _PINS["symbols"]       # symbolId -> [[pinId, x, y], ...]
+# v3 drawings predate the optocoupler's generic IC body (v4), so they are
+# judged with the pins where its own symbol had them
+DEFAULT_DEF_SYMBOL = {**_PINS["defs"], "def-optocoupler": "optocoupler"}  # defId -> symbolId
+STATIC_SYMBOL_PINS = {                      # symbolId -> [[pinId, x, y], ...]
+    **_PINS["symbols"],
+    "optocoupler": [["1", -60, -20], ["2", -60, 20], ["4", 60, -20], ["3", 60, 20]],
+}
 
 
 def _num(v):
@@ -119,6 +124,19 @@ def _connector_pins(n):
     return [(str(i + 1), -40, y_start + i * G) for i in range(n)]
 
 
+_BOX_SIDES = {"l": (-40, 0), "r": (40, 0), "t": (0, -40), "b": (0, 40)}
+
+
+def _pin_box_pins(symbol_id):
+    """Mirrors createPinBoxSymbol: "box-l1-b2-r3" puts pin 1 left, 2 below, 3 right."""
+    pins = []
+    for token in symbol_id.split("-")[1:]:
+        if len(token) < 2 or token[0] not in _BOX_SIDES:
+            return None
+        pins.append((token[1:], *_BOX_SIDES[token[0]]))
+    return pins or None
+
+
 def _footprint_symbol_pins(def_):
     """Mirrors createFootprintSymbol: the stripboard footprint, one grid step per hole."""
     pins = def_.get("pins")
@@ -148,6 +166,8 @@ def _symbol_pins(symbol_id, def_=None):
             return _connector_pins(int(symbol_id.rsplit("-", 1)[-1]))
         except ValueError:
             return None
+    if symbol_id.startswith("box-"):
+        return _pin_box_pins(symbol_id)
     if symbol_id.startswith("custom-footprint-") and def_ is not None:
         return _footprint_symbol_pins(def_)
     return None
