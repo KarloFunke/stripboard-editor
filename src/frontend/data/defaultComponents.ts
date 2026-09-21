@@ -195,6 +195,9 @@ export const COMPONENT_GROUPS: ComponentGroup[] = [
         id: "def-led",
         name: "LED",
         category: "passive",
+        // The value carries the colour ("red", "grün", "#ff8800"), which is
+        // what tells one LED from another.
+        hasValue: true,
         symbol: "led",
         defaultLabelPrefix: "D",
         ...create2Pin(2),
@@ -235,7 +238,8 @@ export const COMPONENT_GROUPS: ComponentGroup[] = [
         hasValue: true,
         symbol: "fuse",
         defaultLabelPrefix: "F",
-        ...create2Pin(4),
+        // a 3.6 x 10 mm cartridge lies flat over six holes, leads in the end ones
+        ...create2Pin(6),
         flexible: true,
       },
       {

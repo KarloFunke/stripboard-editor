@@ -12,6 +12,14 @@ export const metadata: Metadata = {
 
 const updates: { date: string; items: string[]; link?: { href: string; lead: string; text: string } }[] = [
   {
+    date: "2026-09-21",
+    items: [
+      "Parts are now drawn as their real packages at true size, and each part lets you pick the package you actually have. The auto layouter and the print use the same bodies.",
+      "Off-board parts: mount pots, switches and jacks off the board and get solder pads or a connector for their wires instead.",
+      "New wire and cut tools on the board. Cuts can go under parts, ICs bring their own cuts, and wires and cuts can be selected, dragged and deleted.",
+    ],
+  },
+  {
     date: "2026-09-11",
     items: [
       "Schematic editor overhaul. Wires, selection and dragging now work the way they do in other editors, and ground and power flags tie GND or VCC together by name instead of running wires across the sheet.",
@@ -137,9 +145,6 @@ const updates: { date: string; items: string[]; link?: { href: string; lead: str
 const planned: string[] = [
   "Net list import, the other half of the KiCad compatibility: bring a circuit in from an EDA tool and lay it out on stripboard. Export is already available.",
   "A big custom-component overhaul, including a searchable library of both your own and shared community components. Including a better custom component editor.",
-  "Off-board components: place parts next to the board (for example a panel-mounted switch) and wire them directly to it, even when they are not mounted on the stripboard itself.",
-  "Placing a cut directly underneath a component, without having to move the part out of the way first.",
-  "Smoother wire handling on the board: start a new wire from a hole that already has one, instead of having to remove the existing wire first.",
 ];
 
 export default function UpdatesPage() {

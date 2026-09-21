@@ -1,4 +1,5 @@
 import { BoardPosition, ComponentDef } from "@/types";
+import { MM_PER_HOLE, liesFlat, resolvePackage } from "./packageBodies";
 
 // Radius (in hole pitches) around a flexible component's body line whose
 // holes are blocked for pins and jumper endpoints.
@@ -16,20 +17,41 @@ const BODY_END_SHRINK = 0.5;
 const BODY_CONTACT_SEPARATION = 1;
 export const DEFAULT_CLEARANCE = 1;
 
-// Pin-to-pin span limits in hole pitches (Euclidean). Axial parts with a fat
-// body (resistors, inductors, diodes) can't sit closer than 4 (5 holes end to
-// end); small parts (caps, LEDs) can stand upright at any spacing but
-// shouldn't stretch.
+// Pin-to-pin span limits in hole pitches (Euclidean). The package decides:
+// an axial part needs the span its body lies flat in and has long leads to
+// stretch; a radial part (caps, LEDs) stands on short legs that only bend out
+// a little. 4 pitches covers 95 % of the caps and LEDs people placed by hand.
+// A part with no package keeps the limits its type always had.
 const AXIAL_SPAN = { min: 4, max: 10 };
 const COMPACT_SPAN = { min: 1, max: 6 };
-// Fuse: never tighter than its default 3-hole reach, up to that plus 5.
-const FUSE_SPAN = { min: 3, max: 8 };
+const RADIAL_SPAN = { min: 1, max: 4 };
+const AXIAL_MAX = 10;
+// Fuse: a cartridge on leads may be stretched well past its body; a radial one stands on
+// stiff legs two pitches apart and cannot stretch.
+const FUSE_MAX = 12;
+const RADIAL_FUSE_SPAN = { min: 2, max: 2 };
 const AXIAL_DEF_IDS = new Set(["def-resistor", "def-inductor", "def-diode", "def-zener"]);
+// What is commonly stood on one lead to save room
+const STANDING_DEF_IDS = new Set(["def-resistor", "def-diode", "def-zener"]);
+
+/** Shortest span, in whole pitches, at which an axial package lies flat. */
+export function flatSpan(def: ComponentDef): number | null {
+  const resolved = resolvePackage(def, def.part?.value, def.part?.package);
+  if (resolved?.kind !== "twoPin" || resolved.spec.shape !== "axial") return null;
+  for (let span = 1; span <= 40; span++) if (liesFlat(resolved.spec, span * MM_PER_HOLE)) return span;
+  return null;
+}
 
 export function spanLimits(def: ComponentDef): { min: number; max: number } {
   if (def.spanOverride) return def.spanOverride;
-  if (def.id === "def-fuse") return FUSE_SPAN;
-  return AXIAL_DEF_IDS.has(def.id) ? AXIAL_SPAN : COMPACT_SPAN;
+  const resolved = resolvePackage(def, def.part?.value, def.part?.package);
+  if (resolved?.kind !== "twoPin") return AXIAL_DEF_IDS.has(def.id) ? AXIAL_SPAN : COMPACT_SPAN;
+  // An axial package sets its own minimum: the span it needs to lie flat, or
+  // a single pitch where the project lets it stand on one lead.
+  const flat = flatSpan(def);
+  if (flat === null) return def.id === "def-fuse" ? RADIAL_FUSE_SPAN : RADIAL_SPAN;
+  const min = def.allowStanding && STANDING_DEF_IDS.has(def.id) ? 1 : flat;
+  return { min, max: Math.max(def.id === "def-fuse" ? FUSE_MAX : AXIAL_MAX, min) };
 }
 
 /**
@@ -265,7 +287,16 @@ export function wireStackPenalty(depth: number, rescue = false): number {
 
 export interface WireObstacles {
   rects: FootprintRect[];
-  bodies: { p1: Pt; p2: Pt }[];
+  // a flexible part: its leads from p1 to p2 and, where the package is known,
+  // the real body, which is usually wider than that line
+  bodies: { p1: Pt; p2: Pt; core?: { a: Pt; b: Pt; r: number } }[];
+}
+
+/** Whether a wire runs over a flexible part: across its leads or under its body. */
+export function wireCrossesBody(from: Pt, to: Pt, body: WireObstacles["bodies"][number]): boolean {
+  if (segmentsIntersect(from, to, body.p1, body.p2)) return true;
+  const core = body.core;
+  return !!core && segmentSegmentDistance(from, to, core.a, core.b) < core.r - 0.05;
 }
 
 /** Whether the segment p1-p2 touches the (unexpanded) rectangle */
@@ -304,9 +335,10 @@ export function wireExtraLength(from: Pt, to: Pt, obstacles: WireObstacles): num
     if (segmentIntersectsRect(from, to, rect)) extra += WIRE_CROSS_EXTRA;
   }
   for (const body of obstacles.bodies) {
-    if (Math.max(body.p1.row, body.p2.row) < minR || Math.min(body.p1.row, body.p2.row) > maxR) continue;
-    if (Math.max(body.p1.col, body.p2.col) < minC || Math.min(body.p1.col, body.p2.col) > maxC) continue;
-    if (segmentsIntersect(from, to, body.p1, body.p2)) extra += WIRE_CROSS_EXTRA;
+    const pad = body.core?.r ?? 0;
+    if (Math.max(body.p1.row, body.p2.row) + pad < minR || Math.min(body.p1.row, body.p2.row) - pad > maxR) continue;
+    if (Math.max(body.p1.col, body.p2.col) + pad < minC || Math.min(body.p1.col, body.p2.col) - pad > maxC) continue;
+    if (wireCrossesBody(from, to, body)) extra += WIRE_CROSS_EXTRA;
   }
   return extra;
 }
@@ -322,7 +354,7 @@ export class WireObstacleIndex {
   private minRow: number[] = [];
   private maxRow: number[] = [];
   private rects: (FootprintRect | null)[] = [];
-  private bodies: ({ p1: Pt; p2: Pt } | null)[] = [];
+  private bodies: (WireObstacles["bodies"][number] | null)[] = [];
   private buckets: number[][] = [];
   private base = 0;
   private stamp: Int32Array;
@@ -341,11 +373,13 @@ export class WireObstacleIndex {
       spans.push({ minC: rect.minCol, maxC: rect.maxCol });
     }
     for (const body of obstacles.bodies) {
-      this.minRow.push(Math.min(body.p1.row, body.p2.row));
-      this.maxRow.push(Math.max(body.p1.row, body.p2.row));
+      // the real body reaches its radius past the line between the leads
+      const pad = body.core?.r ?? 0;
+      this.minRow.push(Math.min(body.p1.row, body.p2.row) - pad);
+      this.maxRow.push(Math.max(body.p1.row, body.p2.row) + pad);
       this.rects.push(null);
       this.bodies.push(body);
-      spans.push({ minC: Math.min(body.p1.col, body.p2.col), maxC: Math.max(body.p1.col, body.p2.col) });
+      spans.push({ minC: Math.min(body.p1.col, body.p2.col) - pad, maxC: Math.max(body.p1.col, body.p2.col) + pad });
     }
     for (const s of spans) {
       if (s.minC < lo) lo = Math.floor(s.minC);
@@ -390,8 +424,7 @@ export class WireObstacleIndex {
         if (rect) {
           if (segmentIntersectsRect(from, to, rect)) extra += crossExtra;
         } else {
-          const body = this.bodies[oi]!;
-          if (segmentsIntersect(from, to, body.p1, body.p2)) extra += crossExtra;
+          if (wireCrossesBody(from, to, this.bodies[oi]!)) extra += crossExtra;
         }
       }
     }
@@ -433,4 +466,74 @@ export function bodyIntersectsRect(p1: Pt, p2: Pt, rect: FootprintRect, spacing 
     segmentsIntersect(s1, s2, c, d) ||
     segmentsIntersect(s1, s2, d, a)
   );
+}
+
+// ── True-size bodies ──
+// A part's body as the package really is, in hole pitches: a capsule (a
+// segment with a radius, a circle when the segment is a point) for a flexible
+// part, a rectangle for a rigid one. Clearance is then only the extra air the
+// user asks for on top, because the body's own width is already in the shape.
+
+export interface Capsule {
+  a: Pt;
+  b: Pt;
+  r: number;
+}
+
+/**
+ * Air a clearance setting demands between two bodies. A clearance counts whole
+ * free board lines, and a line is free once the bodies either side are half a
+ * pitch clear of it between them, hence the half.
+ */
+export function clearanceAir(lines: number): number {
+  return lines > 0 ? lines - 0.5 : 0;
+}
+
+export function capsulesClash(A: Capsule, B: Capsule, lines = 0): boolean {
+  return segmentSegmentDistance(A.a, A.b, B.a, B.b) < A.r + B.r + clearanceAir(lines) - 1e-6;
+}
+
+/**
+ * Capsule against a rigid body. The rectangle is in hole-centre terms, as
+ * every footprint rectangle is: the plastic reaches half a pitch past it, so
+ * an ordinary footprint is its own integer cell rectangle and only a package
+ * that really overhangs has fractional edges.
+ */
+export function capsuleClashesRect(A: Capsule, rect: FootprintRect, lines = 0): boolean {
+  const reach = A.r + clearanceAir(lines) - 1e-6;
+  const minRow = rect.minRow - 0.5;
+  const maxRow = rect.maxRow + 0.5;
+  const minCol = rect.minCol - 0.5;
+  const maxCol = rect.maxCol + 0.5;
+  const inside = (p: Pt) => p.row > minRow && p.row < maxRow && p.col > minCol && p.col < maxCol;
+  if (inside(A.a) || inside(A.b)) return true;
+  const c1 = { row: minRow, col: minCol };
+  const c2 = { row: minRow, col: maxCol };
+  const c3 = { row: maxRow, col: maxCol };
+  const c4 = { row: maxRow, col: minCol };
+  return (
+    segmentSegmentDistance(A.a, A.b, c1, c2) < reach ||
+    segmentSegmentDistance(A.a, A.b, c2, c3) < reach ||
+    segmentSegmentDistance(A.a, A.b, c3, c4) < reach ||
+    segmentSegmentDistance(A.a, A.b, c4, c1) < reach
+  );
+}
+
+/** Two rigid bodies, in the same hole-centre terms. Touching is allowed. */
+export function bodyRectsClash(a: FootprintRect, b: FootprintRect, lines = 0): boolean {
+  const air = clearanceAir(lines) - 1e-6;
+  return (
+    a.minRow - air < b.maxRow + 1 && b.minRow - air < a.maxRow + 1 &&
+    a.minCol - air < b.maxCol + 1 && b.minCol - air < a.maxCol + 1
+  );
+}
+
+/** The whole holes a rigid body lies over, as an integer rectangle. */
+export function coveredHoles(rect: FootprintRect): FootprintRect {
+  return {
+    minRow: Math.ceil(rect.minRow - 0.5 + 1e-6),
+    maxRow: Math.floor(rect.maxRow + 0.5 - 1e-6),
+    minCol: Math.ceil(rect.minCol - 0.5 + 1e-6),
+    maxCol: Math.floor(rect.maxCol + 0.5 - 1e-6),
+  };
 }

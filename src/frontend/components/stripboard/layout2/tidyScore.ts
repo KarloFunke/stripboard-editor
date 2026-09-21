@@ -1,16 +1,17 @@
 import { Component, ComponentDef, Cut, NetAssignment } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { holeKey } from "../keys";
-import { getComponentBounds, getRotatedPinPositions } from "../boardLayout";
+import { getRotatedPinPositions } from "../boardLayout";
 import {
   WireObstacles,
   segmentIntersectsRect,
-  segmentsIntersect,
+  wireCrossesBody,
   wireExtraLength,
   wireStackDepth,
   wireStackPenalty,
 } from "../flexGeometry";
 import { AutoLayoutResult } from "../layoutTypes";
+import { flexWireObstacle, rigidBody } from "../partGeometry";
 
 // The price of one board cell, in the objective's common currency (a hole
 // of wire and a hole of wire mess cost 1). At 1 the original calibration
@@ -94,8 +95,8 @@ export function wireMessScore(
     if (!boardPos || c.boardExcluded) continue;
     const def = resolveComponentDef(c, componentDefs);
     if (!def) continue;
-    if (def.flexible) obstacles.bodies.push({ p1: boardPos, p2: p?.flexibleEndPos ?? c.flexibleEndPos ?? boardPos });
-    else obstacles.rects.push(getComponentBounds(def, boardPos, p?.rotation ?? c.rotation));
+    if (def.flexible) obstacles.bodies.push(flexWireObstacle(def, boardPos, p?.flexibleEndPos ?? c.flexibleEndPos ?? boardPos));
+    else obstacles.rects.push(rigidBody(def, boardPos, p?.rotation ?? c.rotation));
   }
   let mess = 0;
   let crossings = 0;
@@ -109,7 +110,7 @@ export function wireMessScore(
       if (segmentIntersectsRect(w.from, w.to, rect)) crossings++;
     }
     for (const b of obstacles.bodies) {
-      if (segmentsIntersect(w.from, w.to, b.p1, b.p2)) crossings++;
+      if (wireCrossesBody(w.from, w.to, b)) crossings++;
     }
   });
   return { mess, crossings };

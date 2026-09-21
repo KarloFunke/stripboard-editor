@@ -75,7 +75,7 @@ export default function HeaderControls({ actions }: { actions?: React.ReactNode 
           <span className="font-mono text-neutral-500 dark:text-neutral-400 hidden sm:inline">{user.username}</span>
           <button
             onClick={handleLogout}
-            className="font-mono px-3 py-1.5 rounded border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300 hover:border-[var(--copper)] hover:text-[var(--copper)] transition-colors"
+            className="font-mono px-2 sm:px-3 py-1.5 rounded border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300 hover:border-[var(--copper)] hover:text-[var(--copper)] transition-colors"
           >
             logout
           </button>
@@ -84,13 +84,13 @@ export default function HeaderControls({ actions }: { actions?: React.ReactNode 
         <>
           <button
             onClick={() => setShowAuth("login")}
-            className="font-mono px-3 py-1.5 rounded border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300 hover:border-[var(--copper)] hover:text-[var(--copper)] transition-colors"
+            className="font-mono px-2 sm:px-3 py-1.5 rounded border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300 hover:border-[var(--copper)] hover:text-[var(--copper)] transition-colors"
           >
             login
           </button>
           <button
             onClick={() => setShowAuth("register")}
-            className="font-mono px-3 py-1.5 rounded bg-[#113768] text-white border-2 border-[#113768] hover:border-[var(--copper)] transition-colors"
+            className="font-mono px-2 sm:px-3 py-1.5 rounded bg-[#113768] text-white border-2 border-[#113768] hover:border-[var(--copper)] transition-colors"
           >
             register
           </button>

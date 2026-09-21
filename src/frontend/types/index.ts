@@ -26,14 +26,21 @@ export interface ComponentDef {
   footprintPresets?: string[]; // alternative footprint def IDs the user can choose from
   flexible?: boolean; // 2-pin components with draggable pin positions
   hasValue?: boolean; // shows an editable value field (e.g. resistance) — passives/discretes only
-  // Pin-to-pin span range for flexible parts, in hole pitches. Not part of a
-  // stored def: stamped on at solve time from the project's spanOverrides.
+  // Pin-to-pin span range for flexible parts, in hole pitches, replacing what
+  // the package gives. Never stored and not reachable from the UI: a hook
+  // for the solver's own tools.
   spanOverride?: { min: number; max: number };
-  // Clearance: whole free board lines the body keeps to any neighbour
-  // (absent = 1 by default; 0 allows adjacent placement). Not part of a
-  // stored def: stamped on at solve time from the project's
-  // clearanceOverrides. Flexible parts only.
+  // Clearance: whole free board lines the body keeps to any neighbour, on
+  // top of its real size. Not part of a stored def: stamped on at solve time
+  // from the project's partSpacing, on every part.
   clearance?: number;
+  // Resistors and diodes may stand on one lead when that packs tighter. Not
+  // part of a stored def: stamped on at solve time from the project's setting.
+  allowStanding?: boolean;
+  // The value and package of the one component this def was resolved for,
+  // which decide the size of its real body. Never stored: set by
+  // resolveComponentDef.
+  part?: { value?: string; package?: string };
 }
 
 // ── Component Instance (single object for both editors) ──
@@ -70,10 +77,33 @@ export interface Component {
   // Per-instance footprint override; when set, takes priority over the ComponentDef
   footprintOverride?: FootprintOverride;
 
+  // Which real package this part is drawn as (see packageBodies). Absent means
+  // the default for its type. A package that moves pins also writes
+  // footprintOverride, so the rest of the app needs to know nothing about this.
+  package?: string;
+
   // Excluded from the stripboard: lives on the schematic only (e.g. off-board
   // parts connected via jumper wires). Ignored by board placement and net
   // completeness checks.
   boardExcluded?: boolean;
+
+  // Mounted off the board (a panel pot, a switch on the case) and wired to
+  // it. Unlike an excluded part it is still part of the build: every pin that
+  // carries a net comes onto the board as its own solder pad, placed and
+  // moved independently. boardPos stays null; the pads live in `leads`.
+  offBoard?: boolean;
+  // Off-board parts only: pin id -> where that pin's wire is soldered in.
+  leads?: Record<string, { row: number; col: number }>;
+  // Off-board parts only: pin id -> where the user dragged that pad's label.
+  // The label of a grouped connector uses boardLabelOffset instead.
+  leadLabelOffsets?: Record<string, { x: number; y: number }>;
+  // Off-board parts only: what the part's wires arrive at. Absent means one
+  // loose solder pad per pin (positions in `leads`). Anything else is one
+  // connector holding all the pins in a row: "wire-row" for soldered wires
+  // kept side by side, or a connector package (header, JST, screw terminal).
+  // That connector sits at this component's own boardPos and rotation, which
+  // an off-board part has no other use for.
+  offBoardPackage?: string;
 
   // Locked on the board: auto-layout never moves this component.
   locked?: boolean;
@@ -183,14 +213,15 @@ export interface Project {
   board: Board;
   showValuesOnBoard?: boolean;
   autoSave?: boolean; // per-project preference: continuously save on every change
-  // Auto-layout config: per component type (def id), the allowed pin-to-pin
-  // span range for flexible parts, replacing the built-in default.
+  // Legacy per-type auto-layout config from before parts had real packages.
+  // No longer used: the package now decides spans and body size. Read once
+  // on load to carry their intent into allowStanding and partSpacing, and
+  // otherwise kept as they are.
   spanOverrides?: Record<string, { min: number; max: number }>;
-  // Auto-layout config: per component type (def id), the clearance as a
-  // whole number of free board lines the body keeps to any neighbour,
-  // replacing the default of 1 (flexible parts only; 0 allows adjacent
-  // placement). Legacy projects stored fractional halos; converted on load.
   clearanceOverrides?: Record<string, number>;
+  // Auto-layout config: free board lines kept between all parts, on top of
+  // their real size. 0 packs parts as tightly as they physically fit.
+  partSpacing?: number;
   // Auto-layout config: tidy second pass that trades board area for
   // straighter wires, kept only when it actually is tidier. On by default;
   // false turns it off (halves solve time, may leave messier wires).
@@ -221,6 +252,10 @@ export interface Project {
   // v5: never run wires on top of each other in one channel (thick or bare
   // wire builds). On unless explicitly false.
   noWireStacking?: boolean;
+  // v5: let a resistor or diode stand on one lead where that packs tighter
+  // than lying flat. Off unless true; false is stored so that the legacy
+  // span settings are not read into it again.
+  allowStanding?: boolean;
   // Legacy portfolio config (seconds of solve time); read once on load and
   // mapped onto permBoards, never written back.
   permTimeBudget?: number;

@@ -7,13 +7,13 @@ import {
   getGroupForSegment,
   getGroupForWire,
 } from "@/components/stripboard/connectivity";
+import { useBoardView } from "./useBoardView";
 import { StripSegment } from "@/components/stripboard/stripSegments";
 
 export function useStripSegments() {
   const board = useProjectStore((s) => s.board);
-  const components = useProjectStore((s) => s.components);
   const componentDefs = useProjectStore((s) => s.componentDefs);
-  const netAssignments = useProjectStore((s) => s.netAssignments);
+  const { components, netAssignments } = useBoardView();
 
   const segments = useMemo(
     () => computeStripSegments(board, components, componentDefs, netAssignments),

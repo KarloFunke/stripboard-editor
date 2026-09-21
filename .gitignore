@@ -9,3 +9,4 @@ node_modules/
 auto-layouter-data/
 CLAUDE.md
 .claude/
+tools/

@@ -68,7 +68,11 @@ class ProjectListSerializer(serializers.ModelSerializer):
         """Extract minimal data needed for stripboard preview thumbnail."""
         data = obj.data or {}
         components = data.get("components", [])
-        placed = [c for c in components if c.get("boardPos") is not None]
+        # An off-board part is on the board as its solder pads, kept in "leads"
+        placed = [
+            c for c in components
+            if c.get("boardPos") is not None or (c.get("offBoard") and c.get("leads"))
+        ]
         if not placed:
             return None
         return {

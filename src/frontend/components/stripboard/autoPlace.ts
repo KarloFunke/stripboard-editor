@@ -8,7 +8,6 @@ import {
 } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import {
-  getComponentBounds,
   getComponentPinPositions,
   getFlexiblePinPositions,
   getRotatedBodyCells,
@@ -18,13 +17,11 @@ import { computeConnectivity } from "./connectivity";
 import {
   DIAGONAL_PENALTY,
   FootprintRect,
-  bodyIntersectsRect,
   corridorHoles,
-  bodiesTooClose,
   segmentsIntersect,
   spanLimits,
-  clearanceOf,
 } from "./flexGeometry";
+import { FlexProfile, flexBodiesClash, flexClashesRect, flexProfile, rigidBody } from "./partGeometry";
 
 export interface FlexPlacement {
   componentId: string;
@@ -44,9 +41,9 @@ export interface StaticObstacles {
   // additionally drilled holes and existing corridors: no endpoint may land
   // there, but a new corridor may pass over
   blocked: Set<string>;
-  // placed flexible bodies with their clearances
-  flexBodies: { p1: BoardPosition; p2: BoardPosition; clr: number }[];
-  // rigid footprints: no flexible body may cross or crowd them
+  // placed flexible bodies with what their real package takes up
+  flexBodies: { p1: BoardPosition; p2: BoardPosition; profile: FlexProfile }[];
+  // rigid bodies at their true size: no flexible body may cross or crowd them
   rigidRects: FootprintRect[];
 }
 
@@ -71,14 +68,14 @@ export function collectStaticObstacles(
     if (def.flexible) {
       const [p1, p2] = getFlexiblePinPositions(comp, def);
       if (p1 && p2) {
-        flexBodies.push({ p1: { row: p1.row, col: p1.col }, p2: { row: p2.row, col: p2.col }, clr: clearanceOf(def) });
+        flexBodies.push({ p1: { row: p1.row, col: p1.col }, p2: { row: p2.row, col: p2.col }, profile: flexProfile(def) });
         for (const h of corridorHoles(p1, p2)) blocked.add(holeKey(h.row, h.col));
       }
     } else {
       for (const cell of getRotatedBodyCells(def, comp.boardPos, comp.rotation)) {
         hard.add(holeKey(cell.row, cell.col));
       }
-      rigidRects.push(getComponentBounds(def, comp.boardPos, comp.rotation));
+      rigidRects.push(rigidBody(def, comp.boardPos, comp.rotation));
     }
   }
   for (const wire of board.wires) {
@@ -165,9 +162,9 @@ export function computeAutoPlace(
 
   // ── Validation of a concrete placement ───────────────
 
-  const isValidPlacement = (p1: BoardPosition, p2: BoardPosition, clr = 0): boolean => {
+  const isValidPlacement = (p1: BoardPosition, p2: BoardPosition, profile: FlexProfile): boolean => {
     for (const rect of rigidRects) {
-      if (bodyIntersectsRect(p1, p2, rect, clr)) return false;
+      if (flexClashesRect(profile, p1, p2, rect)) return false;
     }
     for (const h of corridorHoles(p1, p2)) {
       if (h.row === p1.row && h.col === p1.col) continue;
@@ -177,7 +174,7 @@ export function computeAutoPlace(
     }
     for (const body of flexBodies) {
       if (segmentsIntersect(p1, p2, body.p1, body.p2)) return false;
-      if (bodiesTooClose(p1, p2, body.p1, body.p2, Math.max(clr, body.clr))) return false;
+      if (flexBodiesClash(profile, p1, p2, body.profile, body.p1, body.p2)) return false;
     }
     return true;
   };
@@ -215,8 +212,9 @@ export function computeAutoPlace(
       }
     }
     pairs.sort((a, b) => a.score - b.score);
+    const profile = flexProfile(def);
     for (const pair of pairs) {
-      if (isValidPlacement(pair.p1, pair.p2, clearanceOf(def))) return pair;
+      if (isValidPlacement(pair.p1, pair.p2, profile)) return pair;
     }
     return null;
   };
@@ -280,7 +278,7 @@ export function computeAutoPlace(
     hard.add(holeKey(cand.p1.row, cand.p1.col));
     hard.add(holeKey(cand.p2.row, cand.p2.col));
     for (const h of corridorHoles(cand.p1, cand.p2)) blocked.add(holeKey(h.row, h.col));
-    flexBodies.push({ p1: cand.p1, p2: cand.p2, clr: clearanceOf(item.def) });
+    flexBodies.push({ p1: cand.p1, p2: cand.p2, profile: flexProfile(item.def) });
     const claim = (pos: BoardPosition, netId: string) => {
       const si = segments.findIndex(
         (s) => s.row === pos.row && pos.col >= s.startCol && pos.col <= s.endCol

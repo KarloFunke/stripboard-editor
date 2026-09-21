@@ -38,8 +38,8 @@ export const GENOME: LabGenome = {
   gn: [4, 0, 1, 5, 2, 3],
   rot: [0, 0, 0],
   hv: [0, 0, 0],
-  br: [1, 1, 0],
-  grp: [[118, 120, 119], [95, 94, 97, 94], [132, 133, 134, 127], [89, 90, 89], [75, 76], [72, 73]],
+  br: [1, 0, 0],
+  grp: [[118, 120, 119], [95, 94, 97, 94], [132, 133, 134, 127], [89, 89, 89], [75, 76], [72, 73]],
   gap: [2, 0, 1, 2, 0, 0],
   xgap: [0, 1, 0, 2, 0, 1],
 };
@@ -49,14 +49,14 @@ export const GENOME: LabGenome = {
 // run there is deterministic, so this is a recording, not a guess; re-record
 // it (LAB.run(1, 10000, ...) and take bestG) if the engine's scoring changes.
 export const GENOME_RUN: LabGenome = {
-  gp: [4, 5, 1, 3, 0, 2],
-  gn: [4, 5, 1, 3, 0, 2],
-  rot: [0, 0, 0],
+  gp: [1, 5, 4, 3, 0, 2],
+  gn: [1, 5, 4, 3, 0, 2],
+  rot: [0, 0, 2],
   hv: [0, 0, 0],
-  br: [1, 1, 0],
-  grp: [[76, 77, 67], [62, 61, 60, 60], [84, 86, 80, 80], [56, 56, 56], [36, 36], [60, 60]],
-  gap: [2, 1, 0, 0, 0, 0],
-  xgap: [2, 0, 0, 1, 0, 0],
+  br: [0, 1, 0],
+  grp: [[58, 59, 59], [75, 76, 66, 66], [83, 85, 77, 82], [42, 42, 42], [58, 58], [63, 63]],
+  gap: [1, 0, 0, 2, 0, 0],
+  xgap: [0, 0, 2, 1, 0, 0],
 };
 
 export const pinLabel = (pi: number, name: string) => `${PARTS[pi].id}.${name}`;

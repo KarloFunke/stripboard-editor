@@ -4,6 +4,8 @@ import { useState, useMemo } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { PinDef, BodyCell } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
+import { resolvePackage } from "./packageBodies";
+import { rigidBody } from "./partGeometry";
 
 type CellState = "body" | { pinId: string; pinName: string };
 
@@ -147,8 +149,31 @@ export default function StripboardFootprintEditor({ componentId, onClose }: Prop
     onClose();
   };
 
-  const svgWidth = cols * (CELL_SIZE + CELL_GAP) + GRID_PADDING * 2;
-  const svgHeight = grid.length * (CELL_SIZE + CELL_GAP) + GRID_PADDING * 2;
+  // The package's real outline over the grid: the cells say where the pins
+  // go, the outline is what the layout engines keep other parts clear of.
+  const STEP = CELL_SIZE + CELL_GAP;
+  let outline: { x: number; y: number; w: number; h: number } | null = null;
+  if (allPinsPlaced && resolvePackage(def, component.value, component.package)?.kind === "rigid") {
+    const pins: PinDef[] = [];
+    const bodyCells: BodyCell[] = [];
+    grid.forEach((row, r) => row.forEach((cell, c) => {
+      if (typeof cell === "object") pins.push({ id: cell.pinId, name: cell.pinName, offsetRow: r, offsetCol: c });
+      else bodyCells.push({ row: r, col: c });
+    }));
+    const body = rigidBody({ ...def, width: cols, height: rows, pins, bodyCells }, { row: 0, col: 0 }, 0, component);
+    outline = {
+      x: body.minCol * STEP - CELL_GAP / 2,
+      y: body.minRow * STEP - CELL_GAP / 2,
+      w: (body.maxCol - body.minCol + 1) * STEP,
+      h: (body.maxRow - body.minRow + 1) * STEP,
+    };
+  }
+  const gridW = cols * STEP;
+  const gridH = rows * STEP;
+  const originX = GRID_PADDING + Math.max(0, -(outline?.x ?? 0));
+  const originY = GRID_PADDING + Math.max(0, -(outline?.y ?? 0));
+  const svgWidth = originX + Math.max(gridW, outline ? outline.x + outline.w : 0) + GRID_PADDING;
+  const svgHeight = originY + Math.max(gridH, outline ? outline.y + outline.h : 0) + GRID_PADDING;
 
   return (
     <div
@@ -198,8 +223,8 @@ export default function StripboardFootprintEditor({ componentId, onClose }: Prop
         >
           {grid.map((row, r) =>
             row.map((cell, c) => {
-              const x = GRID_PADDING + c * (CELL_SIZE + CELL_GAP);
-              const y = GRID_PADDING + r * (CELL_SIZE + CELL_GAP);
+              const x = originX + c * STEP;
+              const y = originY + r * STEP;
               const isPin = typeof cell === "object";
               const isDragSource = draggingPin?.fromRow === r && draggingPin?.fromCol === c;
               const hasMovedAway = isDragSource && hoverCell && (hoverCell.row !== r || hoverCell.col !== c);
@@ -261,11 +286,24 @@ export default function StripboardFootprintEditor({ componentId, onClose }: Prop
             })
           )}
 
+          {outline && (
+            <rect
+              x={originX + outline.x} y={originY + outline.y}
+              width={outline.w} height={outline.h}
+              rx={6}
+              fill="rgba(212,168,83,0.12)"
+              stroke="#D4A853"
+              strokeWidth={2}
+              strokeDasharray="6 4"
+              pointerEvents="none"
+            />
+          )}
+
           {/* Drag ghost following cursor */}
           {draggingPin && hoverCell && (
             (() => {
-              const x = GRID_PADDING + hoverCell.col * (CELL_SIZE + CELL_GAP);
-              const y = GRID_PADDING + hoverCell.row * (CELL_SIZE + CELL_GAP);
+              const x = originX + hoverCell.col * STEP;
+              const y = originY + hoverCell.row * STEP;
               return (
                 <g pointerEvents="none" opacity={0.7}>
                   <rect
@@ -288,6 +326,12 @@ export default function StripboardFootprintEditor({ componentId, onClose }: Prop
             })()
           )}
         </svg>
+
+        {outline && (
+          <p className="mb-3 text-xs text-neutral-500 dark:text-neutral-400">
+            The dashed outline is the real size of the package. Auto layout keeps other parts clear of it, so the grid only needs to say where the pins go.
+          </p>
+        )}
 
         {/* Actions */}
         <div className="flex gap-2 font-mono">

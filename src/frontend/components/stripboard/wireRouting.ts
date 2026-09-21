@@ -33,6 +33,9 @@ const PIN_SHARE_PENALTY = 4;
 // joint costs a small flat tax, so a clean direct vertical still wins; a
 // slanted direct wire usually loses.
 const RELAY_WIRE_TAX = 1;
+// A wire end in a hole that already holds one: a quarter of a hole of wire,
+// so it only ever decides between otherwise equal choices.
+const WIRE_SHARED_HOLE = 0.25;
 
 interface WireChoice {
   from: BoardPosition;
@@ -40,6 +43,8 @@ interface WireChoice {
   group: number;
   cost: number;
   mess: number;
+  // the shared-hole sliver inside `cost`: it picks between direct wires only
+  shared: number;
 }
 
 interface Hop {
@@ -47,6 +52,8 @@ interface Hop {
   to: BoardPosition;
   cost: number;
   mess: number;
+  // the shared-hole sliver inside `cost`: it picks between hops only
+  shared: number;
 }
 
 interface RelayChoice {
@@ -331,6 +338,14 @@ export function deriveWires(
     // Rescue mode (per wire, see below): allow over-cap stacks at the
     // rescue rate when nothing under the cap can complete the net.
     let allowDeepStacks = false;
+    // Two wires soldered into one hole build fine but are fiddlier than two
+    // holes, so a hole that already holds a wire end costs a sliver: enough
+    // to pick a free hole when one is just as good, never enough to take a
+    // longer or messier wire for it. It stays out of `mess`, which is about
+    // tidiness and decides when the relay search runs.
+    const sharedHole = (from: BoardPosition, to: BoardPosition) =>
+      (wireEnds.has(holeKey(from.row, from.col)) ? WIRE_SHARED_HOLE : 0) +
+      (wireEnds.has(holeKey(to.row, to.col)) ? WIRE_SHARED_HOLE : 0);
     const overlapPenalty = (from: BoardPosition, to: BoardPosition) => {
       const depth = wireStackDepth(from, to, allWires);
       return noWireStacking ? WIRE_STRICT_MESS * depth : wireStackPenalty(depth, allowDeepStacks);
@@ -393,7 +408,8 @@ export function deriveWires(
             if (best && dist + mess > best.cost + 1e-9) return null;
             mess += overlapPenalty(ha, hb);
             if (!isFinite(mess)) return null; // over the stack cap
-            const cost = dist + mess;
+            const shared = sharedHole(ha, hb);
+            const cost = dist + mess + shared;
             // Tiebreak: prefer straight vertical jumpers
             const better =
               !best ||
@@ -401,7 +417,7 @@ export function deriveWires(
               (cost < best.cost + 1e-9 &&
                 Math.abs(dc) < Math.abs(best.from.col - best.to.col));
             if (!better) return null;
-            return { from: ha, to: hb, group: gi, cost, mess };
+            return { from: ha, to: hb, group: gi, cost, mess, shared };
           };
           for (const gi of remaining) {
             for (const hb of passEndpoints(gi)) {
@@ -451,8 +467,9 @@ export function deriveWires(
                   (sharedPinPen.get(holeKey(rb, col)) ?? 0) +
                   overlapPenalty(from, to);
                 if (!isFinite(mess)) continue; // over the stack cap
-                const cost = d + mess;
-                if (!best || cost < best.cost - 1e-9) best = { from, to, cost, mess };
+                const shared = sharedHole(from, to);
+                const cost = d + mess + shared;
+                if (!best || cost < best.cost - 1e-9) best = { from, to, cost, mess, shared };
               }
             }
           }
@@ -490,8 +507,11 @@ export function deriveWires(
               const w2 = vertHop(cand.byCol, bCols);
               if (!w2) continue;
               // The tail's severing cut prices in like an extra half-wire
-              if (w1.cost + w2.cost > maxHops) continue;
-              const cost = w1.cost + w2.cost + RELAY_WIRE_TAX + (cand.cut && owner === undefined ? 0.5 : 0);
+              // the sliver chose the hops; it has no say in relay against
+              // relay or relay against a direct wire
+              const hops = w1.cost - w1.shared + w2.cost - w2.shared;
+              if (hops > maxHops) continue;
+              const cost = hops + RELAY_WIRE_TAX + (cand.cut && owner === undefined ? 0.5 : 0);
               if (best && cost >= best.cost - 1e-9) continue;
               best = { w1, w2, group: gi, relay: ci, cost, mess: w1.mess + w2.mess };
             }
@@ -528,7 +548,8 @@ export function deriveWires(
           pass.starvedPins.push(...starvedGroupPins(groupIdxs));
           break;
         }
-        if (relay && (!best || relay.cost < best.cost - 1e-9)) {
+        // a second wire is never worth it just to keep a hole to itself
+        if (relay && (!best || relay.cost < best.cost - best.shared - 1e-9)) {
           const cand = relayCands[relay.relay];
           if (relayOwner.get(relay.relay) === undefined && cand.cut) {
             pass.extraCuts.push(cand.cut);

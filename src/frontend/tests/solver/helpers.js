@@ -20,6 +20,7 @@ const { computeConnectivity } = require(path.join(OUT, "components/stripboard/co
 const { checkNetCompleteness } = require(path.join(OUT, "components/stripboard/netCompleteness.js"));
 const flexGeometry = require(path.join(OUT, "components/stripboard/flexGeometry.js"));
 const boardLayout = require(path.join(OUT, "components/stripboard/boardLayout.js"));
+const partGeometry = require(path.join(OUT, "components/stripboard/partGeometry.js"));
 const { DEFAULT_COMPONENTS } = require(path.join(OUT, "data/defaultComponents.js"));
 
 // ── Component definitions used across tests ────────────
@@ -141,7 +142,10 @@ function checkGeometry(b, components, defs) {
   const resolve = (comp) => {
     const def = d.find((x) => x.id === comp.defId);
     const o = comp.footprintOverride;
-    return o && def ? { ...def, width: o.width, height: o.height, pins: o.pins, bodyCells: o.bodyCells } : def;
+    if (!def) return def;
+    // the value and package size the real body, as resolveComponentDef does
+    const part = { value: comp.value, package: comp.package };
+    return o ? { ...def, width: o.width, height: o.height, pins: o.pins, bodyCells: o.bodyCells, part } : { ...def, part };
   };
 
   const placed = components.filter((c) => c.boardPos && !c.boardExcluded);
@@ -166,10 +170,11 @@ function checkGeometry(b, components, defs) {
         if (span < min - 1e-6 || span > max + 1e-6) {
           problems.push(`${comp.label}: span ${span.toFixed(2)} outside [${min},${max}]`);
         }
-        flexParts.push({ label: comp.label, p1, p2 });
+        const profile = partGeometry.flexProfile(def);
+        flexParts.push({ label: comp.label, p1, p2, lines: profile.lines, cap: partGeometry.flexBody(profile, p1, p2) });
       }
     } else {
-      rigidRects.push(boardLayout.getComponentBounds(def, comp.boardPos, comp.rotation));
+      rigidRects.push({ label: comp.label, lines: def.clearance ?? 0, ...partGeometry.rigidGeometry(def, comp.boardPos, comp.rotation) });
     }
   }
 
@@ -179,13 +184,16 @@ function checkGeometry(b, components, defs) {
       if (flexGeometry.segmentsIntersect(a.p1, a.p2, c.p1, c.p2)) {
         problems.push(`${a.label} and ${c.label}: bodies cross`);
       }
-      if (flexGeometry.bodiesTooClose(a.p1, a.p2, c.p1, c.p2)) {
+      if (flexGeometry.capsulesClash(a.cap, c.cap, Math.max(a.lines, c.lines))) {
         problems.push(`${a.label} and ${c.label}: bodies too close`);
       }
     }
-    for (const rect of rigidRects) {
-      if (flexGeometry.bodyIntersectsRect(flexParts[i].p1, flexParts[i].p2, rect)) {
-        problems.push(`${flexParts[i].label}: body crosses a rigid footprint`);
+    for (const rigid of rigidRects) {
+      if (flexGeometry.capsuleClashesRect(flexParts[i].cap, rigid.body, Math.max(flexParts[i].lines, rigid.lines))) {
+        problems.push(`${flexParts[i].label}: body crosses ${rigid.label}`);
+      }
+      if (rigid.reach && flexGeometry.capsuleClashesRect(flexParts[i].cap, rigid.reach, 0)) {
+        problems.push(`${flexParts[i].label}: sits under the shaft of ${rigid.label}`);
       }
     }
     for (const h of flexGeometry.corridorHoles(flexParts[i].p1, flexParts[i].p2)) {
@@ -193,6 +201,18 @@ function checkGeometry(b, components, defs) {
       const self2 = h.row === flexParts[i].p2.row && h.col === flexParts[i].p2.col;
       if (!self1 && !self2 && pinHoles.has(holeKey(h.row, h.col))) {
         problems.push(`${flexParts[i].label}: corridor covers a pin at (${h.row},${h.col})`);
+      }
+    }
+  }
+  for (let i = 0; i < rigidRects.length; i++) {
+    for (let j = i + 1; j < rigidRects.length; j++) {
+      if (flexGeometry.bodyRectsClash(rigidRects[i].body, rigidRects[j].body, Math.max(rigidRects[i].lines, rigidRects[j].lines))) {
+        problems.push(`${rigidRects[i].label} and ${rigidRects[j].label}: packages overlap`);
+      }
+      const a = rigidRects[i], c = rigidRects[j];
+      if ((a.reach && flexGeometry.bodyRectsClash(a.reach, c.body)) || (c.reach && flexGeometry.bodyRectsClash(c.reach, a.body)) ||
+          (a.reach && c.reach && flexGeometry.bodyRectsClash(a.reach, c.reach))) {
+        problems.push(`${a.label} and ${c.label}: one sits under the other's shaft`);
       }
     }
   }

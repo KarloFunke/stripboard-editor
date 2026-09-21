@@ -2,12 +2,14 @@ import { holeKey, pinKey } from "./keys";
 import { Board, Component, ComponentDef, NetAssignment } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import {
+  getComponentBounds,
   getComponentPinPositions,
   getFlexiblePinPositions,
   getRotatedBodyCells,
 } from "./boardLayout";
 import { bodyStyle } from "./componentGlyphs";
-import { corridorHoles } from "./flexGeometry";
+import { corridorHoles, coveredHoles } from "./flexGeometry";
+import { flexBody, flexCoveredHoles, flexProfile, rigidBody } from "./partGeometry";
 
 export interface BoardPin {
   row: number;
@@ -108,6 +110,11 @@ export function collectOccupiedHoles(
       for (const hole of corridorHoles(p1, p2)) {
         occupied.add(holeKey(hole.row, hole.col));
       }
+      // and every hole the real body lies over: a can is far wider than the
+      // line between its legs, and nothing can be soldered in under it
+      for (const hole of flexCoveredHoles(flexBody(flexProfile(def), p1, p2))) {
+        occupied.add(holeKey(hole.row, hole.col));
+      }
     } else if (!standsOnHeaders(def)) {
       // Flat-bodied rigids (DIPs, TO-92s) sit on the board and their body
       // holes are unreachable. Module breakout boards stand on header
@@ -116,6 +123,16 @@ export function collectOccupiedHoles(
       // are unroutable otherwise, and humans do solder there.
       for (const cell of getRotatedBodyCells(def, comp.boardPos, comp.rotation)) {
         occupied.add(holeKey(cell.row, cell.col));
+      }
+      // a package that overhangs its footprint (a pot, a JST housing) covers
+      // holes no body cell names
+      const body = rigidBody(def, comp.boardPos, comp.rotation);
+      const bounds = getComponentBounds(def, comp.boardPos, comp.rotation);
+      if (body.minRow < bounds.minRow || body.maxRow > bounds.maxRow || body.minCol < bounds.minCol || body.maxCol > bounds.maxCol) {
+        const cover = coveredHoles(body);
+        for (let row = cover.minRow; row <= cover.maxRow; row++) {
+          for (let col = cover.minCol; col <= cover.maxCol; col++) occupied.add(holeKey(row, col));
+        }
       }
     }
   }

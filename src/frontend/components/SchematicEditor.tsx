@@ -20,9 +20,7 @@ function PinList({ pins, max = 6 }: { pins: string[]; max?: number }) {
 }
 
 export default function SchematicEditor({ readOnly = false, hideSidebar = false }: { readOnly?: boolean; hideSidebar?: boolean }) {
-  const wireDrawMode = useProjectStore((s) => s.schematicWireDrawMode);
   const wireDrawingFrom = useProjectStore((s) => s.schematicWireDrawingFrom);
-  const toggleWireDrawMode = useProjectStore((s) => s.toggleSchematicWireDrawMode);
   const isActive = useProjectStore((s) => s.activeEditor === "schematic");
   const setActiveEditor = useProjectStore((s) => s.setActiveEditor);
   const netMergeNotice = useProjectStore((s) => s.netMergeNotice);
@@ -63,20 +61,6 @@ export default function SchematicEditor({ readOnly = false, hideSidebar = false 
                 Click a pin, wire or grid point to place the wire. Enter finishes, Backspace steps back, Esc cancels
               </span>
             )}
-            <button
-              onClick={toggleWireDrawMode}
-              className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded w-[100px] justify-center ${
-                wireDrawMode
-                  ? "bg-[#113768] text-white"
-                  : "bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-700"
-              }`}
-              title="Toggle wire drawing mode (W)"
-            >
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-                <path d="M 2 12 L 2 6 L 12 6 L 12 2" />
-              </svg>
-              Draw Wire
-            </button>
           </div>
         )}
       </div>}

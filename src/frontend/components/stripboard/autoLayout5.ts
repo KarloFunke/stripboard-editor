@@ -3,7 +3,10 @@ import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { getComponentBounds, getComponentPinPositions, getRotatedPinPositions } from "./boardLayout";
 import { AutoLayoutProgress, AutoLayoutResult } from "./layoutTypes";
 import { Rot, allowedDrows } from "./layout2/tileModel";
-import { bodiesTooClose, bodyIntersectsRect, clearanceOf, segmentsIntersect, wireStackDepth } from "./flexGeometry";
+import { Capsule, FootprintRect, bodyRectsClash, capsuleClashesRect, capsulesClash, coveredHoles, segmentsIntersect, wireStackDepth } from "./flexGeometry";
+import { flexBody, flexCoveredHoles, flexProfile, rigidGeometry } from "./partGeometry";
+import { expandOffBoard, leadSiblings } from "./offBoard";
+import { resolvePackage } from "./packageBodies";
 import { alignCuts } from "./layout2/alignCuts";
 import { padAroundEdgeConnectors } from "./layout2/edgePadding";
 import { drillRemainingCuts } from "./autoFinish";
@@ -97,7 +100,9 @@ export interface AutoLayout5Options {
 }
 
 // ── lab types: what the explainer figures draw ──
-export interface LabPlaced { pi: number; x: number; y: number; w: number; h: number; flex: boolean; pins: { r: number; c: number; net: number; name: string; id: string }[] }
+// `pos`, `rot` and `end` place the part the way a stored component is placed
+// (boardPos, rotation, flexibleEndPos), so a figure can draw its real package
+export interface LabPlaced { pi: number; x: number; y: number; w: number; h: number; flex: boolean; pos: BoardPosition; rot: Rot; end?: BoardPosition; pins: { r: number; c: number; net: number; name: string; id: string }[] }
 export interface LabSeg { row: number; c1: number; c2: number; net: number }
 export interface LabCut { row: number; col: number; kind: "hole" | "knife" }
 export interface LabWire { r1: number; c1: number; r2: number; c2: number; net: number; slanted: boolean; crossings: number }
@@ -115,7 +120,7 @@ export interface LabFrame { stage: 1 | 2 | 3 | 4 | 5 | 6 | 7; msg: string; lanes
 export interface LabDecoded { eBase: number; hard: number; mess: number; H: number; W: number; board: LabBoard; wires: number; wireLen: number; cuts: number; bCuts: number; starved: number; relays: number; connEdge: number }
 export interface LabStep { it: number; moves: number; T: number; w: number; g: LabGenome; d: LabDecoded; E: number; best: number; bestG: LabGenome; bestD: LabDecoded; kind: "better" | "worse-kept" | "worse-rejected" | "infeasible" | "null"; done: boolean }
 export interface LabApi {
-  parts: { id: string; kind: "rigid" | "flex"; isConn: boolean; canH: boolean; canV: boolean; spans: [number, number]; pinNames: string[] }[];
+  parts: { id: string; comp: Component; kind: "rigid" | "flex"; isConn: boolean; canH: boolean; canV: boolean; spans: [number, number]; pinNames: string[] }[];
   nets: { name: string; color: string; pins: { pi: number; name: string }[] }[];
   rigidIdx: number[];
   flexIdx: number[];
@@ -177,7 +182,10 @@ const W_TALL = 2;       // rows of cells each row beyond the board width costs
 const RAMP_START = 25;  // their price while the skeleton forms
 const T_START = 150;    // anneal start temperature (see solveSeed)
 const W_LOCKOVER = 150; // per line over a locked dimension
+const W_SIBLING = 0.5;  // per hole the pads of one off-board part sit further apart than they must
 const ROTS: Rot[] = [0, 90, 180, 270];
+// the way a part's front face looks at each rotation (front() in rigidBodies)
+const ENTRY_SIDE: Record<Rot, "left" | "right" | "top" | "bottom"> = { 0: "right", 90: "bottom", 180: "left", 270: "top" };
 
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
@@ -195,6 +203,15 @@ interface RigidShape {
   h: number;
   dRow: number;
   dCol: number;
+  // the package's true body relative to the shape's top-left hole, in
+  // hole-centre terms; equals the shape's own cells unless it overhangs
+  body: FootprintRect;
+  // room held over the board by the package (a pot's shaft), same terms:
+  // closed to other parts, but free to hang over the board's edge
+  reach?: FootprintRect;
+  // the package takes its wires in at one face: which board edge that face
+  // looks at in this rotation
+  entry?: "left" | "right" | "top" | "bottom";
   pins: { pinId: string; net: number | undefined; rowOff: number; colOff: number }[];
 }
 
@@ -262,13 +279,17 @@ interface Decoded {
 
 export function computeAutoLayout5(
   board: Board,
-  components: Component[],
+  allComponents: Component[],
   componentDefs: ComponentDef[],
   nets: Net[],
-  netAssignments: NetAssignment[],
+  allAssignments: NetAssignment[],
   onProgress?: (p: AutoLayoutProgress) => void,
   options?: AutoLayout5Options
 ): AutoLayoutResult {
+  // An off-board part comes onto the board as one solder pad per wired pin,
+  // each an ordinary one-hole connector from here on. Their placements go
+  // back under the pads' own ids; the caller folds them onto the parent.
+  const { components, netAssignments } = expandOffBoard(allComponents, componentDefs, allAssignments);
   const report = (phase: AutoLayoutProgress["phase"], frac: number) =>
     onProgress?.({ phase, attempt: 1, maxAttempts: 1, frac });
 
@@ -309,18 +330,31 @@ export function computeAutoLayout5(
       });
     } else {
       const shapes = new Map<Rot, RigidShape>();
+      const pkg = resolvePackage(def, def.part?.value, def.part?.package);
+      const sideEntry = pkg?.kind === "rigid" && !!pkg.spec.sideEntry;
       for (const rot of ROTS) {
-        const b0 = getComponentBounds(def, { row: 0, col: 0 }, rot);
+        // every hole the package lies over, which is what it takes from the
+        // board; an overhanging body is wider than its footprint cells
+        const { body: body0, reach: reach0 } = rigidGeometry(def, { row: 0, col: 0 }, rot);
+        const b0 = coveredHoles(body0);
         const pins: RigidShape["pins"] = [];
         for (const p of getRotatedPinPositions(def, { row: 0, col: 0 }, rot)) {
           pins.push({ pinId: p.pinId, net: netByPin.get(c.id + ":" + p.pinId), rowOff: p.row - b0.minRow, colOff: p.col - b0.minCol });
         }
-        shapes.set(rot, { w: b0.maxCol - b0.minCol + 1, h: b0.maxRow - b0.minRow + 1, dRow: b0.minRow, dCol: b0.minCol, pins });
+        shapes.set(rot, {
+          w: b0.maxCol - b0.minCol + 1, h: b0.maxRow - b0.minRow + 1, dRow: b0.minRow, dCol: b0.minCol, pins,
+          body: { minRow: body0.minRow - b0.minRow, maxRow: body0.maxRow - b0.minRow, minCol: body0.minCol - b0.minCol, maxCol: body0.maxCol - b0.minCol },
+          ...(sideEntry ? { entry: ENTRY_SIDE[rot] } : {}),
+          ...(reach0 ? { reach: { minRow: reach0.minRow - b0.minRow, maxRow: reach0.maxRow - b0.minRow, minCol: reach0.minCol - b0.minCol, maxCol: reach0.maxCol - b0.minCol } } : {}),
+        });
       }
       parts.push({ kind: "rigid", comp: c, def, locked, isConn, shapes });
     }
   }
   const nP = parts.length;
+  // pads of one off-board part, which the builder wires as a bundle
+  const siblingGroups = leadSiblings(parts.map((p) => p.comp))
+    .map((ids) => ids.map((id) => parts.findIndex((p) => p.comp.id === id)));
   const flexIdx = parts.map((p, i) => (p.kind === "flex" ? i : -1)).filter((i) => i >= 0);
   const rigidIdx = parts.map((p, i) => (p.kind === "rigid" ? i : -1)).filter((i) => i >= 0);
   const lean = !!options?.schedule?.lean;
@@ -365,9 +399,25 @@ export function computeAutoLayout5(
     (options?.timeBudgetMs !== undefined && options?.msPerMoveHint ? plannedMoves(options.timeBudgetMs / options.msPerMoveHint) : capMoves);
   const wBCut = options?.drilledCutsOnly ? W_BCUT_DRILL : W_BCUT;
   const anyLockedPart = parts.some((p) => p.locked);
-  // free board lines a flexible body keeps to any neighbour (def setting)
-  const clrOf = parts.map((p) => (p.kind === "flex" ? clearanceOf(p.def) : 0));
-  const clrPad = 2 + Math.max(0, ...clrOf);
+  // free board lines a flexible body keeps to any neighbour: what the user
+  // asked for, or what its real width takes anyway, whichever is more
+  const profOf = parts.map((p) => (p.kind === "flex" ? flexProfile(p.def) : undefined));
+  // free lines each part asks for on top of its size; a rigid part only when
+  // the project wants extra room between all parts
+  const linesOf = parts.map((p, i) => profOf[i]?.lines ?? p.def.clearance ?? 0);
+  const clrOf = parts.map((p, i) => {
+    const prof = profOf[i];
+    if (!prof) return linesOf[i];
+    const r = flexBody(prof, { row: 0, col: 0 }, { row: Math.max(1, (p as FlexPart).minS), col: 0 }).r;
+    return Math.max(prof.lines, Math.ceil(r - 0.5 - 1e-6));
+  });
+  // only a body about a pitch wide or more covers holes beside its own line
+  const fatOf = clrOf.map((_, i) => {
+    const prof = profOf[i];
+    return !!prof && flexBody(prof, { row: 0, col: 0 }, { row: Math.max(1, (parts[i] as FlexPart).minS), col: 0 }).r > 0.95;
+  });
+  // a pair can be too close from as far as both reaches together
+  const clrPad = 2 + 2 * Math.max(0, ...clrOf);
   const connSides = options?.connSides ?? { top: true, bottom: true, left: true, right: true };
   const mCol = anyLockedPart || lockedColsCap !== undefined ? 0 : 1;
   const mRow = anyLockedPart || lockedRowsCap !== undefined ? 0 : 1;
@@ -499,13 +549,13 @@ export function computeAutoLayout5(
       const yv = (n: number) => (yArr[n] < -1e17 ? 0 : yArr[n]) + shift, xv = (n: number) => (xArr[n] < -1e17 ? 0 : xArr[n]) + shift;
       if (p.kind === "rigid") {
         const sh = geo[pi].sh!;
-        return { pi, x: xv(pi), y: yv(pi), w: sh.w, h: sh.h, flex: false, pins: sh.pins.map((sp) => ({ r: yv(pi) + sp.rowOff, c: xv(pi) + sp.colOff, net: sp.net ?? -1, name: pinNameOf(pi, sp.pinId, undefined), id: sp.pinId })) };
+        return { pi, x: xv(pi), y: yv(pi), w: sh.w, h: sh.h, flex: false, pos: { row: yv(pi) - sh.dRow, col: xv(pi) - sh.dCol }, rot: rotOfPart(g, pi), pins: sh.pins.map((sp) => ({ r: yv(pi) + sp.rowOff, c: xv(pi) + sp.colOff, net: sp.net ?? -1, name: pinNameOf(pi, sp.pinId, undefined), id: sp.pinId })) };
       }
       const br = flexBit(g.br, pi);
       const nA = (br === 0 ? p.na : p.nb) ?? -1, nB = (br === 0 ? p.nb : p.na) ?? -1;
-      if (geo[pi].mode === "H") return { pi, x: xv(pi), y: yv(pi), w: p.dc0 + 1, h: 1, flex: true, pins: [{ r: yv(pi), c: xv(pi), net: nA, name: br === 0 ? "1" : "2", id: br === 0 ? "1" : "2" }, { r: yv(pi), c: xv(pi) + p.dc0, net: nB, name: br === 0 ? "2" : "1", id: br === 0 ? "2" : "1" }] };
+      if (geo[pi].mode === "H") return { pi, x: xv(pi), y: yv(pi), w: p.dc0 + 1, h: 1, flex: true, rot: 0, pos: { row: yv(pi), col: xv(pi) + (br === 0 ? 0 : p.dc0) }, end: { row: yv(pi), col: xv(pi) + (br === 0 ? p.dc0 : 0) }, pins: [{ r: yv(pi), c: xv(pi), net: nA, name: br === 0 ? "1" : "2", id: br === 0 ? "1" : "2" }, { r: yv(pi), c: xv(pi) + p.dc0, net: nB, name: br === 0 ? "2" : "1", id: br === 0 ? "2" : "1" }] };
       const b = vBot.get(pi)!;
-      return { pi, x: xv(pi), y: yv(pi), w: 1, h: yv(b) - yv(pi) + 1, flex: true, pins: [{ r: yv(pi), c: xv(pi), net: nA, name: br === 0 ? "1" : "2", id: br === 0 ? "1" : "2" }, { r: yv(b), c: xv(pi), net: nB, name: br === 0 ? "2" : "1", id: br === 0 ? "2" : "1" }] };
+      return { pi, x: xv(pi), y: yv(pi), w: 1, h: yv(b) - yv(pi) + 1, flex: true, rot: 0, pos: { row: br === 0 ? yv(pi) : yv(b), col: xv(pi) }, end: { row: br === 0 ? yv(b) : yv(pi), col: xv(pi) }, pins: [{ r: yv(pi), c: xv(pi), net: nA, name: br === 0 ? "1" : "2", id: br === 0 ? "1" : "2" }, { r: yv(b), c: xv(pi), net: nB, name: br === 0 ? "2" : "1", id: br === 0 ? "2" : "1" }] };
     });
 
     const pinYExpr = (pin: { pi: number; kind: string; end?: number; pinId?: string }): [number, number] => {
@@ -903,6 +953,15 @@ export function computeAutoLayout5(
       }
       return false;
     };
+    // A body wider than the line between its legs (a can) lies over holes of
+    // its own: nothing else may use them, and a link through them runs under
+    // the part. Off the board's edge it simply hangs over.
+    const claimBody = (pi: number, p1: BoardPosition, p2: BoardPosition) => {
+      if (!fatOf[pi]) return;
+      for (const h of flexCoveredHoles(flexBody(profOf[pi]!, p1, p2))) {
+        if (h.row >= 0 && h.col >= 0 && h.row < H && h.col < W) claim(h.row, h.col, 1, undefined, pi);
+      }
+    };
     let ringBad = 0;
     for (let pi = 0; pi < nP; pi++) {
       const p = parts[pi];
@@ -915,6 +974,7 @@ export function computeAutoLayout5(
           if (c > 0 && c < p.dc0) claim(yI[pi], xI[pi] + c, 1, undefined, pi);
           if (flexCellBad(yI[pi], xI[pi] + c, "H")) ringBad++;
         }
+        claimBody(pi, { row: yI[pi], col: xI[pi] }, { row: yI[pi], col: xI[pi] + p.dc0 });
         const brBit = flexBit(g.br, pi);
         claim(yI[pi], xI[pi], 2, (brBit === 0 ? p.na : p.nb) ?? floatNet++, pi);
         claim(yI[pi], xI[pi] + p.dc0, 2, (brBit === 0 ? p.nb : p.na) ?? floatNet++, pi);
@@ -924,6 +984,7 @@ export function computeAutoLayout5(
           if (r > t && r < b) claim(r, xI[pi], 1, undefined, pi);
           if (flexCellBad(r, xI[pi], "V")) ringBad++;
         }
+        claimBody(pi, { row: t, col: xI[pi] }, { row: b, col: xI[pi] });
         const brBit = flexBit(g.br, pi);
         claim(t, xI[pi], 2, (brBit === 0 ? p.na : p.nb) ?? floatNet++, pi);
         claim(b, xI[pi], 2, (brBit === 0 ? p.nb : p.na) ?? floatNet++, pi);
@@ -932,7 +993,7 @@ export function computeAutoLayout5(
 
     // lab: the grid as drawn, copper strips per segment as they are found
     const labSegs: LabSeg[] = [], labCuts: LabCut[] = [], labWires: LabWire[] = [];
-    const labParts = labMode ? labPlaced(yI, xI, 0).map((p) => ({ ...p, x: p.x + mCol, y: p.y + mRow, pins: p.pins.map((q) => ({ ...q, r: q.r + mRow, c: q.c + mCol })) })) : [];
+    const labParts = labMode ? labPlaced(yI, xI, 0).map((p) => ({ ...p, x: p.x + mCol, y: p.y + mRow, pos: { row: p.pos.row + mRow, col: p.pos.col + mCol }, end: p.end && { row: p.end.row + mRow, col: p.end.col + mCol }, pins: p.pins.map((q) => ({ ...q, r: q.r + mRow, c: q.c + mCol })) })) : [];
     const labBoardAt = (fromRow: number, extra: Partial<LabBoard> = {}): LabBoard => ({ rows: GH, cols: GW, parts: labParts, segs: [...labSegs, ...Array.from({ length: GH - fromRow }, (_, k) => ({ row: fromRow + k, c1: 0, c2: GW - 1, net: -1 }))], cuts: [...labCuts], wires: [...labWires], busRows: [], ...extra });
     if (labMode === 2) pushF({ stage: 4, msg: `The board gets ${mRow ? "one blank line of margin on every side, and" : ""} every row is one copper strip. Now each row is read from left to right.`, board: labBoardAt(0) });
     // runs, cuts, segments per row
@@ -1289,19 +1350,28 @@ export function computeAutoLayout5(
     // the blanket gaps approximated); bbox prefilter keeps it cheap
     let geoBad = 0;
     {
-      interface PR { pi: number; kind: "rigid" | "flex"; p1?: BoardPosition; p2?: BoardPosition; minRow: number; maxRow: number; minCol: number; maxCol: number }
+      interface PR { pi: number; kind: "rigid" | "flex"; p1?: BoardPosition; p2?: BoardPosition; cap?: Capsule; body?: FootprintRect; reach?: FootprintRect; minRow: number; maxRow: number; minCol: number; maxCol: number }
       const rects: PR[] = [];
       for (let pi = 0; pi < nP; pi++) {
         const g2 = geo[pi];
         if (parts[pi].kind === "rigid") {
-          rects.push({ pi, kind: "rigid", minRow: yI[pi], maxRow: yI[pi] + g2.h - 1, minCol: xI[pi], maxCol: xI[pi] + g2.w - 1 });
+          const bd = g2.sh!.body;
+          const at = (o: FootprintRect): FootprintRect => ({ minRow: yI[pi] + o.minRow, maxRow: yI[pi] + o.maxRow, minCol: xI[pi] + o.minCol, maxCol: xI[pi] + o.maxCol });
+          const reach = g2.sh!.reach ? at(g2.sh!.reach) : undefined;
+          // the prefilter box has to take in the reach, or a part under a
+          // shaft is never even compared with it
+          rects.push({ pi, kind: "rigid", body: at(bd), reach,
+            minRow: Math.floor(Math.min(yI[pi], reach?.minRow ?? Infinity)), maxRow: Math.ceil(Math.max(yI[pi] + g2.h - 1, reach?.maxRow ?? -Infinity)),
+            minCol: Math.floor(Math.min(xI[pi], reach?.minCol ?? Infinity)), maxCol: Math.ceil(Math.max(xI[pi] + g2.w - 1, reach?.maxCol ?? -Infinity)) });
         } else if (g2.mode === "H") {
           const dc0 = (parts[pi] as FlexPart).dc0;
-          rects.push({ pi, kind: "flex", p1: { row: yI[pi], col: xI[pi] }, p2: { row: yI[pi], col: xI[pi] + dc0 },
+          const p1 = { row: yI[pi], col: xI[pi] }, p2 = { row: yI[pi], col: xI[pi] + dc0 };
+          rects.push({ pi, kind: "flex", p1, p2, cap: flexBody(profOf[pi]!, p1, p2),
             minRow: yI[pi], maxRow: yI[pi], minCol: xI[pi], maxCol: xI[pi] + dc0 });
         } else {
           const b = yI[vBot.get(pi)!];
-          rects.push({ pi, kind: "flex", p1: { row: yI[pi], col: xI[pi] }, p2: { row: b, col: xI[pi] },
+          const p1 = { row: yI[pi], col: xI[pi] }, p2 = { row: b, col: xI[pi] };
+          rects.push({ pi, kind: "flex", p1, p2, cap: flexBody(profOf[pi]!, p1, p2),
             minRow: yI[pi], maxRow: b, minCol: xI[pi], maxCol: xI[pi] });
         }
       }
@@ -1315,11 +1385,19 @@ export function computeAutoLayout5(
           if (A.minCol > B.maxCol + clrPad || B.minCol > A.maxCol + clrPad) continue;
           if (A.kind === "flex" && B.kind === "flex") {
             if (segmentsIntersect(A.p1!, A.p2!, B.p1!, B.p2!)) geoBad++;
-            else if (bodiesTooClose(A.p1!, A.p2!, B.p1!, B.p2!, Math.max(clrOf[A.pi], clrOf[B.pi]))) geoBad++;
+            else if (capsulesClash(A.cap!, B.cap!, Math.max(linesOf[A.pi], linesOf[B.pi]))) geoBad++;
           } else if (A.kind === "flex" || B.kind === "flex") {
             const F = A.kind === "flex" ? A : B;
             const R = A.kind === "flex" ? B : A;
-            if (bodyIntersectsRect(F.p1!, F.p2!, { minRow: R.minRow, maxRow: R.maxRow, minCol: R.minCol, maxCol: R.maxCol }, clrOf[F.pi])) geoBad++;
+            if (capsuleClashesRect(F.cap!, R.body!, Math.max(linesOf[F.pi], linesOf[R.pi])) || (R.reach && capsuleClashesRect(F.cap!, R.reach))) geoBad++;
+          } else if (
+            // two packages whose plastic overhangs their cells into each
+            // other, or one sitting under what the other holds over the board
+            bodyRectsClash(A.body!, B.body!, Math.max(linesOf[A.pi], linesOf[B.pi])) ||
+            (A.reach && bodyRectsClash(A.reach, B.body!)) || (B.reach && bodyRectsClash(B.reach, A.body!)) ||
+            (A.reach && B.reach && bodyRectsClash(A.reach, B.reach))
+          ) {
+            geoBad++;
           }
         }
       }
@@ -1368,11 +1446,39 @@ export function computeAutoLayout5(
       // way out of it: only a rotation is
       const along = ((dl === d || dr === d) && h >= w) || ((dt === d || db === d) && w >= h);
       const CONN_FULL = 30;
-      connEdge += (d <= 0 ? 0 : d === 1 ? 0.5 * CONN_FULL : d === 2 ? 0.75 * CONN_FULL : CONN_FULL) + 0.2 * d + (along ? 0 : 0.75 * CONN_FULL);
+      // a screw terminal that opens toward the parts is as hard to wire as one
+      // in the middle of the board, so looking the wrong way costs the same
+      const entry = geo[pi].sh?.entry;
+      const facesOut = !entry || { left: dl, right: dr, top: dt, bottom: db }[entry] === d;
+      connEdge += (d <= 0 ? 0 : d === 1 ? 0.5 * CONN_FULL : d === 2 ? 0.75 * CONN_FULL : CONN_FULL) + 0.2 * d + (along ? 0 : 0.75 * CONN_FULL) + (facesOut ? 0 : CONN_FULL);
+    }
+    // a shaft goes through the panel, so it belongs out over the board's
+    // edge: whatever share of it lies over the board instead is priced like
+    // a connector kept off the edge
+    let shaftIn = 0;
+    for (const pi of rigidIdx) {
+      const reach = geo[pi].sh?.reach;
+      if (!reach || parts[pi].locked) continue;
+      const r0 = yI[pi] + reach.minRow - 0.5, r1 = yI[pi] + reach.maxRow + 0.5;
+      const c0 = xI[pi] + reach.minCol - 0.5, c1 = xI[pi] + reach.maxCol + 0.5;
+      const inside =
+        Math.max(0, Math.min(r1, physH - 0.5) - Math.max(r0, -0.5)) * Math.max(0, Math.min(c1, physW - 0.5) - Math.max(c0, -0.5));
+      shaftIn += 30 * (inside / ((r1 - r0) * (c1 - c0)));
+    }
+    // the pads of one off-board part are wired as a bundle, so they are worth
+    // keeping together; a small price, well under what an edge place is worth
+    let sibling = 0;
+    for (const group of siblingGroups) {
+      let r0 = Infinity, r1 = -Infinity, c0 = Infinity, c1 = -Infinity;
+      for (const pi of group) {
+        r0 = Math.min(r0, yI[pi]); r1 = Math.max(r1, yI[pi]);
+        c0 = Math.min(c0, xI[pi]); c1 = Math.max(c1, xI[pi]);
+      }
+      sibling += W_SIBLING * Math.max(0, r1 - r0 + (c1 - c0) - (group.length - 1));
     }
     const eBase =
       W_AREA * (physH * physW + aspectOver) + W_WIRE * wires + W_WLEN * wireLen +
-      W_CUT * cuts + wBCut * bCuts + W_LOCKOVER * lockOver + connEdge +
+      W_CUT * cuts + wBCut * bCuts + W_LOCKOVER * lockOver + connEdge + shaftIn + sibling +
       overlapBad * 500 + geoBad * 450 + ringBad * 120 + spanBad * 60 + starved * 20 + starvedHard * 450;
     const hardPen = overlapBad * 500 + geoBad * 450 + starvedHard * 450;
     if (labMode) {
@@ -1686,7 +1792,7 @@ export function computeAutoLayout5(
         const b = getComponentBounds(def, c.boardPos, c.rotation);
         y = b.minRow; x = b.minCol; h = b.maxRow - b.minRow + 1; w = b.maxCol - b.minCol + 1;
       }
-      labParts.push({ pi, x, y, w, h, flex: !!def.flexible, pins });
+      labParts.push({ pi, x, y, w, h, flex: !!def.flexible, pos: c.boardPos, rot: c.rotation, end: c.flexibleEndPos, pins });
     }
     return {
       rows, cols, parts: labParts,
@@ -2029,7 +2135,7 @@ export function computeAutoLayout5(
       }
     };
     options.lab({
-      parts: parts.map((p) => ({ id: p.comp.label, kind: p.kind, isConn: p.isConn, canH: p.kind === "flex" ? p.canH : false, canV: p.kind === "flex" ? p.canV : false, spans: p.kind === "flex" ? [p.minS, p.maxS] : [0, 0], pinNames: p.kind === "rigid" ? p.def.pins.map((q) => q.name) : ["1", "2"] })),
+      parts: parts.map((p) => ({ id: p.comp.label, comp: p.comp, kind: p.kind, isConn: p.isConn, canH: p.kind === "flex" ? p.canH : false, canV: p.kind === "flex" ? p.canV : false, spans: p.kind === "flex" ? [p.minS, p.maxS] : [0, 0], pinNames: p.kind === "rigid" ? p.def.pins.map((q) => q.name) : ["1", "2"] })),
       nets: nets.map((n, ni) => ({ name: n.name, color: n.color, pins: netPins[ni].map((q) => ({ pi: q.pi, name: pinNameOf(q.pi, q.pinId, q.end) })) })),
       rigidIdx, flexIdx, initGenome, cloneG,
       mutate: (g, rng) => mutate(g, rng, false),

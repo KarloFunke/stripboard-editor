@@ -244,33 +244,25 @@ export default function AutoLayoutGuidePage() {
             build it. I consider the following properties most relevant:
           </P>
           <UL>
-            <li><strong>Complete.</strong> Every connection of the schematic made, nothing else connected, no two components colliding or closer than the clearance asked for.</li>
+            <li><strong>Complete.</strong> Every connection of the schematic made, nothing else connected, no two components colliding or closer than what can be build.</li>
             <li><strong>Small</strong>, and rather wide than tall but optimally squarish.</li>
             <li><strong>Few link wires</strong>, and short ones.</li>
             <li><strong>Few cuts</strong>, preferably drilled.</li>
             <li><strong>Connectors on an edge.</strong></li>
-            <li><strong>Clean wires.</strong> Every link wire straight along one column or a spare strip, crossing no component and no other wire.</li>
+            <li><strong>Clean wires.</strong> Every link wire straight along one column or a spare strip, crossing no component and no other wire. A wire that is off axis (also called slanted from here on) or crosses something is what this page calls wire mess. It makes a board much harder to read, and a huge portion of the effort has gone into fighting it.</li>
           </UL>
-          <H3>Wire mess</H3>
+          <H3>A good board</H3>
           <P>
-            A huge portion of the effort has gone into fighting this. 
-            Wires that are off axis (also referred to as slanted in this text) or cross a component 
-            create visual mess and make it much harder to solder up a result.
-            The pictures below demonstrate it. Both are the same circuit, laid out automatically:
+            Here is a board that has all of these properties. It is the guitar pedal benchmark circuit from appendix A, laid out by the
+            layouter: three short link wires, each straight along a column, every cut drilled, and the solder pads for
+            everything that is wired off the board on its edges.
           </P>
-          <figure className="my-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <img src="/wire-mess.png" alt="The guitar pedal benchmark circuit laid out by an older, simpler layouter: several slanted link wires and two crossings" width={904} height={777} className="w-full h-auto rounded border border-neutral-200 dark:hidden" />
-              <img src="/wire-mess-dark.png" alt="The guitar pedal benchmark circuit laid out by an older, simpler layouter: several slanted link wires and two crossings" width={904} height={777} className="w-full h-auto rounded border border-neutral-700 hidden dark:block" />
-            </div>
-            <div>
-              <img src="/Guitar-Pedal-(arXiv-2512.04910-benchmark).png" alt="The same circuit laid out by the current layouter: every link wire straight along a column, no crossings" width={846} height={777} className="w-full h-auto rounded border border-neutral-200 dark:hidden" />
-              <img src="/Guitar-Pedal-(arXiv-2512.04910-benchmark)-dark.png" alt="The same circuit laid out by the current layouter: every link wire straight along a column, no crossings" width={846} height={777} className="w-full h-auto rounded border border-neutral-700 hidden dark:block" />
-            </div>
-            <figcaption className="sm:col-span-2 text-xs text-neutral-500 dark:text-neutral-400 leading-snug">
-              Left, an early version of the layouter: slanted wires, wires crossing each other and running over components. Right,
-              the current one on the same circuit: every link wire runs straight along a column and crosses nothing. Both
-              boards work electrically. Only one of them is a board you would want to build (unless you&apos;re a maniac).
+          <figure className="my-6">
+            <img src="/guitar-pedal-off-board.png" alt="The guitar pedal benchmark circuit laid out by the layouter: a compact board with three straight link wires, drilled cuts and the solder pads for off-board parts on its edges" width={1765} height={991} className="w-full h-auto rounded border border-neutral-200 dark:hidden" />
+            <img src="/guitar-pedal-off-board-dark.png" alt="The guitar pedal benchmark circuit laid out by the layouter, dark mode" width={1765} height={991} className="w-full h-auto rounded border border-neutral-700 hidden dark:block" />
+            <figcaption className="mt-2 text-xs text-neutral-500 dark:text-neutral-400 leading-snug">
+              The pots and the switch sit on the case of a pedal, not on the board, so each of their pins is a solder pad for a
+              wire. The same goes for the jacks and the supply.
             </figcaption>
           </figure>
 
@@ -343,7 +335,7 @@ export default function AutoLayoutGuidePage() {
           <P>Here are the other descriptions used alongside the 2 orderings:</P>
           <UL>
             <li><strong>Rotation</strong> of every rigid component, in four steps.</li>
-            <li><strong>Flat or upright</strong> for every two-legged component with flexible leads, such as a resistor or a diode, and <strong>how far its leads span</strong>, within the range you allow in the settings.</li>
+            <li><strong>Flat or upright</strong> for every two-legged component with flexible leads, such as a resistor or a diode, and <strong>how far its leads span</strong>, within the range its package allows.</li>
             <li><strong>Which end goes where</strong> for those components, since a resistor can be turned around.</li>
             <li><strong>Strip groups.</strong> For every net, which of its pins are asked to share one copper strip. Pins in the same group are forced onto the same row during the construction of the board from this description; pins in different groups get their own rows and are joined by a link wire later.</li>
             <li><strong>Reserved blank lines.</strong> A component can ask for a blank row below it or a blank column beside it. Those are the rows and columns the wiring will use, and reserving them in the description lets the annealer trade area against wiring room.</li>
@@ -564,15 +556,17 @@ export default function AutoLayoutGuidePage() {
           {/* 12 */}
           <H2 id="results">12. How well it works</H2>
           <P>
-            The layouter is measured against a corpus of 271 circuits that people laid out by hand in this editor, from three
-            components up to about fifty. On every one of them, unlocked, it produces a complete board with no slanted wire and
-            no wire crossing a component, at the default of one minute per layout. Its board is smaller than the hand layout in
-            199 cases, larger in 70 and the same size in 2, smaller by 30% on the median.
+            There is currently no fair benchmark for the layouter. It used to be measured against 271 circuits that people had laid out
+            by hand in this editor, but those boards were drawn under the old editor rules. Since then every part is drawn and
+            spaced at its true physical size, so many of the old hand layouts would not pass today&apos;s rules, and a solver held to
+            the stricter rules can&apos;t be fairly compared against them. A new set of hand layouts made under the current rules
+            does not exist yet.
           </P>
           <P>
-            The margin is largest on small boards and narrows as they grow. Up to twenty components the layouter beats most
-            hand layouts on size and on wires; between twenty and forty it is a little smaller but spends more link wires;
-            beyond forty the hand layouts often are still a bit tighter, this is where the work continues.
+            Under the old rules it completed all 271 circuits, from three components up to about fifty, with no slanted wire and
+            no wire crossing a component, at the default of one minute per layout. Its board was smaller than the hand layout in 199
+            cases, larger in 70 and the same size in 2, and 30% smaller on the median. The margin was largest on small boards;
+            beyond about forty components the hand layouts were often still a bit tighter.
           </P>
           <P>
             Refer to the <Link href="/guide" className="text-[var(--copper)] hover:underline">quick guide</Link> for the buttons
@@ -605,14 +599,32 @@ export default function AutoLayoutGuidePage() {
             only, and the question is where to break it. What follows is everything I have found that tackles some part of it.
           </P>
           <P>
-            The only published finished attempt at placing components automatically is a 2025 paper by Fang Li, 
+            The closest match is{" "}
+            <a href="https://verodesigner.vercel.app/" className="text-[var(--copper)] hover:underline" target="_blank" rel="noopener noreferrer">Vero Designer</a>{" "}
+            by GitHub user blazethablunt (<a href="https://github.com/blazethablunt/VeroDesigner" className="text-[var(--copper)] hover:underline" target="_blank" rel="noopener noreferrer">source on GitHub</a>).
+            Like this site, it turns a schematic into a complete board with
+            parts, cuts and link wires, and lets you edit the result. Its layouter works in the opposite order to the one described
+            here. It first decides which copper row each net lives on: the ICs are fixed in the middle as anchors, and a short
+            annealing run moves the other nets up and down until the resistors and capacitors between them have a comfortable
+            reach. Then it places the components onto those rows one after another, each at the best free spot with a little
+            randomness, over a range of board widths and heights. Each candidate gets a quick estimate from its area, the
+            link wires it will probably need, its cuts and any resistors lying flat. Short annealing runs slide and swap
+            the parts of the best candidates along their rows, and only then is the full board worked out: a drilled cut
+            at a free hole between two nets, insulated link wires between strips, and a few sweeps to remove unused space.
+            Annealing is a helper there: each run is a few thousand steps that polish a board built by other means, judged by
+            the quick estimate. Here it is the whole search: hundreds of thousands of steps on a description of the complete
+            board, each one decoded and scored with its cuts and wires in place. It is
+            a new tool (even newer than this one), and I was not aware of it while developing the layouter on this site, so the two were made independently.
+          </P>
+          <P>
+            The only published paper on placing components automatically is a 2025 paper by Fang Li,
             <a href="https://arxiv.org/abs/2512.04910" className="text-[var(--copper)] hover:underline" target="_blank" rel="noopener noreferrer">Declarative Synthesis and Multi-Objective Optimization of Stripboard
             Circuit Layouts Using Answer Set Programming</a>. It writes the placement rules down as logical constraints, hands them
             to a general constraint solver, and asks it first for any layout that satisfies them and then for the one that keeps
             the pins of each component on nearby strips on the smallest board. It comes with five benchmark circuits.
             Strip cuts and link wires are
             not part of that model, which is why in its layouts every net needs a strip of its own; the paper names both as
-            future work. The layouter on this site solves that same guitar pedal circuit in a few seconds. The project is public, so you can{" "}
+            future work. The layouter on this site solves that same guitar pedal circuit in a few seconds, cuts and link wires included. One difference: the paper places the pots and the switch on the board, while here they are wired off the board, the way a pedal is usually built. The project is public, so you can{" "}
             <a href="https://stripboard-editor.com/view/96fe339f-9d00-45e3-8417-85f876e2d610" className="text-[var(--copper)] hover:underline" target="_blank" rel="noopener noreferrer">open it in the viewer</a>:
           </P>
           <figure className="my-6">
@@ -622,11 +634,11 @@ export default function AutoLayoutGuidePage() {
               The guitar pedal benchmark circuit from Li&apos;s paper, as drawn in the editor: 18 components and 12 nets.
             </figcaption>
           </figure>
-          <figure className="my-6 max-w-sm">
-            <img src="/Guitar-Pedal-(arXiv-2512.04910-benchmark).png" alt="Automatically generated stripboard layout of the guitar-pedal benchmark circuit from arXiv 2512.04910: a compact stripboard with drilled strip cuts and only vertical link wires" width={846} height={777} className="w-full h-auto rounded border border-neutral-200 dark:hidden" />
-            <img src="/Guitar-Pedal-(arXiv-2512.04910-benchmark)-dark.png" alt="Automatically generated stripboard layout of the guitar-pedal benchmark circuit from arXiv 2512.04910, dark mode" width={846} height={777} className="w-full h-auto rounded border border-neutral-700 hidden dark:block" />
+          <figure className="my-6">
+            <img src="/guitar-pedal-off-board.png" alt="Automatically generated stripboard layout of the guitar-pedal benchmark circuit from arXiv 2512.04910: a compact stripboard with drilled strip cuts and only vertical link wires" width={1765} height={991} className="w-full h-auto rounded border border-neutral-200 dark:hidden" />
+            <img src="/guitar-pedal-off-board-dark.png" alt="Automatically generated stripboard layout of the guitar-pedal benchmark circuit from arXiv 2512.04910, dark mode" width={1765} height={991} className="w-full h-auto rounded border border-neutral-700 hidden dark:block" />
             <figcaption className="mt-2 text-xs text-neutral-500 dark:text-neutral-400 leading-snug">
-              The guitar pedal benchmark circuit from Li&apos;s paper, laid out by this site&apos;s layouter.
+              The guitar pedal benchmark circuit from Li&apos;s paper, laid out by this site&apos;s layouter, with the three pots and the switch wired off the board.
             </figcaption>
           </figure>
           <P>
@@ -653,9 +665,9 @@ export default function AutoLayoutGuidePage() {
             circuit board view and does not apply here.
           </P>
           <P>
-            So each of these covers at most one half of the job. The two solver approaches place the components but don&apos;t model cuts and
-            wires; the routing tools place cuts and wires but leave the components to the person. As far as I have been able to find, 
-            this project is the first to attempt the whole board.
+            So, apart from Vero Designer, each of these covers at most one half of the job. The two solver approaches place the components but don&apos;t model cuts and
+            wires; the routing tools place cuts and wires but leave the components to the person. As far as I have been able to find,
+            Vero Designer and this project are the only two that attempt the whole board, and they got there independently and by quite different routes.
           </P>
         </div>
       </div>

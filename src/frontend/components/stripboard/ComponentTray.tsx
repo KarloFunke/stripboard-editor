@@ -3,15 +3,16 @@
 import { useMemo } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useStripSegments } from "@/hooks/useStripSegments";
+import { useBoardView } from "@/hooks/useBoardView";
 import { checkNetCompleteness } from "./netCompleteness";
 
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 
 export default function ComponentTray({ readOnly = false }: { readOnly?: boolean }) {
-  const components = useProjectStore((s) => s.components);
+  // the board's view: an off-board part shows up as its solder pads
+  const { components, netAssignments } = useBoardView();
   const componentDefs = useProjectStore((s) => s.componentDefs);
   const nets = useProjectStore((s) => s.nets);
-  const netAssignments = useProjectStore((s) => s.netAssignments);
 
   const { segments, connectivity } = useStripSegments();
 

@@ -1,19 +1,20 @@
 "use client";
 
 import type { LabArrow, LabBoard, LabWire } from "@/components/stripboard/autoLayout5";
-import { bellyPath, dipNotch } from "@/components/stripboard/componentGlyphs";
+import { StaticPart } from "@/components/stripboard/partDrawing";
+import { resolveComponentDef } from "@/utils/resolveComponentDef";
+import { DEFAULT_COMPONENTS } from "@/data/defaultComponents";
 import { PARTS, netColor } from "./lab";
 
 // ── A board drawn the way the editor draws it ──
-// Copper strips per segment, holes, dashed component bodies with the label
-// above, net-coloured pins, red X cuts, link wires. Plus the overlays the
+// Copper strips per segment, holes, the parts as their real packages,
+// net-coloured pins, red X cuts, link wires. Plus the overlays the
 // decode figures need: bus-row bands, a reading cursor, hole marks,
 // constraint arrows between components, highlighted components and nets.
 
-const SP = 26, HOLE_R = 3.9, STRIP_H = 5, PAD = SP * 0.4, LEFT = 34, TOP = 38;
-// halo stroke in the figure's background colour, so arrows and labels stay
-// readable where they cross a component
-const HALO = "dark:[stroke:#1e1e1e]";
+// a real package may hang almost a hole over the outermost line, so the
+// margins leave it that room
+const SP = 26, HOLE_R = 3.9, STRIP_H = 5, PAD = SP * 0.4, LEFT = 46, TOP = 40, EDGE = 28;
 
 // arrowhead at (x, y) pointing away from the curve's control point
 function Head({ x, y, fromX, fromY, color }: { x: number; y: number; fromX: number; fromY: number; color: string }) {
@@ -51,8 +52,8 @@ function laneShifts(wires: LabWire[]): number[] {
 export default function BoardView({ state, rows, cols, labels = true, fixed = false }: { state: LabBoard; rows?: number; cols?: number; labels?: boolean; fixed?: boolean }) {
   const R = fixed ? rows ?? state.rows : Math.max(rows ?? 0, state.rows);
   const C = fixed ? cols ?? state.cols : Math.max(cols ?? 0, state.cols);
-  const left = labels ? LEFT : 14, top = labels ? TOP : 14;
-  const W = left + (C - 1) * SP + 18, H = top + (R - 1) * SP + 18;
+  const left = labels ? LEFT : EDGE, top = labels ? TOP : EDGE;
+  const W = left + (C - 1) * SP + EDGE, H = top + (R - 1) * SP + EDGE;
   const cx = (c: number) => left + c * SP;
   const cy = (r: number) => top + r * SP;
   const dimNet = (n: number) => state.hlNet !== undefined && n !== state.hlNet;
@@ -72,10 +73,10 @@ export default function BoardView({ state, rows, cols, labels = true, fixed = fa
     const mx = (x1 + x2) / 2, my = (y1 + y2) / 2 - 10;
     return (
       <g key={`a${i}`} opacity={a.state === "idle" ? 0.6 : 1}>
-        <path d={`M${x1},${y1} Q${mx},${my - 14} ${x2},${y2}`} fill="none" stroke="#fff" className={HALO} strokeWidth={(a.state === "push" ? 2.2 : 1.4) + 3} strokeOpacity={0.85} />
+        <path d={`M${x1},${y1} Q${mx},${my - 14} ${x2},${y2}`} fill="none" stroke="var(--board-fill)" strokeWidth={(a.state === "push" ? 2.2 : 1.4) + 3} strokeOpacity={0.85} />
         <path d={`M${x1},${y1} Q${mx},${my - 14} ${x2},${y2}`} fill="none" stroke={color} strokeWidth={a.state === "push" ? 2.2 : 1.4} />
         <Head x={x2} y={y2} fromX={mx} fromY={my - 14} color={color} />
-        <text x={mx} y={my - 10} textAnchor="middle" fontSize={9} fill={color} fontWeight={600} stroke="#fff" className={HALO} strokeWidth={3} paintOrder="stroke" strokeLinejoin="round">{a.w}</text>
+        <text x={mx} y={my - 10} textAnchor="middle" fontSize={9} fill={color} fontWeight={600} stroke="var(--board-fill)" strokeWidth={3} paintOrder="stroke" strokeLinejoin="round">{a.w}</text>
       </g>
     );
   };
@@ -86,7 +87,7 @@ export default function BoardView({ state, rows, cols, labels = true, fixed = fa
   const liveArrows = sorted.filter(([a]) => rank(a.state) > 0);
 
   return (
-    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} className="max-w-full h-auto rounded bg-white dark:bg-[#1e1e1e] border border-neutral-200 dark:border-neutral-700 font-sans">
+    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} className="max-w-full h-auto rounded bg-[var(--board-fill)] border border-neutral-200 dark:border-neutral-700 font-sans">
       {state.busRows.map((r) => (
         <rect key={`b${r}`} x={cx(0) - SP * 0.5} y={cy(r) - SP * 0.45} width={(C - 1) * SP + SP} height={SP * 0.9} rx={4} fill="#3b82f6" fillOpacity={0.08} />
       ))}
@@ -98,37 +99,37 @@ export default function BoardView({ state, rows, cols, labels = true, fixed = fa
         return <rect key={i} x={leftX} y={cy(s.row) - STRIP_H / 2} width={Math.max(0, rightX - leftX)} height={STRIP_H} rx={1} fill={netColor(s.net)} opacity={hasNet ? (dimNet(s.net) ? 0.2 : 0.55) : 0.4} />;
       })}
       {state.cuts.filter((k) => k.kind === "knife").map((k, i) => (
-        <rect key={`kn${i}`} x={cx(k.col) + SP / 2 - 2} y={cy(k.row) - STRIP_H / 2 - 1} width={4} height={STRIP_H + 2} fill="#fff" className="dark:[fill:#1e1e1e]" />
+        <rect key={`kn${i}`} x={cx(k.col) + SP / 2 - 2} y={cy(k.row) - STRIP_H / 2 - 1} width={4} height={STRIP_H + 2} fill="var(--board-fill)" />
       ))}
-      {labels && Array.from({ length: R }, (_, r) => <text key={`r${r}`} x={cx(0) - 22} y={cy(r) + 4} textAnchor="end" fontSize={10} fill="var(--label-text)">{r + 1}</text>)}
-      {labels && Array.from({ length: C }, (_, c) => <text key={`c${c}`} x={cx(c)} y={cy(0) - 22} textAnchor="middle" fontSize={10} fill="var(--label-text)">{c + 1}</text>)}
+      {labels && Array.from({ length: R }, (_, r) => <text key={`r${r}`} x={cx(0) - 30} y={cy(r) + 4} textAnchor="end" fontSize={10} fill="var(--label-text)">{r + 1}</text>)}
+      {labels && Array.from({ length: C }, (_, c) => <text key={`c${c}`} x={cx(c)} y={cy(0) - 26} textAnchor="middle" fontSize={10} fill="var(--label-text)">{c + 1}</text>)}
       {Array.from({ length: R * C }, (_, i) => {
         const r = Math.floor(i / C), c = i % C;
         return <circle key={i} cx={cx(c)} cy={cy(r)} r={HOLE_R} fill="var(--hole-fill)" stroke="var(--hole-stroke)" strokeWidth={0.5} />;
       })}
       {idleArrows.map(arrowEl)}
       {byRank(state.parts, (p) => (hlSet.has(p.pi) ? 1 : 0)).map(([p]) => {
-        const d = PARTS[p.pi];
-        const x0 = cx(p.x) - PAD, y0 = cy(p.y) - PAD;
-        const bw = (p.w - 1) * SP + 2 * PAD, bh = (p.h - 1) * SP + 2 * PAD;
         const hl = hlSet.has(p.pi);
-        const stroke = hl ? "#f59e0b" : "var(--component-stroke)";
-        const belly = !p.flex && !d.isConn && p.pins.length === 3 && new Set(p.pins.map((q) => q.c)).size === 1;
-        const dip = !p.flex && p.pins.length >= 4 && new Set(p.pins.map((q) => q.c)).size === 2;
-        const pts = p.pins.map((q) => ({ x: cx(q.c), y: cy(q.r), id: q.id }));
+        const comp = { ...PARTS[p.pi].comp, boardPos: p.pos, rotation: p.rot, flexibleEndPos: p.end };
+        const def = resolveComponentDef(comp, DEFAULT_COMPONENTS);
+        if (!def) return null;
         return (
           <g key={p.pi} opacity={state.ghost && !hl ? 0.55 : 1}>
-            {belly
-              ? <path d={bellyPath(pts[0], pts[pts.length - 1], PAD)} fill="var(--component-fill)" stroke={stroke} strokeWidth={hl ? 2 : 1} />
-              : <rect x={x0} y={y0} width={bw} height={bh} rx={3} fill="var(--component-fill)" stroke={stroke} strokeWidth={hl ? 2 : 1} strokeDasharray="4 3" />}
-            {dip && <path d={dipNotch(pts, { x: x0 + bw / 2, y: y0 + bh / 2 }, PAD)} fill="none" stroke={stroke} strokeWidth={1} />}
-            <text x={x0 + bw / 2} y={y0 - 3} textAnchor="middle" fontSize={10} fontWeight={600} fill="var(--component-text)">{d.id}</text>
-            {p.pins.map((q, k) => (
-              <g key={k}>
-                <circle cx={cx(q.c)} cy={cy(q.r)} r={4.4} fill={q.net >= 0 ? netColor(q.net) : "var(--hole-fill)"} stroke={q.net >= 0 ? "var(--hole-fill)" : "var(--hole-stroke)"} strokeWidth={q.net >= 0 ? 1.3 : 0.5} opacity={q.net >= 0 && dimNet(q.net) ? 0.35 : 1} />
-                <text x={cx(q.c)} y={cy(q.r) + 9.5} textAnchor="middle" fontSize={5.5} fill="var(--component-subtext)">{q.name}</text>
-              </g>
-            ))}
+            <StaticPart
+              def={def}
+              component={comp}
+              at={(r, c) => ({ x: cx(c), y: cy(r) })}
+              pitch={SP}
+              pinNames="all"
+              label={PARTS[p.pi].id}
+              outline={hl ? "#f59e0b" : undefined}
+              outlineWidth={hl ? 0.3 : undefined}
+              strokeWidth={hl ? 2 : 1}
+              pinStyle={(pin) => {
+                const net = p.pins.find((q) => q.id === pin.pinId)?.net ?? -1;
+                return { color: net >= 0 ? netColor(net) : null, opacity: net >= 0 && dimNet(net) ? 0.35 : 1 };
+              }}
+            />
           </g>
         );
       })}

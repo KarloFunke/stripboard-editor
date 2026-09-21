@@ -15,8 +15,12 @@ import {
   PROJECT_SCHEMA_VERSION,
 } from "@/types";
 import { DEFAULT_COMPONENTS } from "@/data/defaultComponents";
+import { spanLimits } from "@/components/stripboard/flexGeometry";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
+import { GROUP_PIN, boardView, editBoardView, isLead, parseLeadId } from "@/components/stripboard/offBoard";
 import { getComponentBounds, getComponentPinPositions } from "@/components/stripboard/boardLayout";
+import { bodyCuts, missingBodyCuts, sameCut } from "@/components/stripboard/bodyCuts";
+import { collectBoardPins } from "@/components/stripboard/boardPins";
 import { computeStripSegments } from "@/components/stripboard/stripSegments";
 import { computeConnectivity } from "@/components/stripboard/connectivity";
 import { diffNets, netDiffIsEmpty, type NetDiff } from "@/components/schematic/netInference";
@@ -34,10 +38,76 @@ import {
 import { pointKey, snapToGrid } from "@/utils/schematicConstants";
 import { createFootprintSymbol, registerCustomSymbol } from "@/data/symbolDefs";
 import { computeAutoFinish, AutoFinishResult } from "@/components/stripboard/autoFinish";
+import { footprintFor } from "@/components/stripboard/packageBodies";
 import { AutoLayoutResult, LAYOUT_VERSION } from "@/components/stripboard/layoutTypes";
 
 function generateId(): string {
   return crypto.randomUUID();
+}
+
+// Board actions edit the components as the board sees them, so a solder pad of
+// an off-board part moves, locks and unplaces like any other part.
+function onBoard(
+  s: Pick<ProjectStore, "components" | "componentDefs" | "netAssignments">,
+  edit: (view: Component[]) => Component[],
+): Component[] {
+  return editBoardView(s.components, s.componentDefs, s.netAssignments, edit);
+}
+
+type BoardState = Pick<ProjectStore, "board" | "components" | "componentDefs" | "netAssignments" | "drilledCutsOnly">;
+
+// The board's cuts without the ones under these parts' bodies, which leave the
+// board with them. An id is a part's own or, for its solder pads, its parent's.
+function cutsWithoutParts(s: BoardState, ids: string[]): Cut[] {
+  const owned: Cut[] = [];
+  for (const c of boardView(s.components, s.componentDefs, s.netAssignments).components) {
+    if (!ids.includes(c.id) && !(isLead(c) && ids.includes(c.leadOf.componentId))) continue;
+    const def = resolveComponentDef(c, s.componentDefs);
+    if (def) owned.push(...bodyCuts(s.board.cuts, c, def));
+  }
+  return owned.length === 0 ? s.board.cuts : s.board.cuts.filter((cut) => !owned.some((o) => sameCut(o, cut)));
+}
+
+// `cuts` plus the ones a part needs under its body where it now sits.
+function cutsWithPart(s: BoardState, cuts: Cut[], comp: Component): Cut[] {
+  const def = resolveComponentDef(comp, s.componentDefs);
+  if (!def || def.flexible) return cuts;
+  const view = boardView(s.components, s.componentDefs, s.netAssignments);
+  const taken = new Set<string>();
+  const others = view.components.filter((c) => c.id !== comp.id);
+  for (const pin of collectBoardPins(s.board, others, s.componentDefs, view.netAssignments)) {
+    taken.add(`${pin.row},${pin.col}`);
+  }
+  for (const w of s.board.wires) {
+    taken.add(`${w.from.row},${w.from.col}`);
+    taken.add(`${w.to.row},${w.to.col}`);
+  }
+  const missing = missingBodyCuts(
+    cuts, comp, def,
+    (pinId) => view.netAssignments.find((a) => a.componentId === comp.id && a.pinId === pinId)?.netId,
+    s.drilledCutsOnly !== false,
+    (row, col) => taken.has(`${row},${col}`)
+  );
+  return missing.length === 0 ? cuts : [...cuts, ...missing];
+}
+
+// Projects from before parts had packages carried per-type span and clearance
+// tables. What people used them for is kept: a resistor or diode allowed
+// shorter than it lies flat meant "may stand", and a clearance of two lines or
+// more (or the older fractional halo above the default) meant "give me room".
+function legacyAllowStanding(data: Project): boolean | undefined {
+  const spans = data.spanOverrides;
+  if (!spans) return undefined;
+  const stood = ["def-resistor", "def-diode", "def-zener"].some((id) => {
+    const def = DEFAULT_COMPONENTS.find((d) => d.id === id);
+    return def && spans[id] && spans[id].min < spanLimits(def).min;
+  });
+  return stood || undefined;
+}
+
+function legacyPartSpacing(data: Project): number | undefined {
+  const lines = Object.values(data.clearanceOverrides ?? {}).map((v) => (Number.isInteger(v) ? v : Math.round(v * 2)));
+  return lines.some((v) => v >= 2) ? 1 : undefined;
 }
 
 function nextLabel(components: Component[], prefix: string): string {
@@ -71,6 +141,7 @@ interface ProjectActions {
     labelOffset?: { x: number; y: number };
     pinLabelOffsets?: Record<string, { x: number; y: number }>;
     footprintOverride?: FootprintOverride;
+    package?: string;
     schematicPos: { x: number; y: number };
   }) => string;
   removeComponent: (id: string) => void;
@@ -83,6 +154,10 @@ interface ProjectActions {
   setAutoSave: (autoSave: boolean) => void;
   updatePinName: (componentId: string, pinId: string, newName: string) => void;
   updateComponentFootprint: (componentId: string, override: FootprintOverride) => void;
+  // Choose the package a part is drawn as. `scope` "type" applies it to every
+  // part sharing the definition. A package that moves pins rewrites the
+  // footprint too, and unplaces anything that no longer fits.
+  setComponentPackage: (componentId: string, packageId: string, scope: "one" | "type") => void;
   rotateSchematicComponent: (id: string) => void;
   mirrorSchematicComponent: (id: string) => void;
   // A move gesture: beginSchematicMove fixes what moves and the geometry it
@@ -106,6 +181,8 @@ interface ProjectActions {
   moveComponentsOnBoard: (ids: string[], deltaRow: number, deltaCol: number, wireIds?: string[], cutPositions?: Cut[]) => void;
   removeFromBoard: (id: string) => void;
   setBoardExcluded: (id: string, excluded: boolean) => void;
+  setOffBoard: (id: string, offBoard: boolean) => void;
+  setOffBoardPackage: (id: string, connection: string, scope: "one" | "all") => void;
   toggleBoardLock: (id: string) => void;
   setBoardLock: (ids: string[], locked: boolean) => void;
   setFlexibleEndPos: (id: string, pos: { row: number; col: number }) => void;
@@ -139,11 +216,8 @@ interface ProjectActions {
   // Board wires
   setBoardSize: (rows: number, cols: number) => void;
   setBoardDimLock: (dim: "rows" | "cols", locked: boolean) => void;
-  // Set (or clear with null) the auto-layout span range for a flexible def
-  setSpanOverride: (defId: string, range: { min: number; max: number } | null) => void;
-  // Set (or reset to default with null) the auto-layout clearance (free
-  // board lines) for a flexible def; an explicit 0 allows adjacent placement
-  setClearanceOverride: (defId: string, clearance: number | null) => void;
+  // Free board lines kept between all parts in auto-layout (0 or 1)
+  setPartSpacing: (lines: number) => void;
   // Toggle the tidy-wires second pass (on by default)
   setTidyWires: (value: boolean) => void;
   // Toggle drilled-cuts-only mode (off by default)
@@ -157,6 +231,7 @@ interface ProjectActions {
   setV5RandomSeeds: (value: boolean) => void;
   setLayoutEngine: (engine: "v2" | "v5") => void;
   setNoWireStacking: (value: boolean) => void;
+  setAllowStanding: (value: boolean) => void;
   // Insert a blank row/column at `at` (0-based): everything at or beyond it
   // shifts by one line. A rigid part whose footprint straddles the line
   // cannot be split and stays put — may break its nets; a manual-cleanup
@@ -164,6 +239,7 @@ interface ProjectActions {
   insertBoardLine: (axis: "row" | "col", at: number) => void;
   deleteBoardLine: (axis: "row" | "col", at: number) => void;
   addWire: (from: BoardPosition, to: BoardPosition) => void;
+  setWireEnds: (wireId: string, from: BoardPosition, to: BoardPosition) => void;
   removeWire: (wireId: string) => void;
   // Derive and apply the cuts/wires needed to complete the current placement
   autoFinishBoard: () => AutoFinishResult;
@@ -172,7 +248,6 @@ interface ProjectActions {
 
   // UI state
 
-  startWirePlacement: () => void;
   cancelWirePlacement: () => void;
   setWirePlacementFrom: (pos: BoardPosition) => void;
   setTrayDragComponentId: (id: string | null) => void;
@@ -198,12 +273,21 @@ interface ProjectActions {
   canRedo: boolean;
 }
 
+export type BoardTool = "select" | "wire" | "cut";
+
 interface UIState {
 
-  wirePlacementMode: boolean;
   wirePlacementFrom: BoardPosition | null;
   trayDragComponentId: string | null;
   highlightedNetId: string | null;
+  // What a click on the board means: "wire" starts and ends link wires,
+  // "cut" places and removes cuts, "select" touches neither. Not saved: it is
+  // a working mode, not a property of the project.
+  boardTool: BoardTool;
+  setBoardTool: (tool: BoardTool) => void;
+  // Outline parts whose real bodies collide. A display choice, not saved.
+  showOverlaps: boolean;
+  setShowOverlaps: (value: boolean) => void;
   schematicWireDrawMode: boolean;
   schematicWireDrawingFrom: { x: number; y: number } | null;
   schematicWireDirection: "horizontal-first" | "vertical-first" | null; // locked on first significant mouse move
@@ -405,18 +489,8 @@ function prepareProjectState(data: Project) {
     showValuesOnBoard: data.showValuesOnBoard ?? false,
     autoSave: data.autoSave ?? false,
     spanOverrides: data.spanOverrides,
-    // Clearance is a whole number of free board lines. Legacy projects
-    // stored fractional halos that ADDED pairwise (default 0.5 each side =
-    // one free line); a fractional value converts to its free-line
-    // equivalent, integers pass through.
-    clearanceOverrides: data.clearanceOverrides
-      ? Object.fromEntries(
-          Object.entries(data.clearanceOverrides).map(([id, v]) => [
-            id,
-            Number.isInteger(v) ? v : Math.round(v * 2),
-          ])
-        )
-      : undefined,
+    clearanceOverrides: data.clearanceOverrides,
+    partSpacing: data.partSpacing ?? legacyPartSpacing(data),
     tidyWires: data.tidyWires,
     drilledCutsOnly: data.drilledCutsOnly,
     // Legacy time budgets map onto the board count once: an explicit 0 was
@@ -430,6 +504,7 @@ function prepareProjectState(data: Project) {
     v5RandomSeeds: data.v5RandomSeeds,
     layoutEngine: data.layoutEngine,
     noWireStacking: data.noWireStacking,
+    allowStanding: data.allowStanding ?? legacyAllowStanding(data),
     autoLayoutUsed: data.autoLayoutUsed,
     boardEditsSinceAutoLayout: data.boardEditsSinceAutoLayout,
     autoLayoutRuns: data.autoLayoutRuns,
@@ -441,7 +516,6 @@ function prepareProjectState(data: Project) {
     autoLayoutLastOrderings: data.autoLayoutLastOrderings,
     boardAddsSinceAutoLayout: data.boardAddsSinceAutoLayout,
     _lastBoardEditSeq: -1,
-    wirePlacementMode: false,
     wirePlacementFrom: null,
     schematicWireDrawMode: false,
     schematicWireDrawingFrom: null,
@@ -453,10 +527,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   ...initialProject,
   netLabels: [],
 
-  wirePlacementMode: false,
   wirePlacementFrom: null,
   trayDragComponentId: null,
   highlightedNetId: null,
+  boardTool: "select",
+  showOverlaps: true,
   schematicWireDrawMode: false,
   schematicWireDrawingFrom: null,
   schematicWireDirection: null,
@@ -554,6 +629,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
             labelOffset: init.labelOffset,
             pinLabelOffsets: init.pinLabelOffsets,
             footprintOverride: init.footprintOverride,
+            package: init.package,
             boardPos: null,
             rotation: 0,
           },
@@ -590,6 +666,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   // Persisted project preference; marks dirty so the toggle itself gets saved.
   setAutoSave: (autoSave) => set({ autoSave, isDirty: true }),
 
+
   // No snapshot — called per-pixel during drag
   updateLabelOffset: (id, offset) =>
     set((s) => ({
@@ -610,11 +687,21 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   // No snapshot — called per-pixel during drag
   updateBoardLabelOffset: (id, offset) =>
-    set((s) => ({
-      components: s.components.map((c) =>
-        c.id === id ? { ...c, boardLabelOffset: offset } : c
-      ),
-    })),
+    set((s) => {
+      // A pad or connector of an off-board part is not stored itself: its
+      // label's place is kept on the part.
+      const lead = parseLeadId(id);
+      return {
+        components: s.components.map((c) => {
+          if (lead && c.id === lead.componentId) {
+            return lead.pinId === GROUP_PIN
+              ? { ...c, boardLabelOffset: offset }
+              : { ...c, leadLabelOffsets: { ...c.leadLabelOffsets, [lead.pinId]: offset } };
+          }
+          return c.id === id ? { ...c, boardLabelOffset: offset } : c;
+        }),
+      };
+    }),
 
   updatePinName: (componentId, pinId, newName) => {
     get().pushSnapshot();
@@ -649,6 +736,57 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }));
   },
 
+  setComponentPackage: (componentId, packageId, scope) => {
+    const s0 = get();
+    const target = s0.components.find((c) => c.id === componentId);
+    if (!target) return;
+    const baseDef = s0.componentDefs.find((d) => d.id === target.defId);
+    if (!baseDef) return;
+    const footprint = footprintFor(baseDef, packageId);
+    get().pushSnapshot();
+    set((s) => {
+      const ids = new Set(
+        scope === "type" ? s.components.filter((c) => c.defId === target.defId).map((c) => c.id) : [componentId]
+      );
+      const reshaped: string[] = [];
+      const components = s.components.map((c) => {
+        if (!ids.has(c.id)) return c;
+        const next: Component = { ...c, package: packageId };
+        if (footprint) {
+          next.footprintOverride = {
+            width: footprint.width, height: footprint.height,
+            pins: footprint.pins, bodyCells: footprint.bodyCells,
+          };
+        } else if (c.footprintOverride && c.package && c.package !== packageId) {
+          // Leaving a pin-moving package: back to the definition's footprint.
+          next.footprintOverride = undefined;
+        } else {
+          return next;
+        }
+        if (!c.boardPos) return next;
+        reshaped.push(c.id);
+        // The pins moved: it stays where it was with its first pin in the same
+        // hole, or goes back to the unplaced list when it no longer fits.
+        const oldDef = resolveComponentDef(c, s.componentDefs);
+        const newDef = resolveComponentDef(next, s.componentDefs);
+        const before = oldDef && getComponentPinPositions(c, oldDef)[0];
+        const after = newDef && getComponentPinPositions(next, newDef)[0];
+        if (!newDef || !before || !after) return { ...next, boardPos: null, flexibleEndPos: undefined };
+        const boardPos = { row: c.boardPos.row + before.row - after.row, col: c.boardPos.col + before.col - after.col };
+        const b = getComponentBounds(newDef, boardPos, c.rotation);
+        return b.minRow < 0 || b.minCol < 0 || b.maxRow >= s.board.rows || b.maxCol >= s.board.cols
+          ? { ...next, boardPos: null, flexibleEndPos: undefined }
+          : { ...next, boardPos };
+      });
+      // the cuts under the old body go, the new body brings its own
+      let cuts = cutsWithoutParts(s, reshaped);
+      for (const c of components) {
+        if (reshaped.includes(c.id) && c.boardPos) cuts = cutsWithPart({ ...s, components }, cuts, c);
+      }
+      return { components, board: { ...s.board, cuts }, isDirty: true, ...bumpBoardEdits(s) };
+    });
+  },
+
   updateComponentFootprint: (componentId, override) => {
     get().pushSnapshot();
     set((s) => {
@@ -668,6 +806,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set((s) => ({
       components: s.components.filter((c) => c.id !== id),
       netAssignments: s.netAssignments.filter((a) => a.componentId !== id),
+      board: { ...s.board, cuts: cutsWithoutParts(s, [id]) },
       // Deleting a part that sat on the board changes the board
       ...(s.components.find((c) => c.id === id)?.boardPos ? bumpBoardEdits(s) : {}),
     }));
@@ -770,8 +909,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   // (e.g. tray→board drop) must call pushSnapshot() once themselves; drag
   // gestures push a single snapshot at the start of the gesture.
   placeOnBoard: (id, pos) => {
-    set((s) => ({
-      components: s.components.map((c) => {
+    set((s) => {
+      const before = boardView(s.components, s.componentDefs, s.netAssignments).components.find((c) => c.id === id);
+      return {
+      // A part new to the board brings the cuts it needs under its body
+      ...(before && !before.boardPos
+        ? { board: { ...s.board, cuts: cutsWithPart(s, s.board.cuts, { ...before, boardPos: pos }) } }
+        : {}),
+      components: onBoard(s, (view) => view.map((c) => {
         if (c.id !== id) return c;
         const def = resolveComponentDef(c, s.componentDefs);
         // For flexible components, initialize flexibleEndPos on first placement
@@ -783,18 +928,19 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           };
         }
         return { ...c, boardPos: pos, flexibleEndPos: flexEnd };
-      }),
+      })),
       ...bumpBoardEdits(s),
       // First placement of a part = the circuit growing, not a correction
-      ...(s.components.find((c) => c.id === id)?.boardPos
+      ...(before?.boardPos
         ? {}
         : { boardAddsSinceAutoLayout: (s.boardAddsSinceAutoLayout ?? 0) + 1 }),
-    }));
+    };
+    });
   },
 
   moveComponentsOnBoard: (ids, deltaRow, deltaCol, wireIds, cutPositions) =>
     set((s) => {
-      const newComponents = s.components.map((c) => {
+      const newComponents = onBoard(s, (view) => view.map((c) => {
         if (!ids.includes(c.id) || !c.boardPos) return c;
         return {
           ...c,
@@ -807,7 +953,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
             col: c.flexibleEndPos.col + deltaCol,
           } : undefined,
         };
-      });
+      }));
 
       let newWires = s.board.wires;
       if (wireIds && wireIds.length > 0) {
@@ -842,10 +988,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   removeFromBoard: (id) => {
     get().pushSnapshot();
     set((s) => ({
-      components: s.components.map((c) =>
-        // Unplacing clears the lock: it refers to a board position
-        c.id === id ? { ...c, boardPos: null, flexibleEndPos: undefined, locked: undefined } : c
-      ),
+      components: onBoard(s, (view) => view.map((c) =>
+        // Unplacing clears the lock: it refers to a board position. A pad's
+        // lock is its part's, shared with its siblings, so that one stays.
+        c.id !== id ? c : isLead(c) ? { ...c, boardPos: null } : { ...c, boardPos: null, flexibleEndPos: undefined, locked: undefined }
+      )),
+      board: { ...s.board, cuts: cutsWithoutParts(s, [id]) },
       ...bumpBoardEdits(s),
     }));
   },
@@ -861,21 +1009,59 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
               ...c,
               boardExcluded: excluded,
               // Unplacing clears the lock: it refers to a board position
-              ...(excluded ? { boardPos: null, flexibleEndPos: undefined, locked: undefined } : {}),
+              ...(excluded ? { boardPos: null, flexibleEndPos: undefined, locked: undefined, offBoard: undefined, offBoardPackage: undefined, leads: undefined, leadLabelOffsets: undefined, boardLabelOffset: c.offBoard ? undefined : c.boardLabelOffset, rotation: c.offBoard ? 0 : c.rotation } : {}),
             }
           : c
       ),
+      ...(excluded ? { board: { ...s.board, cuts: cutsWithoutParts(s, [id]) } } : {}),
       // Only counts as a board change when it takes a placed part off the board
       ...(excluded && s.components.find((c) => c.id === id)?.boardPos ? bumpBoardEdits(s) : {}),
+    }));
+  },
+
+  // Mounted off the board and wired to it: the part leaves the board and each
+  // wired pin gets a solder pad to place instead. Not the same as excluded,
+  // which drops the part from the build altogether.
+  setOffBoard: (id, offBoard) => {
+    get().pushSnapshot();
+    set((s) => ({
+      components: s.components.map((c) =>
+        c.id !== id
+          ? c
+          : offBoard
+            ? { ...c, offBoard: true, boardExcluded: undefined, boardPos: null, flexibleEndPos: undefined, boardLabelOffset: undefined }
+            // its board position was its connector's while it was off the board
+            : { ...c, offBoard: undefined, offBoardPackage: undefined, leads: undefined, leadLabelOffsets: undefined, boardLabelOffset: undefined, locked: undefined, boardPos: null, rotation: 0 }
+      ),
+      board: { ...s.board, cuts: cutsWithoutParts(s, [id]) },
+      ...bumpBoardEdits(s),
+    }));
+  },
+
+  // What an off-board part's wires arrive at: loose pads ("wire") or one
+  // connector. The shape changes, so whatever was placed comes off the board.
+  setOffBoardPackage: (id, connection, scope) => {
+    get().pushSnapshot();
+    set((s) => ({
+      components: s.components.map((c) =>
+        c.offBoard && !c.boardExcluded && (scope === "all" || c.id === id)
+          ? { ...c, offBoardPackage: connection === "wire" ? undefined : connection, leads: undefined, leadLabelOffsets: undefined, boardLabelOffset: undefined, boardPos: null, rotation: 0, locked: undefined }
+          : c
+      ),
+      board: {
+        ...s.board,
+        cuts: cutsWithoutParts(s, s.components.filter((c) => c.offBoard && !c.boardExcluded && (scope === "all" || c.id === id)).map((c) => c.id)),
+      },
+      ...bumpBoardEdits(s),
     }));
   },
 
   toggleBoardLock: (id) => {
     get().pushSnapshot();
     set((s) => ({
-      components: s.components.map((c) =>
+      components: onBoard(s, (view) => view.map((c) =>
         c.id === id ? { ...c, locked: !c.locked } : c
-      ),
+      )),
     }));
   },
 
@@ -885,9 +1071,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     get().pushSnapshot();
     const idSet = new Set(ids);
     set((s) => ({
-      components: s.components.map((c) =>
+      components: onBoard(s, (view) => view.map((c) =>
         idSet.has(c.id) ? { ...c, locked } : c
-      ),
+      )),
     }));
   },
 
@@ -902,7 +1088,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   rotateComponent: (id) => {
     const s = get();
-    const comp = s.components.find((c) => c.id === id);
+    // the board's view, so that an off-board part's connector turns as well
+    const comp = boardView(s.components, s.componentDefs, s.netAssignments).components.find((c) => c.id === id);
     if (!comp || !comp.boardPos) return;
     const def = resolveComponentDef(comp, s.componentDefs);
     if (!def) return;
@@ -951,9 +1138,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }
     get().pushSnapshot();
     set((s2) => ({
-      components: s2.components.map((c) =>
+      components: onBoard(s2, (view) => view.map((c) =>
         c.id === id ? { ...c, rotation: newRotation } : c
-      ),
+      )),
+      // the cuts under the body follow its pins to where they now are
+      board: { ...s2.board, cuts: cutsWithPart(s2, cutsWithoutParts(s2, [id]), { ...comp, rotation: newRotation }) },
       ...bumpBoardEdits(s2),
     }));
   },
@@ -1163,28 +1352,6 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }));
   },
 
-  setSpanOverride: (defId, range) => {
-    set((s) => {
-      const next = { ...(s.spanOverrides ?? {}) };
-      if (range) {
-        const min = Math.max(1, Math.min(30, Math.round(range.min)));
-        next[defId] = { min, max: Math.max(min, Math.min(30, Math.round(range.max))) };
-      } else {
-        delete next[defId];
-      }
-      return { spanOverrides: next, isDirty: true };
-    });
-  },
-
-  setClearanceOverride: (defId, clearance) => {
-    set((s) => {
-      const next = { ...(s.clearanceOverrides ?? {}) };
-      if (clearance === null) delete next[defId];
-      else next[defId] = Math.max(0, Math.min(5, Math.round(clearance)));
-      return { clearanceOverrides: next, isDirty: true };
-    });
-  },
-
   setTidyWires: (value) => {
     set({ tidyWires: value, isDirty: true });
   },
@@ -1232,6 +1399,16 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set({ noWireStacking: value ? undefined : false, isDirty: true });
   },
 
+  // Both store an explicit off, so that a project's legacy per-type settings
+  // are read into them only until the user has chosen for himself.
+  setAllowStanding: (value) => {
+    set({ allowStanding: value, isDirty: true });
+  },
+
+  setPartSpacing: (lines) => {
+    set({ partSpacing: Math.max(0, Math.min(1, Math.round(lines))), isDirty: true });
+  },
+
   insertBoardLine: (axis, at) => {
     get().pushSnapshot();
     set((s) => {
@@ -1240,7 +1417,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         isRow
           ? p.row >= at ? { ...p, row: p.row + 1 } : p
           : p.col >= at ? { ...p, col: p.col + 1 } : p;
-      const components = s.components.map((c) => {
+      const components = onBoard(s, (view) => view.map((c) => {
         if (!c.boardPos) return c;
         const def = resolveComponentDef(c, s.componentDefs);
         if (!def) return c;
@@ -1262,7 +1439,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
             ? { row: c.boardPos.row + 1, col: c.boardPos.col }
             : { row: c.boardPos.row, col: c.boardPos.col + 1 },
         };
-      });
+      }));
       const board = {
         ...s.board,
         rows: s.board.rows + (isRow ? 1 : 0),
@@ -1286,7 +1463,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           ? p.row > at ? { ...p, row: p.row - 1 } : p
           : p.col > at ? { ...p, col: p.col - 1 } : p;
       const unplace = (c: Component): Component => ({ ...c, boardPos: null, flexibleEndPos: undefined, locked: undefined });
-      const components = s.components.map((c) => {
+      const components = onBoard(s, (view) => view.map((c) => {
         if (!c.boardPos) return c;
         const def = resolveComponentDef(c, s.componentDefs);
         if (!def) return c;
@@ -1314,7 +1491,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
             ? { row: c.boardPos.row - 1, col: c.boardPos.col }
             : { row: c.boardPos.row, col: c.boardPos.col - 1 },
         };
-      });
+      }));
       // A between-cut severs col|col+1, so on the column axis it touches the
       // deleted hole column from either side.
       const cutGone = (cut: Cut) =>
@@ -1364,11 +1541,17 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         ...s.board,
         wires: [...s.board.wires, { id: generateId(), from, to }],
       },
-      wirePlacementMode: false,
       wirePlacementFrom: null,
       ...bumpBoardEdits(s),
     }));
   },
+
+  // No snapshot: called per hole while a wire is dragged
+  setWireEnds: (wireId, from, to) =>
+    set((s) => ({
+      board: { ...s.board, wires: s.board.wires.map((w) => (w.id === wireId ? { ...w, from, to } : w)) },
+      ...bumpBoardEdits(s),
+    })),
 
   removeWire: (wireId) => {
     get().pushSnapshot();
@@ -1403,7 +1586,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     get().pushSnapshot();
     const byId = new Map(result.placements.map((p) => [p.componentId, p]));
     set((st) => ({
-      components: st.components.map((c) => {
+      components: onBoard(st, (view) => view.map((c) => {
         if (unplace.has(c.id)) {
           return { ...c, boardPos: null, flexibleEndPos: undefined, locked: undefined };
         }
@@ -1415,7 +1598,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           ...(p.rotation !== undefined ? { rotation: p.rotation } : {}),
           ...(p.flexibleEndPos !== undefined ? { flexibleEndPos: p.flexibleEndPos } : {}),
         };
-      }),
+      })),
       board: {
         ...st.board,
         ...(result.boardSize ?? {}),
@@ -1438,8 +1621,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   autoFinishBoard: () => {
     const s = get();
+    const view = boardView(s.components, s.componentDefs, s.netAssignments);
     const result = computeAutoFinish(
-      s.board, s.components, s.componentDefs, s.nets, s.netAssignments, s.drilledCutsOnly !== false
+      s.board, view.components, s.componentDefs, s.nets, view.netAssignments, s.drilledCutsOnly !== false
     );
     if (result.cuts.length > 0 || result.wires.length > 0) {
       get().pushSnapshot();
@@ -1461,16 +1645,15 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
 
 
-  startWirePlacement: () =>
-    set({ wirePlacementMode: true, wirePlacementFrom: null }),
-
-  cancelWirePlacement: () =>
-    set({ wirePlacementMode: false, wirePlacementFrom: null }),
+  cancelWirePlacement: () => set({ wirePlacementFrom: null }),
 
   setWirePlacementFrom: (pos) => set({ wirePlacementFrom: pos }),
 
   setTrayDragComponentId: (id) => set({ trayDragComponentId: id }),
   setHighlightedNetId: (id) => set({ highlightedNetId: id }),
+
+  setBoardTool: (tool) => set({ boardTool: tool, wirePlacementFrom: null }),
+  setShowOverlaps: (value) => set({ showOverlaps: value }),
   setActiveEditor: (editor) => set({ activeEditor: editor }),
   toggleSchematicWireDrawMode: () => set((s) => ({
     schematicWireDrawMode: !s.schematicWireDrawMode,
@@ -1521,6 +1704,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       v5RandomSeeds: s.v5RandomSeeds,
       layoutEngine: s.layoutEngine,
       noWireStacking: s.noWireStacking,
+      allowStanding: s.allowStanding,
+      partSpacing: s.partSpacing,
       autoLayoutUsed: s.autoLayoutUsed,
       boardEditsSinceAutoLayout: s.boardEditsSinceAutoLayout,
       autoLayoutRuns: s.autoLayoutRuns,
@@ -1563,7 +1748,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     wiring: "touch",
     board: { rows: 20, cols: 20, cuts: [], wires: [] },
     showValuesOnBoard: false,
-    autoSave: false,
+      autoSave: false,
     spanOverrides: undefined,
     clearanceOverrides: undefined,
     tidyWires: undefined,
@@ -1576,6 +1761,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     v5RandomSeeds: undefined,
     layoutEngine: undefined,
     noWireStacking: undefined,
+    allowStanding: undefined,
+    partSpacing: undefined,
     autoLayoutUsed: undefined,
     boardEditsSinceAutoLayout: undefined,
     autoLayoutRuns: undefined,
@@ -1587,7 +1774,6 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     autoLayoutLastOrderings: undefined,
     boardAddsSinceAutoLayout: undefined,
     _lastBoardEditSeq: -1,
-    wirePlacementMode: false,
     wirePlacementFrom: null,
     schematicWireDrawMode: false,
     schematicWireDrawingFrom: null,

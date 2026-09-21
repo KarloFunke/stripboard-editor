@@ -20,9 +20,8 @@ export interface AutoLayoutRequest {
   engine?: "v1" | "v2" | "v5";
   options?: AutoLayoutOptions;
   // Per-def-id span ranges for flexible parts (project auto-layout config)
-  spanOverrides?: Record<string, { min: number; max: number }>;
-  // Per-def-id body clearance in free board lines (project auto-layout config)
-  clearanceOverrides?: Record<string, number>;
+  // Free board lines kept between all parts (project auto-layout config)
+  partSpacing?: number;
   // Tidy second pass: allowed board area growth as a fraction (Infinity = any)
   tidyGrowth?: number;
   // Only sever strips by drilling holes (project auto-layout config)
@@ -41,6 +40,8 @@ export interface AutoLayoutRequest {
   v5Split?: number;
   // v5: no wire may run on top of another in one channel
   noWireStacking?: boolean;
+  // Resistors and diodes may stand on one lead (project auto-layout config)
+  allowStanding?: boolean;
   // v5 split: first seed of the halves' portfolio (one per board)
   v5SeedBase?: number;
 }
@@ -59,22 +60,18 @@ const ctx = self as unknown as {
 };
 
 ctx.onmessage = (e) => {
-  const { board, components, componentDefs, nets, netAssignments, engine, options, spanOverrides, clearanceOverrides, tidyGrowth, drilledCutsOnly, permutationIndex, v5Moves, v5TimeS, v5MsPerMove, v5Split, noWireStacking, v5SeedBase } = e.data;
+  const { board, components, componentDefs, nets, netAssignments, engine, options, partSpacing, tidyGrowth, drilledCutsOnly, permutationIndex, v5Moves, v5TimeS, v5MsPerMove, v5Split, noWireStacking, allowStanding, v5SeedBase } = e.data;
   const onProgress = (progress: AutoLayoutProgress) => {
     ctx.postMessage({ type: "progress", progress });
   };
-  const defs = spanOverrides || clearanceOverrides
-    ? componentDefs.map((d) => {
-        if (!d.flexible) return d;
-        const span = spanOverrides?.[d.id];
-        const clearance = clearanceOverrides?.[d.id];
-        if (!span && clearance === undefined) return d;
-        return {
-          ...d,
-          ...(span ? { spanOverride: span } : {}),
-          ...(clearance !== undefined ? { clearance } : {}),
-        };
-      })
+  // The project's two layout choices travel on the defs: extra spacing is a
+  // clearance every part asks for, rigid ones included.
+  const defs = partSpacing || allowStanding
+    ? componentDefs.map((d) => ({
+        ...d,
+        ...(partSpacing ? { clearance: partSpacing } : {}),
+        ...(allowStanding && d.flexible ? { allowStanding: true } : {}),
+      }))
     : componentDefs;
   if (engine === "v1") {
     const result = computeAutoLayout(board, components, defs, nets, netAssignments, onProgress, {

@@ -5,14 +5,11 @@ import type { PreviewData } from "@/lib/api";
 import type { Component, ComponentDef, Net, NetAssignment, Wire, Cut } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { DEFAULT_COMPONENTS } from "@/data/defaultComponents";
-import {
-  getComponentBounds,
-  getRotatedPinPositions,
-  getFlexiblePinPositions,
-  getFlexibleBounds,
-} from "./stripboard/boardLayout";
-import { bodyStyle, bellyPath, dipNotch, usbPort, diagonalBody } from "./stripboard/componentGlyphs";
+import { getComponentBounds, getFlexibleBounds } from "./stripboard/boardLayout";
 import { computeWireLaneOffsets } from "./stripboard/wireLanes";
+import { expandOffBoard } from "./stripboard/offBoard";
+import { rigidBody } from "./stripboard/partGeometry";
+import { StaticPart } from "./stripboard/partDrawing";
 
 const HOLE_SP = 12; // compact spacing for preview
 const HOLE_R = 2;
@@ -27,13 +24,14 @@ interface Props {
 
 export default function StripboardPreview({ data, maxWidth = 280, maxHeight = 160 }: Props) {
   const preview = useMemo(() => {
-    const components = (data.components ?? []) as unknown as Component[];
+    const stored = (data.components ?? []) as unknown as Component[];
     const savedDefs = (data.componentDefs ?? []) as unknown as ComponentDef[];
     const defaultIds = new Set(DEFAULT_COMPONENTS.map((d) => d.id));
     const customDefs = savedDefs.filter((d) => !defaultIds.has(d.id));
     const componentDefs = [...DEFAULT_COMPONENTS, ...customDefs];
     const nets = (data.nets ?? []) as unknown as Net[];
-    const netAssignments = (data.netAssignments ?? []) as unknown as NetAssignment[];
+    // Off-board parts show up as the pads or connector their wires arrive at
+    const { components, netAssignments } = expandOffBoard(stored, componentDefs, (data.netAssignments ?? []) as unknown as NetAssignment[]);
     const board = data.board as unknown as { rows?: number; cols?: number; wires?: Wire[]; cuts?: Cut[] };
     const wires = (board.wires ?? []) as unknown as Wire[];
     const cuts = (board.cuts ?? []) as unknown as Cut[];
@@ -46,14 +44,13 @@ export default function StripboardPreview({ data, maxWidth = 280, maxHeight = 16
     for (const comp of placed) {
       const def = resolveComponentDef(comp, componentDefs);
       if (!def || !comp.boardPos) continue;
-      const isFlexible = def.flexible ?? false;
-      const bounds = isFlexible
-        ? getFlexibleBounds(comp, def)
-        : getComponentBounds(def, comp.boardPos, comp.rotation);
-      minRow = Math.min(minRow, bounds.minRow);
-      maxRow = Math.max(maxRow, bounds.maxRow);
-      minCol = Math.min(minCol, bounds.minCol);
-      maxCol = Math.max(maxCol, bounds.maxCol);
+      // A package may be bigger than its footprint (a standing pot)
+      const bounds = def.flexible ? getFlexibleBounds(comp, def) : getComponentBounds(def, comp.boardPos, comp.rotation);
+      const body = def.flexible ? bounds : rigidBody(def, comp.boardPos, comp.rotation);
+      minRow = Math.min(minRow, bounds.minRow, Math.floor(body.minRow));
+      maxRow = Math.max(maxRow, bounds.maxRow, Math.ceil(body.maxRow));
+      minCol = Math.min(minCol, bounds.minCol, Math.floor(body.minCol));
+      maxCol = Math.max(maxCol, bounds.maxCol, Math.ceil(body.maxCol));
     }
 
     // If no valid bounds were found, bail out
@@ -114,7 +111,7 @@ export default function StripboardPreview({ data, maxWidth = 280, maxHeight = 16
       width={displayW}
       height={displayH}
       viewBox={`0 0 ${svgW} ${svgH}`}
-      className="font-sans rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900"
+      className="font-sans rounded border border-neutral-200 dark:border-neutral-700 bg-[var(--board-fill)]"
     >
       {/* Strips */}
       {Array.from({ length: rows }, (_, ri) => {
@@ -126,8 +123,8 @@ export default function StripboardPreview({ data, maxWidth = 280, maxHeight = 16
             y={hy(row) - STRIP_H / 2}
             width={(cols - 1) * HOLE_SP + HOLE_SP * 0.6}
             height={STRIP_H}
-            fill="#D4A853"
-            opacity={0.35}
+            fill="var(--strip-color)"
+            opacity={0.55}
             rx={0.5}
           />
         );
@@ -166,95 +163,20 @@ export default function StripboardPreview({ data, maxWidth = 280, maxHeight = 16
       {/* Placed components */}
       {placed.map((comp) => {
         const def = resolveComponentDef(comp, componentDefs);
-        if (!def || !comp.boardPos) return null;
-        const isFlexible = def.flexible ?? false;
-        const bounds = isFlexible
-          ? getFlexibleBounds(comp, def)
-          : getComponentBounds(def, comp.boardPos, comp.rotation);
-        const pins = isFlexible
-          ? getFlexiblePinPositions(comp, def)
-          : getRotatedPinPositions(def, comp.boardPos, comp.rotation);
-        const padC = HOLE_SP * 0.3;
-        const style = bodyStyle(def);
-        const pinPt = (i: number) => ({ x: hx(pins[i].col), y: hy(pins[i].row) });
-        const rectBody = (
-          <rect
-            x={hx(bounds.minCol) - padC}
-            y={hy(bounds.minRow) - padC}
-            width={(bounds.maxCol - bounds.minCol) * HOLE_SP + padC * 2}
-            height={(bounds.maxRow - bounds.minRow) * HOLE_SP + padC * 2}
-            rx={1.5}
-            fill="var(--component-fill)"
-            stroke="var(--component-stroke)"
-            strokeWidth={0.5}
-            strokeDasharray="2 1.5"
-          />
-        );
-        const diag = isFlexible && pins.length === 2 ? diagonalBody(pinPt(0), pinPt(1), padC) : null;
-        let body = diag ? (
-          <rect
-            x={diag.x}
-            y={diag.y}
-            width={diag.width}
-            height={diag.height}
-            rx={1.5}
-            fill="var(--component-fill)"
-            stroke="var(--component-stroke)"
-            strokeWidth={0.5}
-            strokeDasharray="2 1.5"
-            transform={diag.transform}
-          />
-        ) : rectBody;
-        let notch: React.ReactNode = null;
-        if (style === "belly" && pins.length === 3) {
-          body = (
-            <path d={bellyPath(pinPt(0), pinPt(2), padC)} fill="var(--component-fill)" stroke="var(--component-stroke)" strokeWidth={0.5} />
-          );
-        } else if (style === "dip" && pins.length >= 4) {
-          const center = {
-            x: (hx(bounds.minCol) + hx(bounds.maxCol)) / 2,
-            y: (hy(bounds.minRow) + hy(bounds.maxRow)) / 2,
-          };
-          notch = (
-            <path d={dipNotch(pins.map((p) => ({ x: hx(p.col), y: hy(p.row), id: p.pinId })), center, padC)} fill="none" stroke="var(--component-stroke)" strokeWidth={0.5} />
-          );
-        } else if (style === "board" && pins.length >= 4) {
-          const center = {
-            x: (hx(bounds.minCol) + hx(bounds.maxCol)) / 2,
-            y: (hy(bounds.minRow) + hy(bounds.maxRow)) / 2,
-          };
-          const bodyRect = {
-            x0: hx(bounds.minCol) - padC, y0: hy(bounds.minRow) - padC,
-            x1: hx(bounds.maxCol) + padC, y1: hy(bounds.maxRow) + padC,
-          };
-          notch = (
-            <path d={usbPort(pins.map((p) => ({ x: hx(p.col), y: hy(p.row), id: p.pinId })), center, bodyRect, HOLE_SP / 2.54)} fill="var(--component-fill)" stroke="var(--component-stroke)" strokeWidth={0.5} />
-          );
-        }
-
+        if (!def) return null;
         return (
-          <g key={comp.id}>
-            {body}
-            {notch}
-            {/* Pins */}
-            {pins.map((pin) => {
-              const assignment = netAssignments.find(
-                (a) => a.componentId === comp.id && a.pinId === pin.pinId
-              );
-              const net = assignment ? nets.find((n) => n.id === assignment.netId) : null;
-              return (
-                <circle
-                  key={`${pin.pinId}-${pin.row}-${pin.col}`}
-                  cx={hx(pin.col)}
-                  cy={hy(pin.row)}
-                  r={net ? 2.5 : HOLE_R}
-                  fill={net ? net.color : "var(--hole-fill)"}
-                  stroke={net ? "var(--hole-fill)" : "var(--hole-stroke)"}
-                  strokeWidth={net ? 0.8 : 0.3}
-                />
-              );
-            })}
-          </g>
+          <StaticPart
+            key={comp.id}
+            def={def}
+            component={comp}
+            at={(row, col) => ({ x: hx(col), y: hy(row) })}
+            pitch={HOLE_SP}
+            pinNames="none"
+            pinStyle={(pin) => {
+              const netId = netAssignments.find((a) => a.componentId === comp.id && a.pinId === pin.pinId)?.netId;
+              return { color: nets.find((n) => n.id === netId)?.color ?? null };
+            }}
+          />
         );
       })}
 

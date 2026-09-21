@@ -4,18 +4,12 @@ import { useRef } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { Component } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
-import {
-  holeCenter,
-  getRotatedPinPositions,
-  getComponentBounds,
-  getFlexiblePinPositions,
-  getFlexibleBounds,
-  HOLE_SPACING,
-  PinPosition,
-} from "./boardLayout";
-import { bodyStyle, bellyPath, dipNotch, usbPort } from "./componentGlyphs";
+import { useBoardView } from "@/hooks/useBoardView";
+import { holeCenter, HOLE_SPACING, PinPosition } from "./boardLayout";
+import { PartBody, partDrawing } from "./partDrawing";
 
 const PIN_HIT_RADIUS = HOLE_SPACING * 0.35;
+const CLASH_STROKE = "#dc2626";
 
 // Exported flag to suppress canvas click handlers after label drag
 export let suppressNextCanvasClick = false;
@@ -23,22 +17,27 @@ export let suppressNextCanvasClick = false;
 interface Props {
   component: Component;
   isSelected: boolean;
+  /** Its real body runs into another part's: outlined as a warning. */
+  clashing?: boolean;
   onMouseDown: (e: React.MouseEvent) => void;
   onPinDragStart?: (pinId: string, e: React.MouseEvent) => void;
   readOnly?: boolean;
 }
 
-export default function PlacedComponent({ component, isSelected, onMouseDown, onPinDragStart, readOnly = false }: Props) {
+export default function PlacedComponent({ component, isSelected, clashing = false, onMouseDown, onPinDragStart, readOnly = false }: Props) {
   const componentDefs = useProjectStore((s) => s.componentDefs);
-  const netAssignments = useProjectStore((s) => s.netAssignments);
+  const { netAssignments } = useBoardView();
   const nets = useProjectStore((s) => s.nets);
   const updateBoardLabelOffset = useProjectStore((s) => s.updateBoardLabelOffset);
   const showValues = useProjectStore((s) => s.showValuesOnBoard);
+  // With a tool up, a click belongs to the tool and the cursor says so
+  const toolActive = useProjectStore((s) => s.boardTool !== "select");
   const pushSnapshot = useProjectStore((s) => s.pushSnapshot);
   const snapshotPushed = useRef(false);
 
   const handleLabelMouseDown = (e: React.MouseEvent, defaultX: number, defaultY: number) => {
-    if (readOnly) return;
+    // the right button pans the board, from anywhere
+    if (readOnly || e.button !== 0) return;
     e.stopPropagation();
     e.preventDefault();
     const startX = e.clientX;
@@ -72,24 +71,11 @@ export default function PlacedComponent({ component, isSelected, onMouseDown, on
   };
 
   const def = resolveComponentDef(component, componentDefs);
-  if (!def || !component.boardPos) return null;
+  const drawing = def ? partDrawing(def, component, holeCenter, HOLE_SPACING) : null;
+  if (!def || !drawing) return null;
   const allowsValue = def.hasValue ?? false;
-
   const isFlexible = def.flexible ?? false;
-
-  let pins: PinPosition[];
-  let bounds: { minRow: number; minCol: number; maxRow: number; maxCol: number };
-
-  if (isFlexible) {
-    pins = getFlexiblePinPositions(component, def);
-    bounds = getFlexibleBounds(component, def);
-  } else {
-    pins = getRotatedPinPositions(def, component.boardPos, component.rotation);
-    bounds = getComponentBounds(def, component.boardPos, component.rotation);
-  }
-
-  const topLeft = holeCenter(bounds.minRow, bounds.minCol);
-  const pad = HOLE_SPACING * 0.4;
+  const { pins, label } = drawing;
 
   const renderPin = (pin: PinPosition) => {
     const center = holeCenter(pin.row, pin.col);
@@ -109,8 +95,9 @@ export default function PlacedComponent({ component, isSelected, onMouseDown, on
             r={PIN_HIT_RADIUS}
             fill="transparent"
             pointerEvents="all"
-            style={{ cursor: "grab" }}
+            style={{ cursor: toolActive ? undefined : "grab" }}
             onMouseDown={(e) => {
+              if (e.button !== 0) return;
               e.stopPropagation();
               e.preventDefault();
               onPinDragStart(pin.pinId, e);
@@ -128,154 +115,66 @@ export default function PlacedComponent({ component, isSelected, onMouseDown, on
           pointerEvents="none"
         />
         {/* Pin ID label */}
-        <text
+        {drawing.pinNames && <text
           x={center.x}
           y={center.y + 10}
           textAnchor="middle"
           fontSize={6}
-          fill="var(--component-subtext)"
+          fill={drawing.pinOnDark ? "#e8e8e8" : "var(--component-subtext)"}
+          stroke={drawing.pinOnDark ? "rgba(0,0,0,0.6)" : "var(--board-fill)"}
+          strokeWidth={1.6}
+          paintOrder="stroke"
+          strokeLinejoin="round"
           pointerEvents="none"
         >
           {def.pins.find((p) => p.id === pin.pinId)?.name ?? pin.pinId}
-        </text>
+        </text>}
       </g>
     );
   };
 
-  // Diagonal flexible component
-  if (isFlexible && pins.length === 2) {
-    const p1 = holeCenter(pins[0].row, pins[0].col);
-    const p2 = holeCenter(pins[1].row, pins[1].col);
-    const dx = p2.x - p1.x;
-    const dy = p2.y - p1.y;
-
-    if (dx !== 0 && dy !== 0) {
-      const angle = Math.atan2(dy, dx) * (180 / Math.PI);
-      const length = Math.sqrt(dx * dx + dy * dy);
-      const cx = (p1.x + p2.x) / 2;
-      const cy = (p1.y + p2.y) / 2;
-
-      return (
-        <g>
-          <rect
-            x={-length / 2 - pad * 0.6}
-            y={-pad}
-            width={length + pad * 1.2}
-            height={pad * 2}
-            rx={3}
-            fill={isSelected ? "var(--selection-fill)" : "var(--component-fill)"}
-            stroke={isSelected ? "var(--selection-stroke)" : "var(--component-stroke)"}
-            strokeWidth={isSelected ? 1.5 : 1}
-            strokeDasharray="4 3"
-            transform={`translate(${cx}, ${cy}) rotate(${angle})`}
-            style={{ cursor: "grab" }}
-            onMouseDown={onMouseDown}
-          />
-          <text
-            x={cx + (component.boardLabelOffset?.x ?? 0)}
-            y={cy - pad - 4 + (component.boardLabelOffset?.y ?? 0)}
-            textAnchor="middle" fontSize={11} fontWeight={600} fill="var(--component-text)"
-            style={{ cursor: "grab" }}
-            onMouseDown={(e) => handleLabelMouseDown(e, cx, cy - pad - 4)}
-          >
-            <tspan x={cx + (component.boardLabelOffset?.x ?? 0)}>{component.locked ? `${component.label} \u{1F512}` : component.label}</tspan>
-            {showValues && allowsValue && component.value && (
-              <tspan x={cx + (component.boardLabelOffset?.x ?? 0)} dy="1.15em" fontWeight={400} fillOpacity={0.7}>
-                {component.value}
-              </tspan>
-            )}
-          </text>
-          {pins.map(renderPin)}
-        </g>
-      );
-    }
-  }
-
-  // Standard (axis-aligned) rendering
-  const style = bodyStyle(def);
-  const bodyFill = isSelected ? "var(--selection-fill)" : "var(--component-fill)";
-  const bodyStroke = isSelected ? "var(--selection-stroke)" : "var(--component-stroke)";
-  const bodyStrokeWidth = isSelected ? 1.5 : 1;
-
-  const rectBody = (
-    <rect
-      x={topLeft.x - pad}
-      y={topLeft.y - pad}
-      width={(bounds.maxCol - bounds.minCol) * HOLE_SPACING + pad * 2}
-      height={(bounds.maxRow - bounds.minRow) * HOLE_SPACING + pad * 2}
-      rx={3}
-      fill={bodyFill}
-      stroke={bodyStroke}
-      strokeWidth={bodyStrokeWidth}
-      strokeDasharray="4 3"
-      style={{ cursor: "grab" }}
-      onMouseDown={onMouseDown}
-    />
-  );
-
-  let body = rectBody;
-  let markers: React.ReactNode = null;
-
-  if (style === "belly" && pins.length === 3) {
-    const first = holeCenter(pins[0].row, pins[0].col);
-    const last = holeCenter(pins[2].row, pins[2].col);
-    body = (
-      <path
-        d={bellyPath(first, last, pad)}
-        fill={bodyFill}
-        stroke={bodyStroke}
-        strokeWidth={bodyStrokeWidth}
-        style={{ cursor: "grab" }}
-        onMouseDown={onMouseDown}
-      />
-    );
-  } else if (style === "dip" && pins.length >= 4) {
-    const pinPts = pins.map((p) => ({ ...holeCenter(p.row, p.col), id: p.pinId }));
-    const center = holeCenter((bounds.minRow + bounds.maxRow) / 2, (bounds.minCol + bounds.maxCol) / 2);
-    markers = (
-      <path d={dipNotch(pinPts, center, pad)} fill="none" stroke={bodyStroke} strokeWidth={1} pointerEvents="none" />
-    );
-  } else if (style === "board" && pins.length >= 4) {
-    const pinPts = pins.map((p) => ({ ...holeCenter(p.row, p.col), id: p.pinId }));
-    const center = holeCenter((bounds.minRow + bounds.maxRow) / 2, (bounds.minCol + bounds.maxCol) / 2);
-    const bodyRect = {
-      x0: topLeft.x - pad,
-      y0: topLeft.y - pad,
-      x1: topLeft.x + (bounds.maxCol - bounds.minCol) * HOLE_SPACING + pad,
-      y1: topLeft.y + (bounds.maxRow - bounds.minRow) * HOLE_SPACING + pad,
-    };
-    markers = (
-      <path d={usbPort(pinPts, center, bodyRect, HOLE_SPACING / 2.54)} fill={bodyFill} stroke={bodyStroke} strokeWidth={bodyStrokeWidth} pointerEvents="none" />
-    );
-  }
+  // A package carries the label on the body itself: above the part it would
+  // collide with whatever is placed on the row above.
+  const lx = label.x + (component.boardLabelOffset?.x ?? 0);
+  const ly = label.y + (component.boardLabelOffset?.y ?? 0);
+  const onBody = {
+    dominantBaseline: "central" as const,
+    fill: label.onDark ? "#f7f7f7" : "#1a1a1a",
+    stroke: label.onDark ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.8)",
+    strokeWidth: 3,
+    paintOrder: "stroke",
+    strokeLinejoin: "round" as const,
+  };
 
   return (
     <g>
-      {body}
-      {markers}
-      <text
-        x={topLeft.x + ((bounds.maxCol - bounds.minCol) * HOLE_SPACING) / 2 + (component.boardLabelOffset?.x ?? 0)}
-        y={topLeft.y - pad - 4 + (component.boardLabelOffset?.y ?? 0)}
-        textAnchor="middle" fontSize={11} fontWeight={600} fill="var(--component-text)"
-        style={{ cursor: "grab" }}
-        onMouseDown={(e) => handleLabelMouseDown(e,
-          topLeft.x + ((bounds.maxCol - bounds.minCol) * HOLE_SPACING) / 2,
-          topLeft.y - pad - 4
-        )}
-      >
-        {(() => {
-          const lx = topLeft.x + ((bounds.maxCol - bounds.minCol) * HOLE_SPACING) / 2 + (component.boardLabelOffset?.x ?? 0);
-          return (
-            <>
-              <tspan x={lx}>{component.locked ? `${component.label} \u{1F512}` : component.label}</tspan>
-              {showValues && allowsValue && component.value && (
-                <tspan x={lx} dy="1.15em" fontWeight={400} fillOpacity={0.7}>{component.value}</tspan>
-              )}
-            </>
-          );
-        })()}
-      </text>
+      <PartBody
+        drawing={drawing}
+        outline={isSelected ? "var(--selection-stroke)" : clashing ? CLASH_STROKE : "var(--component-stroke)"}
+        outlineWidth={isSelected ? 0.26 : clashing ? 0.3 : 0.12}
+        fill={isSelected ? "var(--selection-fill)" : "var(--component-fill)"}
+        strokeWidth={isSelected || clashing ? 1.5 : 1}
+        style={{ cursor: toolActive ? undefined : "grab" }}
+        onMouseDown={onMouseDown}
+      />
       {pins.map(renderPin)}
+      <text
+        x={lx}
+        y={ly}
+        textAnchor="middle" fontSize={11} fontWeight={600}
+        {...(label.onBody ? onBody : { fill: "var(--component-text)" })}
+        style={{ cursor: "grab" }}
+        onMouseDown={(e) => handleLabelMouseDown(e, label.x, label.y)}
+      >
+        <tspan x={lx}>
+          {component.locked ? `${component.label} \u{1F512}` : component.label}
+        </tspan>
+        {showValues && allowsValue && component.value && (
+          <tspan x={lx} dy="1.15em" fontWeight={400} fillOpacity={0.7}>
+            {component.value}
+          </tspan>
+        )}
+      </text>
     </g>
   );
 }

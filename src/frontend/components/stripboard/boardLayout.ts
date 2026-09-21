@@ -53,6 +53,44 @@ export function nearestCutPosition(
   return { row, col };
 }
 
+/**
+ * The physical board: the laminate the holes are punched in, which runs a bit
+ * past the outermost holes on every side.
+ */
+export function boardRect(rows: number, cols: number): { x: number; y: number; width: number; height: number } {
+  const margin = HOLE_SPACING * 0.6;
+  return {
+    x: BOARD_PADDING - margin,
+    y: BOARD_PADDING - margin,
+    width: (cols - 1) * HOLE_SPACING + margin * 2,
+    height: (rows - 1) * HOLE_SPACING + margin * 2,
+  };
+}
+
+/**
+ * The cut position nearest a point, with no dead zone: either the hole itself
+ * or the gap on whichever side is closer. Used by the cut tool, where
+ * cuts are the only thing a click can mean.
+ */
+export function nearestCutTarget(
+  svgX: number,
+  svgY: number,
+  rows: number,
+  cols: number
+): Cut | null {
+  const row = Math.round((svgY - BOARD_PADDING) / HOLE_SPACING);
+  if (row < 0 || row >= rows) return null;
+  if (Math.abs(svgY - (BOARD_PADDING + row * HOLE_SPACING)) > HOLE_SPACING * 0.5) return null;
+
+  const colFloat = (svgX - BOARD_PADDING) / HOLE_SPACING;
+  const hole = Math.round(colFloat);
+  const gap = Math.floor(colFloat);
+  if (Math.abs(colFloat - hole) <= Math.abs(colFloat - (gap + 0.5))) {
+    return hole >= 0 && hole < cols ? { row, col: hole, kind: "hole" } : null;
+  }
+  return gap >= 0 && gap < cols - 1 ? { row, col: gap, kind: "between" } : null;
+}
+
 /** Get the bounding box max row/col for a component def (pins + body cells) */
 function getDefMaxExtents(def: ComponentDef): { maxRow: number; maxCol: number } {
   const allRows = def.pins.map((p) => p.offsetRow);

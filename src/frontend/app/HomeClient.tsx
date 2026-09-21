@@ -89,6 +89,8 @@ export default function HomeClient({
     "Schematic editor with a standard symbol library and automatic net detection",
     "Live strip colouring with real-time conflict detection",
     "Lock the board size or individual parts and let the router design around them",
+    "Parts drawn as their real packages at true size: pick the resistor, capacitor or transistor body you actually have",
+    "Off-board parts like pots and jacks get solder pads or a connector on the board",
     "Editable IC footprints, custom components, flexible passive leads",
     "Printable 1:1 build template with a mirrored cut guide and a BOM",
     "KiCad-compatible netlist export to turn a prototype into a PCB",
@@ -106,14 +108,16 @@ export default function HomeClient({
             name: "Stripboard Editor",
             url: "https://stripboard-editor.com",
             description:
-              "Free online stripboard layout editor with a built-in schematic editor and an automatic layout router. Draw circuits with standard symbols, wire up nets, then let the router lay out the whole board or place parts by hand with live strip colouring — print a true-scale build template with a mirrored cut guide and a bill of materials (BOM), or export a KiCad-compatible netlist to turn the prototype into a PCB.",
+              "Free online stripboard layout editor with a built-in schematic editor and an automatic layout router. Draw circuits with standard symbols, wire up nets, then let the router lay out the whole board or place parts by hand with live strip colouring. Parts are drawn as their real packages at true size. Print a true-scale build template with a mirrored cut guide and a bill of materials (BOM), or export a KiCad-compatible netlist to turn the prototype into a PCB.",
             applicationCategory: "DesignApplication",
             operatingSystem: "Any",
             featureList: [
               "Schematic editor with a standard symbol library",
-              "Automatic stripboard layout router with per-component-type pin spacing and clearance settings",
+              "Automatic stripboard layout router that places every part at the real size of its package",
               "Lockable board dimensions and lockable component positions the router designs around",
               "Live strip colouring with real-time conflict detection",
+              "Realistic part rendering at true package size, with selectable packages",
+              "Off-board parts wired to solder pads or connectors",
               "Editable component footprints and custom components",
               "Printable 1:1 build template with mirrored cut guide and BOM",
               "KiCad-compatible netlist export",
@@ -140,7 +144,7 @@ export default function HomeClient({
               <span className="font-mono text-neutral-500 dark:text-neutral-400 hidden sm:inline">{user.username}</span>
               <button
                 onClick={handleLogout}
-                className="font-mono px-3 py-1.5 rounded border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300 hover:border-[var(--copper)] hover:text-[var(--copper)] transition-colors"
+                className="font-mono px-2 sm:px-3 py-1.5 rounded border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300 hover:border-[var(--copper)] hover:text-[var(--copper)] transition-colors"
               >
                 logout
               </button>
@@ -149,13 +153,13 @@ export default function HomeClient({
             <>
               <button
                 onClick={() => setShowAuth("login")}
-                className="font-mono px-3 py-1.5 rounded border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300 hover:border-[var(--copper)] hover:text-[var(--copper)] transition-colors"
+                className="font-mono px-2 sm:px-3 py-1.5 rounded border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300 hover:border-[var(--copper)] hover:text-[var(--copper)] transition-colors"
               >
                 login
               </button>
               <button
                 onClick={() => setShowAuth("register")}
-                className="font-mono px-3 py-1.5 rounded bg-[#113768] text-white border-2 border-[#113768] hover:border-[var(--copper)] transition-colors"
+                className="font-mono px-2 sm:px-3 py-1.5 rounded bg-[#113768] text-white border-2 border-[#113768] hover:border-[var(--copper)] transition-colors"
               >
                 register
               </button>
@@ -164,7 +168,7 @@ export default function HomeClient({
         }
       />
 
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12 flex-1">
+      <div className="max-w-3xl mx-auto w-full px-4 sm:px-6 py-8 sm:py-12 flex-1">
         {/* Hero */}
         <div className="mb-8">
           <p className="font-mono text-xs uppercase tracking-[0.2em] text-[var(--copper)] mb-3">// PCB-free prototyping</p>

@@ -9,7 +9,8 @@ import {
   NetAssignment,
 } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
-import { getComponentBounds, getFlexiblePinPositions } from "./boardLayout";
+import { getFlexiblePinPositions } from "./boardLayout";
+import { flexWireObstacle, rigidBody } from "./partGeometry";
 import { computeStripSegments, StripSegment } from "./stripSegments";
 import { computeConnectivity } from "./connectivity";
 import { WireObstacleIndex, WireObstacles } from "./flexGeometry";
@@ -108,9 +109,9 @@ export function deriveCompletion(
     if (!def) continue;
     if (def.flexible) {
       const [p1, p2] = getFlexiblePinPositions(comp, def);
-      if (p1 && p2) obstacles.bodies.push({ p1, p2 });
+      if (p1 && p2) obstacles.bodies.push(flexWireObstacle(def, p1, p2));
     } else {
-      obstacles.rects.push(getComponentBounds(def, comp.boardPos, comp.rotation));
+      obstacles.rects.push(rigidBody(def, comp.boardPos, comp.rotation));
     }
   }
   // Shared across every routeWith attempt: obstacles don't depend on cuts,

@@ -10,10 +10,12 @@ import { SPLIT_MIN_PARTS, SPLIT_VARIANTS } from "./stripboard/autoLayout5Split";
 import ComponentTray from "./stripboard/ComponentTray";
 import StripboardCanvas from "./stripboard/StripboardCanvas";
 import StripboardFootprintEditor from "./stripboard/StripboardFootprintEditor";
+import { useBoardView } from "@/hooks/useBoardView";
 import AutoLayoutSettings from "./stripboard/AutoLayoutSettings";
 import ResizableSidebar from "./ResizableSidebar";
 import { track } from "@/lib/track";
 import { LockIcon, UnlockIcon } from "./canvas/SelectionActionBar";
+import ViewMenu from "./stripboard/ViewMenu";
 
 const PHASE_LABELS = {
   arrange: "Arranging parts",
@@ -25,12 +27,12 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
   const board = useProjectStore((s) => s.board);
   const setBoardSize = useProjectStore((s) => s.setBoardSize);
   const setBoardDimLock = useProjectStore((s) => s.setBoardDimLock);
-  const components = useProjectStore((s) => s.components);
+  // everything here is about the board, so it works on the board's view, in
+  // which an off-board part is its solder pads
+  const { components, netAssignments } = useBoardView();
   const componentDefs = useProjectStore((s) => s.componentDefs);
   const nets = useProjectStore((s) => s.nets);
-  const netAssignments = useProjectStore((s) => s.netAssignments);
-  const spanOverrides = useProjectStore((s) => s.spanOverrides);
-  const clearanceOverrides = useProjectStore((s) => s.clearanceOverrides);
+  const partSpacing = useProjectStore((s) => s.partSpacing);
   const tidyWires = useProjectStore((s) => s.tidyWires);
   const drilledCutsOnly = useProjectStore((s) => s.drilledCutsOnly);
   const v5Moves = useProjectStore((s) => s.v5Moves);
@@ -39,6 +41,9 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
   const v5RandomSeeds = useProjectStore((s) => s.v5RandomSeeds);
   const setV5MsPerMove = useProjectStore((s) => s.setV5MsPerMove);
   const noWireStacking = useProjectStore((s) => s.noWireStacking);
+  const showOverlaps = useProjectStore((s) => s.showOverlaps);
+  const setShowOverlaps = useProjectStore((s) => s.setShowOverlaps);
+  const allowStanding = useProjectStore((s) => s.allowStanding);
   const permWorkers = useProjectStore((s) => s.permWorkers);
   const isActive = useProjectStore((s) => s.activeEditor === "stripboard");
   const setActiveEditor = useProjectStore((s) => s.setActiveEditor);
@@ -116,7 +121,7 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
     track("auto-layout-run", { engine: onlyIds ? "selection" : engine });
     const runId = ++autoRunIdRef.current;
     const drilled = drilledCutsOnly !== false;
-    const inputs = { board, components, componentDefs, nets, netAssignments, spanOverrides, clearanceOverrides, tidyWires, drilledCutsOnly: drilled };
+    const inputs = { board, components, componentDefs, nets, netAssignments, partSpacing, tidyWires, drilledCutsOnly: drilled };
 
     // Edits made while solving are kept: the result is applied on top of
     // the current state (parts that no longer exist are simply skipped).
@@ -136,6 +141,7 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
       ...(engine === "v5" ? { v5TimeS: v5TimeS ?? 60 } : {}),
       ...(engine === "v5" && v5MsPerMove ? { v5MsPerMove } : {}),
       ...(engine === "v5" && noWireStacking !== false ? { noWireStacking: true } : {}),
+      ...(engine === "v5" && allowStanding ? { allowStanding: true } : {}),
     };
 
     // v5 spreads its seeds over the same worker pool (worker._idx = seed);
@@ -317,45 +323,6 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
         </div>
         {!readOnly && (
           <div className="flex items-center gap-4 font-mono text-sm font-normal text-neutral-600 dark:text-neutral-400">
-            {autoProgress && (
-              <span className="flex items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400">
-                <span className="whitespace-nowrap">{autoProgress.label}</span>
-                <span className="w-24 h-1.5 rounded bg-neutral-200 dark:bg-neutral-700 overflow-hidden">
-                  <span
-                    className="relative block h-full overflow-hidden bg-[#113768] dark:bg-[#5b9bd5] transition-[width] duration-200"
-                    style={{ width: `${Math.round(autoProgress.frac * 100)}%` }}
-                  >
-                    <span className="progress-sheen absolute inset-y-0 left-0 w-1/2 bg-gradient-to-r from-transparent via-white/50 to-transparent" />
-                  </span>
-                </span>
-              </span>
-            )}
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => handleAutoLayout()}
-                title={autoProgress
-                  ? "Cancel the running auto-layout"
-                  : "Arrange all unlocked parts and regenerate the cuts and link wires to complete the board. Lock components to keep them in place."}
-                className="border border-neutral-300 dark:border-neutral-600 rounded px-2 py-1 text-sm text-neutral-900 dark:text-neutral-100 dark:bg-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-700 transition-colors"
-              >
-                {autoProgress ? "Cancel" : "Auto-layout"}
-              </button>
-              <div className="relative">
-                <button
-                  onClick={() => setShowLayoutSettings((v) => !v)}
-                  title="Auto-layout settings"
-                  className={`p-1.5 rounded border transition-colors ${showLayoutSettings
-                    ? "border-[#113768] text-[#113768] bg-[#113768]/10 dark:border-[#5b9bd5] dark:text-[#5b9bd5] dark:bg-[#5b9bd5]/15"
-                    : "border-neutral-300 dark:border-neutral-600 text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-700"}`}
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-                    <circle cx="12" cy="12" r="3" />
-                  </svg>
-                </button>
-                {showLayoutSettings && <AutoLayoutSettings onClose={() => setShowLayoutSettings(false)} />}
-              </div>
-            </div>
             <div className="flex items-center gap-1.5">
               <span>Rows:</span>
               <input
@@ -400,15 +367,24 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
                 {board.lockedCols ? LockIcon : UnlockIcon}
               </button>
             </div>
-            <label className="flex items-center gap-1.5 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={!!showValuesOnBoard}
-                onChange={(e) => setShowValuesOnBoard(e.target.checked)}
-                className="cursor-pointer accent-[#113768] dark:accent-[#5b9bd5]"
-              />
-              <span>show component Values</span>
-            </label>
+            <ViewMenu
+              items={[
+                {
+                  key: "values",
+                  label: "component values",
+                  title: "Print each part's value next to its label",
+                  checked: !!showValuesOnBoard,
+                  onChange: setShowValuesOnBoard,
+                },
+                {
+                  key: "overlaps",
+                  label: "overlapping parts",
+                  title: "Outline in red any parts whose real bodies run into each other",
+                  checked: showOverlaps,
+                  onChange: setShowOverlaps,
+                },
+              ]}
+            />
           </div>
         )}
       </div>}
@@ -421,7 +397,50 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
           ) : (
             <ResizableSidebar defaultWidth={200} minWidth={140} maxWidth={360}>
               <div className="flex flex-col h-full overflow-hidden border-r border-neutral-200 dark:border-neutral-700">
-                <ComponentTray />
+                <div className="flex-shrink-0 px-2.5 py-2.5 border-b border-neutral-200 dark:border-neutral-700 font-mono text-sm">
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => handleAutoLayout()}
+                      title={autoProgress
+                        ? "Cancel the running auto-layout"
+                        : "Arrange all unlocked parts and regenerate the cuts and link wires to complete the board. Lock components to keep them in place."}
+                      className="flex-1 min-w-0 border border-neutral-300 dark:border-neutral-600 rounded px-2 py-1 text-sm text-neutral-900 dark:text-neutral-100 dark:bg-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-700 transition-colors"
+                    >
+                      {autoProgress ? "Cancel" : "Auto-layout"}
+                    </button>
+                    <div className="relative">
+                      <button
+                        onClick={() => setShowLayoutSettings((v) => !v)}
+                        title="Auto-layout settings"
+                        className={`p-1.5 rounded border transition-colors ${showLayoutSettings
+                          ? "border-[#113768] text-[#113768] bg-[#113768]/10 dark:border-[#5b9bd5] dark:text-[#5b9bd5] dark:bg-[#5b9bd5]/15"
+                          : "border-neutral-300 dark:border-neutral-600 text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-700"}`}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+                          <circle cx="12" cy="12" r="3" />
+                        </svg>
+                      </button>
+                      {showLayoutSettings && <AutoLayoutSettings onClose={() => setShowLayoutSettings(false)} />}
+                    </div>
+                  </div>
+                  {autoProgress && (
+                    <div className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+                      <div className="truncate" title={autoProgress.label}>{autoProgress.label}</div>
+                      <div className="mt-1 h-1.5 rounded bg-neutral-200 dark:bg-neutral-700 overflow-hidden">
+                        <div
+                          className="relative h-full overflow-hidden bg-[#113768] dark:bg-[#5b9bd5] transition-[width] duration-200"
+                          style={{ width: `${Math.round(autoProgress.frac * 100)}%` }}
+                        >
+                          <span className="progress-sheen absolute inset-y-0 left-0 w-1/2 bg-gradient-to-r from-transparent via-white/50 to-transparent" />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div className="flex-1 min-h-0">
+                  <ComponentTray />
+                </div>
               </div>
             </ResizableSidebar>
           )

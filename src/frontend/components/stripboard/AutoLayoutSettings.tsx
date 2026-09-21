@@ -1,23 +1,14 @@
 "use client";
 
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
-import { resolveComponentDef } from "@/utils/resolveComponentDef";
-import { spanLimits, DEFAULT_CLEARANCE } from "./flexGeometry";
 import { defaultPermWorkers } from "./layoutTypes";
 
 /**
- * Popup with per-component-type auto-layout settings: the allowed pin-to-pin
- * span range of the flexible parts used in this project. Rendered below the
- * gear button next to the Auto-layout button.
+ * Popup with the project's auto-layout settings. Rendered below the gear
+ * button next to the Auto-layout button.
  */
 export default function AutoLayoutSettings({ onClose }: { onClose: () => void }) {
-  const components = useProjectStore((s) => s.components);
-  const componentDefs = useProjectStore((s) => s.componentDefs);
-  const spanOverrides = useProjectStore((s) => s.spanOverrides);
-  const setSpanOverride = useProjectStore((s) => s.setSpanOverride);
-  const clearanceOverrides = useProjectStore((s) => s.clearanceOverrides);
-  const setClearanceOverride = useProjectStore((s) => s.setClearanceOverride);
   const drilledCutsOnly = useProjectStore((s) => s.drilledCutsOnly);
   const setDrilledCutsOnly = useProjectStore((s) => s.setDrilledCutsOnly);
   const permWorkers = useProjectStore((s) => s.permWorkers);
@@ -26,6 +17,10 @@ export default function AutoLayoutSettings({ onClose }: { onClose: () => void })
   const setV5TimeS = useProjectStore((s) => s.setV5TimeS);
   const noWireStacking = useProjectStore((s) => s.noWireStacking);
   const setNoWireStacking = useProjectStore((s) => s.setNoWireStacking);
+  const allowStanding = useProjectStore((s) => s.allowStanding);
+  const setAllowStanding = useProjectStore((s) => s.setAllowStanding);
+  const partSpacing = useProjectStore((s) => s.partSpacing);
+  const setPartSpacing = useProjectStore((s) => s.setPartSpacing);
   const v5RandomSeeds = useProjectStore((s) => s.v5RandomSeeds);
   const setV5RandomSeeds = useProjectStore((s) => s.setV5RandomSeeds);
   const cores = Math.max(1, typeof navigator !== "undefined" ? navigator.hardwareConcurrency || 4 : 4);
@@ -49,17 +44,10 @@ export default function AutoLayoutSettings({ onClose }: { onClose: () => void })
       margin,
       Math.min(a.right - panel.offsetWidth, window.innerWidth - margin - panel.offsetWidth)
     );
-    setPos({ top: a.bottom + 4, left });
+    const top = Math.max(margin, Math.min(a.bottom + 4, window.innerHeight - margin - panel.offsetHeight));
+    setPos({ top, left });
   }, []);
 
-  const flexDefs = useMemo(() => {
-    const used = new Set<string>();
-    for (const c of components) {
-      const def = resolveComponentDef(c, componentDefs);
-      if (def?.flexible) used.add(def.id);
-    }
-    return componentDefs.filter((d) => used.has(d.id));
-  }, [components, componentDefs]);
 
   return (
     <>
@@ -67,95 +55,13 @@ export default function AutoLayoutSettings({ onClose }: { onClose: () => void })
       <div
         ref={panelRef}
         style={pos ? { top: pos.top, left: pos.left } : { visibility: "hidden" }}
-        className="fixed z-50 w-[31rem] max-w-[calc(100vw-1rem)] rounded-md border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 shadow-lg dark:shadow-neutral-900/50 p-4"
+        className="fixed z-50 w-[31rem] max-w-[calc(100vw-1rem)] max-h-[calc(100vh-1rem)] overflow-y-auto rounded-md border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 shadow-lg dark:shadow-neutral-900/50 p-4"
       >
         <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Auto-layout settings</p>
         <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 leading-snug">
-          Per bendable component type: pin spacing as the number of holes the part spans
-          from pin to pin, and clearance as the number of free rows/columns the body keeps
-          to any neighbour. Clearance 0 allows parts to sit directly side by side.
+          Parts are laid out at the real size of their package, which also sets how far
+          apart their pins may sit. Choose a part's package on the board to change that.
         </p>
-        {flexDefs.length === 0 ? (
-          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-3">
-            No flexible components in this project yet.
-          </p>
-        ) : (
-          <div className="mt-3 flex flex-col gap-2 max-h-[45vh] overflow-y-auto">
-            <div className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
-              <span className="flex-1" />
-              <span className="w-[6.75rem] text-center">Pin spacing</span>
-              <span className="w-20 text-center">Clearance</span>
-              <span className="w-12" />
-            </div>
-            {flexDefs.map((def) => {
-              const base = spanLimits(def);
-              const ov = spanOverrides?.[def.id];
-              const cur = ov ?? base;
-              const clrOv = clearanceOverrides?.[def.id];
-              const clr = clrOv ?? DEFAULT_CLEARANCE;
-              const inputClass =
-                "w-12 border border-neutral-300 dark:border-neutral-600 rounded px-1.5 py-0.5 text-sm text-neutral-900 dark:text-neutral-100 dark:bg-neutral-900 outline-none focus:border-blue-400 text-center";
-              return (
-                <div key={def.id} className="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-200">
-                  <span className="flex-1 truncate" title={`${def.name} (default spacing ${base.min + 1} to ${base.max + 1}, clearance ${DEFAULT_CLEARANCE})`}>
-                    {def.name}
-                  </span>
-                  <input
-                    type="number"
-                    min={2}
-                    max={31}
-                    value={cur.min + 1}
-                    onChange={(e) => {
-                      const v = parseInt(e.target.value);
-                      setSpanOverride(def.id, { min: Number.isNaN(v) ? base.min : v - 1, max: cur.max });
-                    }}
-                    className={inputClass}
-                    title="Smallest allowed span, in holes from pin to pin"
-                  />
-                  <span className="text-neutral-400 dark:text-neutral-500">to</span>
-                  <input
-                    type="number"
-                    min={2}
-                    max={31}
-                    value={cur.max + 1}
-                    onChange={(e) => {
-                      const v = parseInt(e.target.value);
-                      setSpanOverride(def.id, { min: cur.min, max: Number.isNaN(v) ? base.max : v - 1 });
-                    }}
-                    className={inputClass}
-                    title="Largest allowed span, in holes from pin to pin"
-                  />
-                  <input
-                    type="number"
-                    min={0}
-                    max={5}
-                    step={1}
-                    value={clr}
-                    onChange={(e) => {
-                      const v = parseInt(e.target.value);
-                      setClearanceOverride(def.id, Number.isNaN(v) ? null : v);
-                    }}
-                    className={`${inputClass} w-20`}
-                    title="Free rows/columns this part's body keeps to any neighbour. Default 1; 0 allows placing it directly adjacent."
-                  />
-                  <button
-                    onClick={() => {
-                      setSpanOverride(def.id, null);
-                      setClearanceOverride(def.id, null);
-                    }}
-                    title="Reset to defaults"
-                    disabled={!ov && clrOv === undefined}
-                    className={`w-12 flex-shrink-0 text-xs transition-colors ${ov || clrOv !== undefined
-                      ? "text-neutral-500 dark:text-neutral-400 hover:text-neutral-800 dark:hover:text-neutral-100"
-                      : "text-neutral-300 dark:text-neutral-600 cursor-default"}`}
-                  >
-                    Reset
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        )}
         <div className="mt-3 border-t border-neutral-200 dark:border-neutral-700 pt-3">
           <label className="flex items-center justify-between gap-2 cursor-pointer">
             <span className="text-sm text-neutral-700 dark:text-neutral-200">Drilled cuts only</span>
@@ -185,6 +91,36 @@ export default function AutoLayoutSettings({ onClose }: { onClose: () => void })
           <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 leading-snug">
             Never runs one wire on top of another. Keeps the board buildable with thick
             or uninsulated wire; the board may come out larger.
+          </p>
+        </div>
+        <div className="mt-3 border-t border-neutral-200 dark:border-neutral-700 pt-3">
+          <label className="flex items-center justify-between gap-2 cursor-pointer">
+            <span className="text-sm text-neutral-700 dark:text-neutral-200">Allow standing parts</span>
+            <input
+              type="checkbox"
+              checked={allowStanding === true}
+              onChange={(e) => setAllowStanding(e.target.checked)}
+              className="h-4 w-4 accent-blue-500"
+            />
+          </label>
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 leading-snug">
+            Lets resistors and diodes stand on one lead where that saves room. Off keeps
+            them lying flat.
+          </p>
+        </div>
+        <div className="mt-3 border-t border-neutral-200 dark:border-neutral-700 pt-3">
+          <label className="flex items-center justify-between gap-2 cursor-pointer">
+            <span className="text-sm text-neutral-700 dark:text-neutral-200">Extra room between parts</span>
+            <input
+              type="checkbox"
+              checked={(partSpacing ?? 0) > 0}
+              onChange={(e) => setPartSpacing(e.target.checked ? 1 : 0)}
+              className="h-4 w-4 accent-blue-500"
+            />
+          </label>
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 leading-snug">
+            Keeps a free row or column between all parts, which is easier to solder. Off
+            packs parts as tightly as they physically fit.
           </p>
         </div>
         <div className="mt-3 border-t border-neutral-200 dark:border-neutral-700 pt-3">

@@ -12,7 +12,9 @@ import { UnionFind } from "./netInference";
 import { getSymbolBounds } from "./SymbolRenderer";
 import { pointInRect, schematicPinPoints, wireInRect } from "./schematicGeometry";
 import { GRID_SIZE, snapToGrid, pointKey } from "@/utils/schematicConstants";
-import { SelectionActionBar, RotateIcon, MirrorIcon, DeleteIcon, ExcludeIcon, type CanvasAction } from "@/components/canvas/SelectionActionBar";
+import { SelectionActionBar, RotateIcon, MirrorIcon, DeleteIcon, ExcludeIcon, OffBoardIcon, type CanvasAction } from "@/components/canvas/SelectionActionBar";
+import { TOOL_STRIP_HOME } from "@/components/canvas/ToolStrip";
+import SchematicTools from "./SchematicTools";
 import { track } from "@/lib/track";
 
 const MOVE_STEP = GRID_SIZE;
@@ -110,7 +112,7 @@ interface Clipboard {
 export default function SchematicCanvas({ readOnly = false }: { readOnly?: boolean }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const panZoom = usePanZoom();
+  const panZoom = usePanZoom(1, readOnly ? undefined : TOOL_STRIP_HOME);
   const components = useProjectStore((s) => s.components);
   const componentDefs = useProjectStore((s) => s.componentDefs);
   const schematicWires = useProjectStore((s) => s.schematicWires);
@@ -124,6 +126,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
   const rotateSchematicComponent = useProjectStore((s) => s.rotateSchematicComponent);
   const mirrorSchematicComponent = useProjectStore((s) => s.mirrorSchematicComponent);
   const setBoardExcluded = useProjectStore((s) => s.setBoardExcluded);
+  const setOffBoard = useProjectStore((s) => s.setOffBoard);
   const addNetLabel = useProjectStore((s) => s.addNetLabel);
   const updateNetLabel = useProjectStore((s) => s.updateNetLabel);
   const removeNetLabels = useProjectStore((s) => s.removeNetLabels);
@@ -413,7 +416,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
       components: comps.map((c) => ({
         defId: c.defId, value: c.value,
         schematicPos: c.schematicPos, schematicRotation: c.schematicRotation, schematicMirrored: c.schematicMirrored,
-        labelOffset: c.labelOffset, pinLabelOffsets: c.pinLabelOffsets, footprintOverride: c.footprintOverride,
+        labelOffset: c.labelOffset, pinLabelOffsets: c.pinLabelOffsets, footprintOverride: c.footprintOverride, package: c.package,
         boardLabelOffset: c.boardLabelOffset, boardExcluded: c.boardExcluded,
       })),
       wires: wires.map((w) => ({ start: w.start, end: w.end })),
@@ -1117,6 +1120,19 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
                 onClick: () => toggleExcludeSelection([singleComponentId]),
               };
             })(),
+            (() => {
+              const comp = components.find((c) => c.id === singleComponentId);
+              const off = !!comp?.offBoard && !comp.boardExcluded;
+              return {
+                key: "offboard",
+                label: off ? "Mount on board" : "Mount off board",
+                title: off
+                  ? "Put this part back on the stripboard itself"
+                  : "Mounted off the board and wired to it: each wired pin gets a solder pad on the stripboard",
+                icon: OffBoardIcon,
+                onClick: () => setOffBoard(singleComponentId, !off),
+              };
+            })(),
             {
               key: "delete",
               label: "Delete",
@@ -1225,6 +1241,19 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
               icon: ExcludeIcon,
               onClick: () => toggleExcludeSelection(selection.components),
             }] : []),
+            ...(selection.components.length > 0 ? [(() => {
+              const picked = components.filter((c) => selection.components.includes(c.id) && !c.boardExcluded);
+              const allOff = picked.length > 0 && picked.every((c) => c.offBoard);
+              return {
+                key: "offboard",
+                label: allOff ? `Mount ${picked.length} on board` : `Mount ${picked.length} off board`,
+                title: allOff
+                  ? "Put these parts back on the stripboard themselves"
+                  : "Mounted off the board and wired to it: each wired pin gets a solder pad on the stripboard",
+                icon: OffBoardIcon,
+                onClick: () => transact(() => picked.forEach((c) => setOffBoard(c.id, !allOff))),
+              };
+            })()] : []),
             {
               key: "delete",
               label: `Delete ${selCount}`,
@@ -1285,6 +1314,16 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
           </div>
         );
       })()}
+
+      {!readOnly && (
+        <SchematicTools
+          tool={wireTool ? "wire" : "select"}
+          onChange={(tool) => {
+            if (drawing) endDrawing();
+            if ((tool === "wire") !== wireDrawMode) toggleWireDrawMode();
+          }}
+        />
+      )}
 
       {/* Zoom controls */}
       <div className="absolute bottom-3 right-3 flex items-center gap-1 bg-white/90 dark:bg-neutral-800/90 border border-neutral-200 dark:border-neutral-700 rounded-md px-1.5 py-1 shadow-sm dark:shadow-neutral-900/30 text-xs text-neutral-600 dark:text-neutral-400">

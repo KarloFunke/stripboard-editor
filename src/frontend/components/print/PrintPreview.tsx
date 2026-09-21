@@ -8,6 +8,7 @@ import { track } from "@/lib/track";
 import { SITE_URL } from "@/lib/site";
 import PrintBoard from "./PrintBoard";
 import { buildBOM } from "./bom";
+import { offBoardWiring } from "@/components/stripboard/offBoard";
 
 function CalibrationRuler() {
   return (
@@ -28,6 +29,8 @@ function CalibrationRuler() {
 export default function PrintPreview({ onClose, source, editUuid, viewUuid }: { onClose: () => void; source: "edit" | "view"; editUuid?: string; viewUuid?: string | null }) {
   const components = useProjectStore((s) => s.components);
   const componentDefs = useProjectStore((s) => s.componentDefs);
+  const nets = useProjectStore((s) => s.nets);
+  const netAssignments = useProjectStore((s) => s.netAssignments);
   const name = useProjectStore((s) => s.name);
   const description = useProjectStore((s) => s.description ?? "");
   const notes = useProjectStore((s) => s.notes ?? "");
@@ -42,9 +45,9 @@ export default function PrintPreview({ onClose, source, editUuid, viewUuid }: { 
   const [showNotes, setShowNotes] = useState(true);
   const [includeExcludedInBom, setIncludeExcludedInBom] = useState(false);
   const [showLabels, setShowLabels] = useState(true);
-  const [showWires, setShowWires] = useState(true);
-  const [showCuts, setShowCuts] = useState(false);
   const [showPinLabels, setShowPinLabels] = useState(true);
+  const [color, setColor] = useState(true);
+  const [showWiring, setShowWiring] = useState(true);
   const [showViewQr, setShowViewQr] = useState(false);
   const [showEditQr, setShowEditQr] = useState(false);
 
@@ -55,6 +58,8 @@ export default function PrintPreview({ onClose, source, editUuid, viewUuid }: { 
     includeExcludedInBom ? components : components.filter((c) => !c.boardExcluded),
     componentDefs
   );
+
+  const wiring = offBoardWiring(components, componentDefs, nets, netAssignments);
 
   const toggle = (label: string, v: boolean, set: (b: boolean) => void) => (
     <label className="flex items-center gap-1.5 cursor-pointer select-none">
@@ -73,9 +78,9 @@ export default function PrintPreview({ onClose, source, editUuid, viewUuid }: { 
       bomOffBoard: includeExcludedInBom ? "on" : "off",
       notes: hasNotes && showNotes ? "on" : "off",
       refLabels: showLabels ? "on" : "off",
-      wires: showWires ? "on" : "off",
-      cuts: showCuts ? "on" : "off",
       pinLabels: showPinLabels ? "on" : "off",
+      color: color ? "on" : "off",
+      offBoardWiring: wiring.length > 0 && showWiring ? "on" : "off",
       viewQr: showViewQr && viewUrl ? "on" : "off",
       editQr: showEditQr && editUrl ? "on" : "off",
     });
@@ -104,12 +109,12 @@ export default function PrintPreview({ onClose, source, editUuid, viewUuid }: { 
           {toggle("Cut sheet", includeCutSheet, setIncludeCutSheet)}
           {toggle("BOM", showBom, setShowBom)}
           {showBom && toggle("Off-board parts in BOM", includeExcludedInBom, setIncludeExcludedInBom)}
+          {wiring.length > 0 && toggle("Off-board wiring", showWiring, setShowWiring)}
           {hasNotes && toggle("Notes", showNotes, setShowNotes)}
           <span className="opacity-40">|</span>
           {toggle("Ref labels", showLabels, setShowLabels)}
-          {toggle("Wires", showWires, setShowWires)}
-          {toggle("Cuts", showCuts, setShowCuts)}
           {toggle("Pin labels", showPinLabels, setShowPinLabels)}
+          {toggle("Colour", color, setColor)}
           {(viewUrl || editUrl) && <span className="opacity-40">|</span>}
           {viewUrl && toggle("View QR", showViewQr, setShowViewQr)}
           {editUrl && toggle("Edit QR", showEditQr, setShowEditQr)}
@@ -163,7 +168,7 @@ export default function PrintPreview({ onClose, source, editUuid, viewUuid }: { 
                 </div>
               )}
             </div>
-            <PrintBoard variant="place" showLabels={showLabels} showWires={showWires} showCuts={showCuts} showPinLabels={showPinLabels} />
+            <PrintBoard variant="place" showLabels={showLabels} showPinLabels={showPinLabels} color={color} />
           </div>
           )}
 
@@ -176,7 +181,7 @@ export default function PrintPreview({ onClose, source, editUuid, viewUuid }: { 
                 </div>
                 <CalibrationRuler />
               </div>
-              <PrintBoard variant="cut" showLabels={showLabels} showWires={false} showCuts={true} showPinLabels={false} />
+              <PrintBoard variant="cut" showLabels={showLabels} showPinLabels={false} color={color} />
             </div>
           )}
 
@@ -204,6 +209,34 @@ export default function PrintPreview({ onClose, source, editUuid, viewUuid }: { 
                 {bom.length === 0 && (
                   <tr><td colSpan={4} className="py-2 text-neutral-500">No components.</td></tr>
                 )}
+              </tbody>
+            </table>
+          </div>
+          )}
+          {showWiring && wiring.length > 0 && (
+          <div className="p-[10mm]">
+            <div className="text-sm font-semibold mb-1">{name} | off-board wiring</div>
+            <div className="text-xs text-neutral-600 mb-2">
+              These parts are mounted off the board. Run one wire from each pin to its solder pad, which is labelled on the component sheet.
+            </div>
+            <table className="print-bom w-full text-xs border-collapse">
+              <thead>
+                <tr className="border-b border-black text-left">
+                  <th className="py-0.5 pr-3">Part</th>
+                  <th className="py-0.5 pr-3">Pin</th>
+                  <th className="py-0.5 pr-3">Net</th>
+                  <th className="py-0.5">Solder pad</th>
+                </tr>
+              </thead>
+              <tbody>
+                {wiring.flatMap((part) => part.wires.map((w, i) => (
+                  <tr key={`${part.label}-${i}`} className="border-b border-neutral-200 align-top">
+                    <td className="py-0.5 pr-3">{i === 0 ? [part.label, part.name, part.value].filter(Boolean).join(", ") : ""}</td>
+                    <td className="py-0.5 pr-3">{w.pin}</td>
+                    <td className="py-0.5 pr-3">{w.net || "-"}</td>
+                    <td className="py-0.5">{w.pad ? `row ${w.pad.row + 1}, column ${w.pad.col + 1}` : "not placed yet"}</td>
+                  </tr>
+                )))}
               </tbody>
             </table>
           </div>

@@ -19,6 +19,8 @@
   --page-dot: #e6e6e6;
   --strip-color: #D4A853;
   --strip-conflict: #dc2626;
+  --board-fill: #f0e6d4;
+  --board-edge: #d8c8ab;
   --component-stroke: #a3a3a3;
   --component-fill: rgba(255, 255, 255, 0.85);
   --component-text: #171717;
@@ -50,6 +52,8 @@
   --page-dot: #232323;
   --strip-color: #c9a43a;
   --strip-conflict: #ef4444;
+  --board-fill: #2a241c;
+  --board-edge: #3d3426;
   --component-stroke: #777;
   --component-fill: rgba(35, 35, 35, 0.9);
   --component-text: #e5e5e5;

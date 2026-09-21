@@ -4,13 +4,13 @@ import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { getComponentBounds, getRotatedPinPositions } from "../boardLayout";
 import {
   spanLimits,
-  clearanceOf,
   FootprintRect,
-  bodiesTooClose,
+  bodyRectsClash,
+  coveredHoles,
   segmentsIntersect,
-  bodyIntersectsRect,
   corridorHoles,
 } from "../flexGeometry";
+import { FlexProfile, flexBodiesClash, flexClashesRect, flexProfile, rigidGeometry } from "../partGeometry";
 
 // ── Vacuum compaction ──────────────────────────────────
 // Pins connect through their strip row, so removing a grid line that no
@@ -19,8 +19,10 @@ import {
 // result and keeps it only if it routes as cleanly as the loose layout.
 
 interface Occupancy {
-  rigids: { rect: FootprintRect; pins: { row: number; col: number; net?: string }[] }[];
-  flexes: { idx: number; def: ComponentDef; span: { min: number; max: number } }[];
+  // rect: the whole holes the package lies over; body: its true outline,
+  // kept as an offset from rect so the two move together
+  rigids: { rect: FootprintRect; bodyOff: FootprintRect; reachOff?: FootprintRect; lines: number; pins: { row: number; col: number; net?: string }[] }[];
+  flexes: { idx: number; def: ComponentDef; span: { min: number; max: number }; profile: FlexProfile }[];
 }
 
 export function compactPlacements(
@@ -65,10 +67,17 @@ export function compactPlacements(
     const def = resolveComponentDef(comps[i], componentDefs);
     if (!def) continue;
     if (def.flexible) {
-      if (end[i]) occ.flexes.push({ idx: i, def, span: spanLimits(def) });
+      if (end[i]) occ.flexes.push({ idx: i, def, span: spanLimits(def), profile: flexProfile(def) });
     } else {
+      const { body, reach } = rigidGeometry(def, pos[i]!, comps[i].rotation);
+      const rect = coveredHoles(body);
+      const off = (o: FootprintRect): FootprintRect =>
+        ({ minRow: o.minRow - rect.minRow, maxRow: o.maxRow - rect.maxRow, minCol: o.minCol - rect.minCol, maxCol: o.maxCol - rect.maxCol });
       occ.rigids.push({
-        rect: getComponentBounds(def, pos[i]!, comps[i].rotation),
+        rect,
+        bodyOff: off(body),
+        lines: def.clearance ?? 0,
+        ...(reach ? { reachOff: off(reach) } : {}),
         pins: getRotatedPinPositions(def, pos[i]!, comps[i].rotation).map((p) => ({
           row: p.row,
           col: p.col,
@@ -95,17 +104,24 @@ export function compactPlacements(
   interface Snap {
     flexPts: { p1: P; p2: P }[];
     rects: FootprintRect[];
+    bodies: FootprintRect[];
+    reaches: (FootprintRect | undefined)[];
     pins: { id: string; row: number; col: number; net?: string }[];
   }
   const snapshot = (line?: number, isCol?: boolean): Snap => {
     const sh = (p: P) => (line === undefined ? p : shiftPt(p, line, isCol!));
+    const placed = (r: FootprintRect, o: FootprintRect): FootprintRect =>
+      ({ minRow: r.minRow + o.minRow, maxRow: r.maxRow + o.maxRow, minCol: r.minCol + o.minCol, maxCol: r.maxCol + o.maxCol });
+    const rects = occ.rigids.map((r) => {
+      const lo = sh({ row: r.rect.minRow, col: r.rect.minCol });
+      const hi = sh({ row: r.rect.maxRow, col: r.rect.maxCol });
+      return { minRow: lo.row, minCol: lo.col, maxRow: hi.row, maxCol: hi.col };
+    });
     return {
       flexPts: occ.flexes.map((f) => ({ p1: sh(pos[f.idx]!), p2: sh(end[f.idx]!) })),
-      rects: occ.rigids.map((r) => {
-        const lo = sh({ row: r.rect.minRow, col: r.rect.minCol });
-        const hi = sh({ row: r.rect.maxRow, col: r.rect.maxCol });
-        return { minRow: lo.row, minCol: lo.col, maxRow: hi.row, maxCol: hi.col };
-      }),
+      rects,
+      bodies: rects.map((r, ri) => placed(r, occ.rigids[ri].bodyOff)),
+      reaches: rects.map((r, ri) => (occ.rigids[ri].reachOff ? placed(r, occ.rigids[ri].reachOff!) : undefined)),
       pins: [
         ...occ.rigids.flatMap((r, ri) => r.pins.map((p, pi) => ({ id: `p${ri}:${pi}`, ...sh(p), net: p.net }))),
         ...occ.flexes.flatMap((f, fi) => [
@@ -132,15 +148,24 @@ export function compactPlacements(
     const out = new Set<string>();
     for (let i = 0; i < s.flexPts.length; i++) {
       const a = s.flexPts[i];
-      const aClr = clearanceOf(occ.flexes[i].def);
+      const aProf = occ.flexes[i].profile;
       for (let j = i + 1; j < s.flexPts.length; j++) {
         const b = s.flexPts[j];
         if (segmentsIntersect(a.p1, a.p2, b.p1, b.p2)) out.add(`ffx:${i}:${j}`);
-        if (bodiesTooClose(a.p1, a.p2, b.p1, b.p2, Math.max(aClr, clearanceOf(occ.flexes[j].def)))) out.add(`ffc:${i}:${j}`);
+        if (flexBodiesClash(aProf, a.p1, a.p2, occ.flexes[j].profile, b.p1, b.p2)) out.add(`ffc:${i}:${j}`);
       }
-      s.rects.forEach((rect, ri) => {
-        if (bodyIntersectsRect(a.p1, a.p2, rect, aClr)) out.add(`fr:${i}:${ri}`);
+      s.bodies.forEach((body, ri) => {
+        if (flexClashesRect({ ...aProf, lines: Math.max(aProf.lines, occ.rigids[ri].lines) }, a.p1, a.p2, body)) out.add(`fr:${i}:${ri}`);
+        const reach = s.reaches[ri];
+        if (reach && flexClashesRect({ ...aProf, lines: 0 }, a.p1, a.p2, reach)) out.add(`fh:${i}:${ri}`);
       });
+    }
+    for (let i = 0; i < s.bodies.length; i++) {
+      for (let j = i + 1; j < s.bodies.length; j++) {
+        if (bodyRectsClash(s.bodies[i], s.bodies[j], Math.max(occ.rigids[i].lines, occ.rigids[j].lines))) out.add(`rr:${i}:${j}`);
+        const ri = s.reaches[i], rj = s.reaches[j];
+        if ((ri && bodyRectsClash(ri, s.bodies[j])) || (rj && bodyRectsClash(rj, s.bodies[i])) || (ri && rj && bodyRectsClash(ri, rj))) out.add(`rh:${i}:${j}`);
+      }
     }
     const holeOwner = new Map<string, string>();
     for (const p of s.pins) holeOwner.set(holeKey(p.row, p.col), p.id);

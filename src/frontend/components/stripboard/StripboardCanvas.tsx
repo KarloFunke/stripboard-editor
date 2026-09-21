@@ -18,23 +18,33 @@ import {
   LABEL_FONT_SIZE,
   holeCenter,
   nearestHole,
-  nearestCutPosition,
+  nearestCutTarget,
+  boardRect,
   getComponentBounds,
+  getComponentPinPositions,
   getRotatedPinPositions,
   getFlexiblePinPositions,
   getFlexibleBounds,
 } from "./boardLayout";
+import { bodyCuts, sameCut } from "./bodyCuts";
+import { useBoardView } from "@/hooks/useBoardView";
+import { GROUP_PIN, OFF_BOARD_CONNECTIONS, isLead } from "./offBoard";
+import { coveredHoles } from "./flexGeometry";
+import { bodyClashes, rigidBody } from "./partGeometry";
 import {
   getGroupForSegment,
   getGroupForWire,
 } from "./connectivity";
 import { StripSegment } from "./stripSegments";
 import { bodyStyle, bellyPath, dipNotch, usbPort } from "./componentGlyphs";
+import { defaultPackageId, packageOptions } from "./packageBodies";
 import PlacedComponent, { suppressNextCanvasClick } from "./PlacedComponent";
 import CutMark from "./CutMark";
-import WireLine from "./WireLine";
+import WireLine, { WirePart } from "./WireLine";
+import BoardTools from "./BoardTools";
+import { TOOL_STRIP_HOME } from "@/components/canvas/ToolStrip";
 import { computeWireLaneOffsets } from "./wireLanes";
-import { SelectionActionBar, RotateIcon, DeleteIcon, FootprintIcon, LockIcon, UnlockIcon, WandIcon, type CanvasAction } from "@/components/canvas/SelectionActionBar";
+import { SelectionActionBar, RotateIcon, DeleteIcon, FootprintIcon, LockIcon, UnlockIcon, OffBoardIcon, PackageIcon, WandIcon, type CanvasAction } from "@/components/canvas/SelectionActionBar";
 
 export default function StripboardCanvas({
   readOnly = false,
@@ -47,7 +57,7 @@ export default function StripboardCanvas({
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const panZoom = usePanZoom();
+  const panZoom = usePanZoom(1, readOnly ? undefined : TOOL_STRIP_HOME);
   const [containerSize, setContainerSize] = useState({ width: 1000, height: 800 });
 
   useEffect(() => {
@@ -62,43 +72,37 @@ export default function StripboardCanvas({
   }, []);
 
   const board = useProjectStore((s) => s.board);
-  const components = useProjectStore((s) => s.components);
+  // the board's view: an off-board part is its solder pads here
+  const { components } = useBoardView();
+  const setOffBoard = useProjectStore((s) => s.setOffBoard);
+  const setOffBoardPackage = useProjectStore((s) => s.setOffBoardPackage);
+  const allComponents = useProjectStore((s) => s.components);
   const componentDefs = useProjectStore((s) => s.componentDefs);
+  const showOverlaps = useProjectStore((s) => s.showOverlaps);
+  // Hand placements are never refused, but one that cannot be built is shown
+  const clashing = useMemo(
+    () => (showOverlaps ? bodyClashes(components, (c) => resolveComponentDef(c, componentDefs)) : new Set<string>()),
+    [showOverlaps, components, componentDefs]
+  );
   const placeOnBoard = useProjectStore((s) => s.placeOnBoard);
   const placeCut = useProjectStore((s) => s.placeCut);
   const removeCut = useProjectStore((s) => s.removeCut);
   const addWire = useProjectStore((s) => s.addWire);
   const removeWire = useProjectStore((s) => s.removeWire);
-  const wirePlacementMode = useProjectStore((s) => s.wirePlacementMode);
+  const setWireEnds = useProjectStore((s) => s.setWireEnds);
   const wirePlacementFrom = useProjectStore((s) => s.wirePlacementFrom);
   const setWirePlacementFrom = useProjectStore((s) => s.setWirePlacementFrom);
   const cancelWirePlacement = useProjectStore((s) => s.cancelWirePlacement);
-  const startWirePlacement = useProjectStore((s) => s.startWirePlacement);
   const trayDragComponentId = useProjectStore((s) => s.trayDragComponentId);
   const highlightedNetId = useProjectStore((s) => s.highlightedNetId);
   const setFlexibleEndPos = useProjectStore((s) => s.setFlexibleEndPos);
   const insertBoardLine = useProjectStore((s) => s.insertBoardLine);
   const deleteBoardLine = useProjectStore((s) => s.deleteBoardLine);
-  // Right-click on a row/column number: insert a blank line next to it
-  const [lineMenu, setLineMenu] = useState<{ axis: "row" | "col"; index: number; x: number; y: number } | null>(null);
-
-  // Shift held: wires become click-transparent so new wires can start on
-  // the holes underneath instead of deleting what's there. (Alt would place
-  // hole cuts, not start wires.)
-  const [shiftDown, setShiftDown] = useState(false);
-  useEffect(() => {
-    const down = (e: KeyboardEvent) => { if (e.key === "Shift") setShiftDown(true); };
-    const up = (e: KeyboardEvent) => { if (e.key === "Shift") setShiftDown(false); };
-    const clear = () => setShiftDown(false);
-    window.addEventListener("keydown", down);
-    window.addEventListener("keyup", up);
-    window.addEventListener("blur", clear);
-    return () => {
-      window.removeEventListener("keydown", down);
-      window.removeEventListener("keyup", up);
-      window.removeEventListener("blur", clear);
-    };
-  }, []);
+  // Right-click anywhere on the board: insert or delete the row or column there
+  const [lineMenu, setLineMenu] = useState<{ row: number; col: number; x: number; y: number } | null>(null);
+  // Where the right button went down: a press that does not move opens the
+  // menu, one that moves pans.
+  const rightDownRef = useRef<{ x: number; y: number } | null>(null);
 
   const nets = useProjectStore((s) => s.nets);
 
@@ -174,6 +178,8 @@ export default function StripboardCanvas({
     moveIds: string[];
     moveWireIds: string[];
     moveCuts: Cut[];
+    // under the moved parts' bodies and not selected themselves
+    bodyCuts: Cut[];
     anchorStartRow: number;
     anchorStartCol: number;
     startMinRow: number;
@@ -213,6 +219,85 @@ export default function StripboardCanvas({
     [components, componentDefs, board.wires]
   );
 
+  const boardTool = useProjectStore((s) => s.boardTool);
+  const setBoardTool = useProjectStore((s) => s.setBoardTool);
+  const setComponentPackage = useProjectStore((s) => s.setComponentPackage);
+
+  // Where the tool in hand would act, shown before the click
+  const [hover, setHover] = useState<Cut | null>(null);
+  useEffect(() => setHover(null), [boardTool]);
+
+  // Holes with a component lead in them: they take no wire end and no drill
+  const pinHoles = useMemo(() => {
+    const holes = new Set<string>();
+    for (const comp of components) {
+      const def = resolveComponentDef(comp, componentDefs);
+      if (!def) continue;
+      for (const p of getComponentPinPositions(comp, def)) holes.add(`${p.row},${p.col}`);
+    }
+    return holes;
+  }, [components, componentDefs]);
+
+  const wireEndBlocked = useCallback(
+    (hole: { row: number; col: number }) =>
+      pinHoles.has(`${hole.row},${hole.col}`) ||
+      board.cuts.some((c) => c.kind === "hole" && c.row === hole.row && c.col === hole.col),
+    [pinHoles, board.cuts]
+  );
+
+  // A hole is cut or holds something, never both
+  const cutBlocked = useCallback(
+    (cut: Cut) =>
+      cut.kind === "hole" && (
+        pinHoles.has(`${cut.row},${cut.col}`) ||
+        board.wires.some((w) =>
+          (w.from.row === cut.row && w.from.col === cut.col) ||
+          (w.to.row === cut.row && w.to.col === cut.col)
+        )
+      ),
+    [pinHoles, board.wires]
+  );
+
+  // The cuts under these parts' bodies, which travel with them
+  const bodyCutsOf = useCallback(
+    (ids: string[], except: Cut[] = []) => {
+      const out: Cut[] = [];
+      for (const comp of components) {
+        if (!ids.includes(comp.id)) continue;
+        const def = resolveComponentDef(comp, componentDefs);
+        if (!def) continue;
+        for (const cut of bodyCuts(board.cuts, comp, def)) {
+          if (!out.some((c) => sameCut(c, cut)) && !except.some((c) => sameCut(c, cut))) out.push(cut);
+        }
+      }
+      return out;
+    },
+    [components, componentDefs, board.cuts]
+  );
+
+  // A cut being dragged: where it started and where it is now
+  const cutDragRef = useRef<{
+    startX: number;
+    startY: number;
+    didDrag: boolean;
+    grabHole: { row: number; col: number } | null;
+    origin: Cut;
+    at: Cut;
+  } | null>(null);
+
+  const wireDragRef = useRef<{
+    wireId: string;
+    part: WirePart;
+    startX: number;
+    startY: number;
+    didDrag: boolean;
+    grabHole: { row: number; col: number } | null;
+    from: { row: number; col: number };
+    to: { row: number; col: number };
+  } | null>(null);
+  // Cuts under the body of the single part being dragged, at their current place
+  const carriedCutsRef = useRef<Cut[]>([]);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -229,15 +314,18 @@ export default function StripboardCanvas({
       const isArrowKey = e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "ArrowLeft" || e.key === "ArrowRight";
       if (e.repeat && !isArrowKey) return;
 
+      // Escape steps out: the pending wire, then the selection, then the tool
       if (e.key === "Escape") {
         if (wirePlacementFrom) {
           cancelWirePlacement();
           setWireMousePos(null);
-        }
-        if (selectedIds.length > 0) {
+        } else if (selectedId || selectedIds.length > 0 || selectedWireIds.length > 0 || selectedCuts.length > 0) {
+          setSelectedId(null);
           setSelectedIds([]);
           setSelectedWireIds([]);
           setSelectedCuts([]);
+        } else {
+          setBoardTool("select");
         }
         return;
       }
@@ -263,7 +351,7 @@ export default function StripboardCanvas({
         // One snapshot per held-key gesture: snapshot on the initial press,
         // keep moving on auto-repeat. One Ctrl+Z reverts the whole nudge.
         if (!e.repeat) pushSnapshot();
-        moveComponentsOnBoard(moveIds, dRow, dCol, selectedWireIds, selectedCuts);
+        moveComponentsOnBoard(moveIds, dRow, dCol, selectedWireIds, [...selectedCuts, ...bodyCutsOf(moveIds, selectedCuts)]);
         if (selectedCuts.length > 0) {
           setSelectedCuts((prev) =>
             prev.map((c) => ({ ...c, row: c.row + dRow, col: c.col + dCol }))
@@ -294,6 +382,15 @@ export default function StripboardCanvas({
         rotateComponent(selectedId);
       }
 
+      // W and C take up the wire and the cut tool, or put them down again.
+      if (!e.ctrlKey && !e.metaKey) {
+        const tool = e.key === "w" || e.key === "W" ? "wire" : e.key === "c" || e.key === "C" ? "cut" : null;
+        if (tool) {
+          setWireMousePos(null);
+          setBoardTool(boardTool === tool ? "select" : tool);
+        }
+      }
+
       // L locks/unlocks the whole selection (single or multi). Locks when any
       // selected part is still unlocked, otherwise unlocks the lot.
       if (e.key === "l" || e.key === "L") {
@@ -307,7 +404,7 @@ export default function StripboardCanvas({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [wirePlacementFrom, cancelWirePlacement, selectedId, selectedIds, selectedWireIds, selectedCuts, rotateComponent, removeFromBoard, removeWire, removeCut, transact, moveComponentsOnBoard, pushSnapshot, computeBoardSelectionBounds, board.rows, board.cols, setSelectedId, setSelectedIds, components, setBoardLock]);
+  }, [wirePlacementFrom, cancelWirePlacement, selectedId, selectedIds, selectedWireIds, selectedCuts, rotateComponent, removeFromBoard, removeWire, removeCut, transact, moveComponentsOnBoard, pushSnapshot, computeBoardSelectionBounds, board.rows, board.cols, setSelectedId, setSelectedIds, components, setBoardLock, boardTool, setBoardTool, bodyCutsOf]);
 
 
   const getSVGPoint = useCallback((e: React.MouseEvent | React.DragEvent) => {
@@ -363,7 +460,9 @@ export default function StripboardCanvas({
           if (pins.some((p) => p.row === row && p.col === col)) return comp.id;
           continue;
         }
-        const bounds = getComponentBounds(def, comp.boardPos, comp.rotation);
+        // Every hole the package lies over, which for an overhanging body is
+        // more than the footprint's own cells.
+        const bounds = coveredHoles(rigidBody(def, comp.boardPos, comp.rotation, comp));
         if (row >= bounds.minRow && row <= bounds.maxRow && col >= bounds.minCol && col <= bounds.maxCol) {
           return comp.id;
         }
@@ -436,7 +535,6 @@ export default function StripboardCanvas({
     (componentId: string, e: React.MouseEvent) => {
       if (readOnly) return;
       if (e.button === 2) return; // right-click is pan
-      if (wirePlacementMode || wirePlacementFrom) return;
       e.stopPropagation();
       e.preventDefault();
       // Defer the snapshot until the drag actually moves the component (see
@@ -447,7 +545,14 @@ export default function StripboardCanvas({
       // selection together; otherwise it's a single-component drag (and selects it).
       const selIds = selectedIds.length > 0 ? selectedIds : selectedId ? [selectedId] : [];
       const isMulti = selIds.length > 1 && selIds.includes(componentId);
-      if (!isMulti) setSelectedId(componentId);
+      // With a tool up a press on a part can still drag it, but a plain click
+      // is the tool's, so nothing gets selected.
+      if (!isMulti && boardTool === "select") {
+        setSelectedId(componentId);
+        setSelectedWireIds([]);
+        setSelectedCuts([]);
+      }
+      carriedCutsRef.current = isMulti ? [] : bodyCutsOf([componentId]);
 
       // Compute offset: where within the component the user clicked
       const comp = components.find((c) => c.id === componentId);
@@ -462,6 +567,7 @@ export default function StripboardCanvas({
           moveIds: selIds,
           moveWireIds: selectedWireIds,
           moveCuts: selectedCuts,
+          bodyCuts: bodyCutsOf(selIds, selectedCuts),
           anchorStartRow: comp.boardPos.row,
           anchorStartCol: comp.boardPos.col,
           startMinRow: b.minRow,
@@ -483,7 +589,54 @@ export default function StripboardCanvas({
         multi: isMulti,
       });
     },
-    [wirePlacementMode, wirePlacementFrom, components, board.rows, board.cols, getSVGPoint, selectedId, selectedIds, selectedWireIds, selectedCuts, setSelectedId, computeBoardSelectionBounds]
+    [boardTool, bodyCutsOf, components, board.rows, board.cols, getSVGPoint, selectedId, selectedIds, selectedWireIds, selectedCuts, setSelectedId, computeBoardSelectionBounds]
+  );
+
+  // Pressed on a wire: the run between its ends moves the wire, an end moves
+  // alone. Selecting is for the select tool; with the cut tool up a plain
+  // click goes on to the strip underneath.
+  const handleWireGrab = useCallback(
+    (wireId: string, part: WirePart, e: React.MouseEvent) => {
+      if (readOnly || e.button !== 0) return;
+      const wire = board.wires.find((w) => w.id === wireId);
+      if (!wire) return;
+      e.stopPropagation();
+      e.preventDefault();
+      pendingSnapshotRef.current = true;
+      if (boardTool === "select") {
+        clearSelection();
+        setSelectedCuts([]);
+        setSelectedWireIds([wireId]);
+      }
+      const pt = getSVGPoint(e);
+      wireDragRef.current = {
+        wireId, part,
+        startX: e.clientX, startY: e.clientY, didDrag: false,
+        grabHole: nearestHole(pt.x, pt.y, board.rows, board.cols),
+        from: wire.from, to: wire.to,
+      };
+    },
+    [readOnly, board.wires, board.rows, board.cols, boardTool, clearSelection, getSVGPoint]
+  );
+
+  // Pressed on a cut with the select tool: selects it, and a drag moves it
+  const handleCutGrab = useCallback(
+    (cut: Cut, e: React.MouseEvent) => {
+      if (readOnly || e.button !== 0) return;
+      e.stopPropagation();
+      e.preventDefault();
+      pendingSnapshotRef.current = true;
+      clearSelection();
+      setSelectedWireIds([]);
+      setSelectedCuts([cut]);
+      const pt = getSVGPoint(e);
+      cutDragRef.current = {
+        startX: e.clientX, startY: e.clientY, didDrag: false,
+        grabHole: nearestHole(pt.x, pt.y, board.rows, board.cols),
+        origin: cut, at: cut,
+      };
+    },
+    [readOnly, board.rows, board.cols, clearSelection, getSVGPoint]
   );
 
   // Start selection rectangle on mouseDown on empty SVG area
@@ -491,7 +644,7 @@ export default function StripboardCanvas({
     (e: React.MouseEvent) => {
       if (readOnly) return;
       if (e.button === 2) return; // right-click is pan
-      if (wirePlacementFrom || wirePlacementMode) return;
+      if (wirePlacementFrom) return;
       // Only start selection rect if clicking directly on SVG background elements
       const target = e.target as Element;
       const isBackground = target.tagName === "svg" ||
@@ -499,20 +652,11 @@ export default function StripboardCanvas({
         target.tagName === "circle" && target.getAttribute("stroke") === "var(--hole-stroke)"; // hole
       if (!isBackground) return;
 
-      const pt = getSVGPoint(e);
-      // Don't start rect if near a hole (that's for wire drawing)
-      const hole = nearestHole(pt.x, pt.y, board.rows, board.cols);
-      if (hole) {
-        const holePos = holeCenter(hole.row, hole.col);
-        const dist = Math.sqrt((pt.x - holePos.x) ** 2 + (pt.y - holePos.y) ** 2);
-        if (dist <= HOLE_RADIUS + 2) return;
-      }
-
-      startSelectionRect(pt);
+      startSelectionRect(getSVGPoint(e));
       setSelectedWireIds([]);
       setSelectedCuts([]);
     },
-    [getSVGPoint, board.rows, board.cols, wirePlacementFrom, wirePlacementMode]
+    [getSVGPoint, wirePlacementFrom]
   );
 
   const handleMouseMove = useCallback(
@@ -557,6 +701,72 @@ export default function StripboardCanvas({
         return;
       }
 
+      const wireDrag = wireDragRef.current;
+      if (wireDrag) {
+        if (!wireDrag.didDrag) {
+          if (!checkDragThreshold(e.clientX, e.clientY, { ...wireDrag, componentId: wireDrag.wireId })) return;
+          wireDrag.didDrag = true;
+        }
+        const pt = getSVGPoint(e);
+        const hole = nearestHole(pt.x, pt.y, board.rows, board.cols);
+        const wire = board.wires.find((w) => w.id === wireDrag.wireId);
+        if (!hole || !wire) return;
+        let { from, to } = wire;
+        if (wireDrag.part === "whole") {
+          if (!wireDrag.grabHole) return;
+          const { from: f, to: t } = wireDrag;
+          const clamp = (d: number, a: number, b: number, size: number) =>
+            Math.max(-Math.min(a, b), Math.min(size - 1 - Math.max(a, b), d));
+          const dRow = clamp(hole.row - wireDrag.grabHole.row, f.row, t.row, board.rows);
+          const dCol = clamp(hole.col - wireDrag.grabHole.col, f.col, t.col, board.cols);
+          from = { row: f.row + dRow, col: f.col + dCol };
+          to = { row: t.row + dRow, col: t.col + dCol };
+        } else {
+          const other = wireDrag.part === "from" ? wire.to : wire.from;
+          if (wireEndBlocked(hole) || (hole.row === other.row && hole.col === other.col)) return;
+          if (wireDrag.part === "from") from = hole; else to = hole;
+        }
+        if (from.row !== wire.from.row || from.col !== wire.from.col || to.row !== wire.to.row || to.col !== wire.to.col) {
+          commitSnapshotOnce();
+          setWireEnds(wire.id, from, to);
+        }
+        return;
+      }
+
+      const cutDrag = cutDragRef.current;
+      if (cutDrag) {
+        if (!cutDrag.didDrag) {
+          if (!checkDragThreshold(e.clientX, e.clientY, { ...cutDrag, componentId: "" })) return;
+          cutDrag.didDrag = true;
+        }
+        const pt = getSVGPoint(e);
+        const hole = nearestHole(pt.x, pt.y, board.rows, board.cols);
+        if (!hole || !cutDrag.grabHole) return;
+        const { origin, at } = cutDrag;
+        const lastCol = board.cols - (origin.kind === "hole" ? 1 : 2);
+        const target: Cut = {
+          ...origin,
+          row: Math.max(0, Math.min(board.rows - 1, origin.row + hole.row - cutDrag.grabHole.row)),
+          col: Math.max(0, Math.min(lastCol, origin.col + hole.col - cutDrag.grabHole.col)),
+        };
+        // never onto another cut, nor a drill onto a hole that holds something
+        if (sameCut(target, at) || board.cuts.some((c) => sameCut(c, target)) || cutBlocked(target)) return;
+        commitSnapshotOnce();
+        moveComponentsOnBoard([], target.row - at.row, target.col - at.col, [], [at]);
+        cutDrag.at = target;
+        setSelectedCuts([target]);
+        return;
+      }
+
+      if (boardTool !== "select" && !readOnly) {
+        const pt = getSVGPoint(e);
+        const at = nearestHole(pt.x, pt.y, board.rows, board.cols);
+        const next: Cut | null = boardTool === "cut"
+          ? nearestCutTarget(pt.x, pt.y, board.rows, board.cols)
+          : at && { ...at, kind: "hole" };
+        setHover((prev) => (prev && next && sameCut(prev, next) ? prev : next));
+      }
+
       // Wire preview line
       if (wirePlacementFrom) {
         setWireMousePos(getSVGPoint(e));
@@ -595,7 +805,8 @@ export default function StripboardCanvas({
           const dCol = clampedDCol - plan.appliedDCol;
           if (dRow !== 0 || dCol !== 0) {
             commitSnapshotOnce();
-            moveComponentsOnBoard(plan.moveIds, dRow, dCol, plan.moveWireIds, plan.moveCuts);
+            moveComponentsOnBoard(plan.moveIds, dRow, dCol, plan.moveWireIds, [...plan.moveCuts, ...plan.bodyCuts]);
+            plan.bodyCuts = plan.bodyCuts.map((c) => ({ ...c, row: c.row + dRow, col: c.col + dCol }));
             if (plan.moveCuts.length > 0) {
               const shifted = plan.moveCuts.map((c) => ({ ...c, row: c.row + dRow, col: c.col + dCol }));
               plan.moveCuts = shifted;
@@ -615,30 +826,38 @@ export default function StripboardCanvas({
         const comp = components.find((c) => c.id === dragging.componentId);
         if (comp?.boardPos && (previewHole.row !== comp.boardPos.row || previewHole.col !== comp.boardPos.col)) {
           commitSnapshotOnce();
-          const dDef = resolveComponentDef(comp, componentDefs);
-          if (dDef?.flexible && comp.flexibleEndPos) {
-            const dr = previewHole.row - comp.boardPos.row;
-            const dc = previewHole.col - comp.boardPos.col;
-            setFlexibleEndPos(dragging.componentId, {
-              row: comp.flexibleEndPos.row + dr,
-              col: comp.flexibleEndPos.col + dc,
-            });
-          }
-          placeOnBoard(dragging.componentId, previewHole);
+          const dr = previewHole.row - comp.boardPos.row;
+          const dc = previewHole.col - comp.boardPos.col;
+          moveComponentsOnBoard([dragging.componentId], dr, dc, [], carriedCutsRef.current);
+          carriedCutsRef.current = carriedCutsRef.current.map((c) => ({ ...c, row: c.row + dr, col: c.col + dc }));
         }
       }
     },
-    [dragging, selectionRect, getSVGPoint, board.rows, board.cols, wirePlacementFrom, updateSelectionRect, checkDragThreshold, flexPinDrag, components, componentDefs, placeOnBoard, setFlexibleEndPos, commitSnapshotOnce, moveComponentsOnBoard]
+    [dragging, selectionRect, getSVGPoint, board.rows, board.cols, wirePlacementFrom, updateSelectionRect, checkDragThreshold, flexPinDrag, components, componentDefs, placeOnBoard, setFlexibleEndPos, commitSnapshotOnce, moveComponentsOnBoard, boardTool, readOnly, board.wires, board.cuts, wireEndBlocked, cutBlocked, setWireEnds]
   );
 
   const handleMouseUp = useCallback(() => {
     panZoom.handlePanEnd();
     // Gesture over: disarm a pending snapshot that was never triggered
     // (e.g. a click that selected without moving anything).
+    const moved = !pendingSnapshotRef.current;
     pendingSnapshotRef.current = false;
+
+    if (wireDragRef.current) {
+      if (wireDragRef.current.didDrag) markDragComplete();
+      wireDragRef.current = null;
+      return;
+    }
+    if (cutDragRef.current) {
+      if (cutDragRef.current.didDrag) markDragComplete();
+      cutDragRef.current = null;
+      return;
+    }
 
     // End flexible pin drag
     if (flexPinDrag) {
+      // with a tool up the click that follows would otherwise act where the leg landed
+      if (moved && boardTool !== "select") markDragComplete();
       setFlexPinDrag(null);
       return;
     }
@@ -693,7 +912,8 @@ export default function StripboardCanvas({
     if (rectHandled) return;
 
     if (dragging) {
-      markDragComplete();
+      // A press on a part that went nowhere: with a tool up, the click is the tool's
+      if (dragging.didDrag || boardTool === "select") markDragComplete();
       // Position already committed live during drag — no need to placeOnBoard here.
       // A real move can land a 2-pin part on the right nets but swapped: fix it.
       if (dragging.didDrag) {
@@ -706,10 +926,10 @@ export default function StripboardCanvas({
     setDragging(null);
     setDragPreviewPos(null);
     multiDragRef.current = null;
-  }, [dragging, dragPreviewPos, components, componentDefs, board.wires, board.cuts, isValidPlacement, placeOnBoard, finalizeSelectionRect, markDragComplete, autoAlignPolarity]);
+  }, [dragging, dragPreviewPos, components, componentDefs, board.wires, board.cuts, isValidPlacement, placeOnBoard, finalizeSelectionRect, markDragComplete, autoAlignPolarity, flexPinDrag, boardTool]);
 
   // ── Canvas click ────────────────────────────────────────
-  // Priority: skip if just dragged → wire drawing → cut toggle → deselect
+  // A click means what the tool in hand says: a cut, a wire end, or a selection.
 
   const handleCanvasClick = useCallback(
     (e: React.MouseEvent) => {
@@ -719,79 +939,44 @@ export default function StripboardCanvas({
 
       const pt = getSVGPoint(e);
 
-      // Resolve whether the click landed on a hole, and what already occupies it.
-      // A hole is exclusively a cut OR a wire endpoint, never both.
-      const hole = nearestHole(pt.x, pt.y, board.rows, board.cols);
-      let onHole = false;
-      let holeCut: Cut | undefined;
-      let wireHere = false;
-      if (hole) {
-        const holePos = holeCenter(hole.row, hole.col);
-        const dist = Math.sqrt((pt.x - holePos.x) ** 2 + (pt.y - holePos.y) ** 2);
-        onHole = dist <= HOLE_RADIUS + 2;
-        if (onHole) {
-          holeCut = board.cuts.find(
-            (c) => c.kind === "hole" && c.row === hole.row && c.col === hole.col
-          );
-          wireHere = board.wires.some(
-            (w) =>
-              (w.from.row === hole.row && w.from.col === hole.col) ||
-              (w.to.row === hole.row && w.to.col === hole.col)
-          );
-        }
+      // Cut tool: the click lands on the nearest cut position, hole or gap,
+      // with no dead zone between the two, and through whatever lies on top.
+      if (boardTool === "cut") {
+        const target = nearestCutTarget(pt.x, pt.y, board.rows, board.cols);
+        if (!target) return;
+        const existing = board.cuts.find((c) => sameCut(c, target));
+        if (existing) removeCut(existing);
+        else if (!cutBlocked(target)) placeCut(target);
+        return;
       }
 
-      // Wire drawing: complete a pending wire, but never onto a cut hole.
-      if (wirePlacementFrom) {
-        if (hole && !holeCut && (hole.row !== wirePlacementFrom.row || hole.col !== wirePlacementFrom.col)) {
+      const hole = nearestHole(pt.x, pt.y, board.rows, board.cols);
+
+      // Wire tool: every click is a wire end. Wires already in the hole do
+      // not matter, so a chain can hop on from where the last wire ended.
+      if (boardTool === "wire") {
+        if (!hole || wireEndBlocked(hole)) return;
+        if (!wirePlacementFrom) {
+          setWirePlacementFrom(hole);
+        } else if (hole.row === wirePlacementFrom.row && hole.col === wirePlacementFrom.col) {
+          cancelWirePlacement();
+        } else {
           addWire(wirePlacementFrom, hole);
         }
         setWireMousePos(null);
         return;
       }
 
-      // Alt+click on a hole toggles a hole-cut (isolates that hole). Blocked
-      // where a wire already lands, since a hole is cut-or-wire, not both.
-      if (e.altKey && onHole && hole) {
-        if (holeCut) {
-          removeCut(holeCut);
-        } else if (!wireHere) {
-          placeCut({ row: hole.row, col: hole.col, kind: "hole" });
-        }
-        return;
-      }
-
-      // Plain click on a hole.
-      if (onHole && hole) {
-        // A cut hole can't hold a wire, so a plain click just removes the cut
-        // (no Alt needed).
-        if (holeCut) {
-          removeCut(holeCut);
-          return;
-        }
-        // If occupied by a component, select it instead
-        const compId = findComponentAtHole(hole.row, hole.col);
+      // Select tool: a hole under a part picks the part, anything else lets go.
+      if (hole) {
+        const holePos = holeCenter(hole.row, hole.col);
+        const compId = Math.sqrt((pt.x - holePos.x) ** 2 + (pt.y - holePos.y) ** 2) <= HOLE_RADIUS + 2
+          ? findComponentAtHole(hole.row, hole.col)
+          : null;
         if (compId) {
           setSelectedId(compId);
           return;
         }
-        startWirePlacement();
-        setWirePlacementFrom(hole);
-        return;
-      }
-
-      // Cut toggle — only between holes (tighter hitbox)
-      const cutPos = nearestCutPosition(pt.x, pt.y, board.rows, board.cols);
-      if (cutPos) {
-        const existing = board.cuts.find(
-          (c) => c.kind !== "hole" && c.row === cutPos.row && c.col === cutPos.col
-        );
-        if (existing) {
-          removeCut(existing);
-        } else {
-          placeCut(cutPos);
-        }
-        return;
       }
 
       clearSelection();
@@ -799,10 +984,32 @@ export default function StripboardCanvas({
       setSelectedCuts([]);
     },
     [
-      getSVGPoint, board, placeCut, removeCut,
-      wirePlacementFrom, setWirePlacementFrom, addWire, startWirePlacement,
+      getSVGPoint, board, placeCut, removeCut, boardTool, cutBlocked, wireEndBlocked,
+      wirePlacementFrom, setWirePlacementFrom, cancelWirePlacement, addWire,
       shouldSuppressClick, clearSelection, setSelectedId, findComponentAtHole,
     ]
+  );
+
+  // A right-click that did not pan: offer the row and column under the pointer.
+  const openLineMenu = useCallback(
+    (e: React.MouseEvent) => {
+      const down = rightDownRef.current;
+      rightDownRef.current = null;
+      if (readOnly || !down || Math.abs(e.clientX - down.x) + Math.abs(e.clientY - down.y) > 4) return;
+      const pt = getSVGPoint(e);
+      const r = boardRect(board.rows, board.cols);
+      const reach = HOLE_SPACING * 1.4; // takes in the row and column numbers
+      if (pt.x < r.x - reach || pt.x > r.x + r.width + reach || pt.y < r.y - reach || pt.y > r.y + r.height + reach) return;
+      const origin = holeCenter(0, 0);
+      const snap = (v: number, size: number) => Math.max(0, Math.min(size - 1, Math.round(v / HOLE_SPACING)));
+      setLineMenu({
+        row: snap(pt.y - origin.y, board.rows),
+        col: snap(pt.x - origin.x, board.cols),
+        x: e.clientX,
+        y: e.clientY,
+      });
+    },
+    [readOnly, getSVGPoint, board.rows, board.cols]
   );
 
   const getDisplayPos = (comp: typeof components[0]) => {
@@ -812,18 +1019,24 @@ export default function StripboardCanvas({
     return comp.boardPos;
   };
 
+  const hoverBlocked = !!hover && (boardTool === "cut"
+    ? cutBlocked(hover) && !board.cuts.some((c) => sameCut(c, hover))
+    : wireEndBlocked(hover));
   const cursorStyle = panZoom.isPanning.current
     ? "grabbing"
-    : wirePlacementFrom
-    ? "crosshair"
     : dragging?.didDrag
     ? "grabbing"
-    : "default";
+    : boardTool === "select"
+    ? "default"
+    : hoverBlocked
+    ? "not-allowed"
+    : "crosshair";
 
   return (
     <div className="flex flex-col h-full">
       <div ref={containerRef} className="flex-1 overflow-hidden relative">
         <svg
+          data-testid="stripboard-canvas"
           ref={(el) => {
             svgRef.current = el;
             panZoom.setTouchTarget(el);
@@ -834,15 +1047,23 @@ export default function StripboardCanvas({
           className="font-sans bg-white dark:bg-[#1e1e1e]"
           style={{ cursor: cursorStyle }}
           onMouseDown={(e) => {
+            if (e.button === 2) rightDownRef.current = { x: e.clientX, y: e.clientY };
             panZoom.handlePanStart(e);
             handleSvgMouseDown(e);
           }}
           onClick={handleCanvasClick}
           onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
+          onMouseUp={(e) => {
+            if (e.button === 2) openLineMenu(e);
+            handleMouseUp();
+          }}
           onMouseLeave={() => {
             panZoom.handlePanEnd();
             pendingSnapshotRef.current = false;
+            wireDragRef.current = null;
+            cutDragRef.current = null;
+            rightDownRef.current = null;
+            setHover(null);
             setDragging(null);
             setDragPreviewPos(null);
             multiDragRef.current = null;
@@ -855,6 +1076,13 @@ export default function StripboardCanvas({
           onDrop={handleDrop}
           onDragLeave={handleDragLeave}
         >
+          {/* The laminate under the copper */}
+          {(() => {
+            const r = boardRect(board.rows, board.cols);
+            return <rect x={r.x} y={r.y} width={r.width} height={r.height} rx={4}
+              fill="var(--board-fill)" stroke="var(--board-edge)" strokeWidth={1} pointerEvents="none" />;
+          })()}
+
           {/* Strip segments */}
           {segments.map((seg, i) => {
             const startCenter = holeCenter(seg.row, seg.startCol);
@@ -907,7 +1135,7 @@ export default function StripboardCanvas({
                   width={rightX - leftX}
                   height={STRIP_HEIGHT}
                   fill={color}
-                  opacity={isHighlighted ? 0.9 : group?.hasConflict ? 0.8 : hasNets ? 0.5 : 0.4}
+                  opacity={isHighlighted ? 0.9 : group?.hasConflict ? 0.8 : hasNets ? 0.62 : 0.55}
                   rx={1}
                 />
               </g>
@@ -925,12 +1153,6 @@ export default function StripboardCanvas({
                 textAnchor="end"
                 fontSize={LABEL_FONT_SIZE}
                 fill="var(--label-text)"
-                style={readOnly ? undefined : { cursor: "context-menu" }}
-                onContextMenu={readOnly ? undefined : (e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setLineMenu({ axis: "row", index: row, x: e.clientX, y: e.clientY });
-                }}
               >
                 {row + 1}
               </text>
@@ -948,12 +1170,6 @@ export default function StripboardCanvas({
                 textAnchor="middle"
                 fontSize={LABEL_FONT_SIZE}
                 fill="var(--label-text)"
-                style={readOnly ? undefined : { cursor: "context-menu" }}
-                onContextMenu={readOnly ? undefined : (e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setLineMenu({ axis: "col", index: col, x: e.clientX, y: e.clientY });
-                }}
               >
                 {col + 1}
               </text>
@@ -978,7 +1194,7 @@ export default function StripboardCanvas({
             })
           )}
 
-          {/* Placed components */}
+          <g>
           {components
             .filter((c) => c.boardPos !== null)
             .map((comp) => {
@@ -1002,6 +1218,7 @@ export default function StripboardCanvas({
                   key={comp.id}
                   component={renderComp}
                   isSelected={comp.id === selectedId || selectedIds.includes(comp.id)}
+                  clashing={clashing.has(comp.id)}
                   onMouseDown={(e) => handleComponentMouseDown(comp.id, e)}
                   readOnly={readOnly}
                   onPinDragStart={!readOnly ? (pinId, e) => {
@@ -1039,8 +1256,11 @@ export default function StripboardCanvas({
                   color={color}
                   isConflict={isConflict}
                   offset={wireLaneOffset.get(wire.id)}
-                  clickThrough={shiftDown}
-                  onClick={() => { if (!readOnly && !wirePlacementFrom) removeWire(wire.id); }}
+                  // the wire tool looks past wires, to the holes they sit in
+                  onGrab={readOnly || boardTool === "wire" ? undefined : (part, e) => handleWireGrab(wire.id, part, e)}
+                  // selecting is settled on the press; with the cut tool up the click goes on to the strip
+                  onClick={boardTool === "select" ? (e) => e.stopPropagation() : undefined}
+                  quiet={boardTool !== "select"}
                 />
               </g>
             );
@@ -1072,6 +1292,8 @@ export default function StripboardCanvas({
             />
           )}
 
+          </g>
+
           {/* Cut marks */}
           {board.cuts.map((cut, i) => {
             const isSelected = selectedCuts.some(
@@ -1092,10 +1314,52 @@ export default function StripboardCanvas({
                     pointerEvents="none"
                   />
                 )}
-                <CutMark cut={cut} />
+                <CutMark cut={cut} large={boardTool === "cut"} />
+                {/* the select tool picks a cut up; the cut tool clicks through to take it away */}
+                {!readOnly && boardTool === "select" && (
+                  <circle
+                    cx={cutCx}
+                    cy={holeCenter(cut.row, cut.col).y}
+                    r={8}
+                    fill="transparent"
+                    style={{ cursor: "move" }}
+                    onMouseDown={(e) => handleCutGrab(cut, e)}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                )}
               </g>
             );
           })}
+
+          {/* What a click would do with the tool in hand */}
+          {hover && !hoverBlocked && boardTool === "cut" && (
+            board.cuts.some((c) => sameCut(c, hover)) ? (
+              <circle
+                cx={holeCenter(hover.row, hover.col).x + (hover.kind === "hole" ? 0 : HOLE_SPACING / 2)}
+                cy={holeCenter(hover.row, hover.col).y}
+                r={11}
+                fill="none"
+                stroke="var(--cut-stroke)"
+                strokeWidth={1.5}
+                strokeDasharray="3 3"
+                pointerEvents="none"
+              />
+            ) : (
+              <g opacity={0.4} pointerEvents="none">
+                <CutMark cut={hover} large />
+              </g>
+            )
+          )}
+          {hover && !hoverBlocked && boardTool === "wire" && (
+            <circle
+              cx={holeCenter(hover.row, hover.col).x}
+              cy={holeCenter(hover.row, hover.col).y}
+              r={5}
+              fill="var(--selection-stroke)"
+              opacity={0.4}
+              pointerEvents="none"
+            />
+          )}
 
           {/* Ghost preview for tray drag — render as component outline */}
           {trayGhost && (() => {
@@ -1193,7 +1457,77 @@ export default function StripboardCanvas({
           const def = resolveComponentDef(comp, componentDefs);
           const isFlexible = def?.flexible ?? false;
           const actions: CanvasAction[] = [];
-          if (!isFlexible && onEditFootprint) {
+          // A solder pad stands for one pin of an off-board part: it has no
+          // package, footprint or rotation of its own, only a way back.
+          const pad = isLead(comp) ? comp : null;
+          const baseDef = componentDefs.find((d) => d.id === comp.defId);
+          const options = baseDef && !pad ? packageOptions(baseDef) : [];
+          if (pad) {
+            // what this part's wires arrive at: loose pads, or one connector
+            const parent = allComponents.find((c) => c.id === pad.leadOf.componentId);
+            const current = parent?.offBoardPackage ?? "wire";
+            const offBoardCount = allComponents.filter((c) => c.offBoard && !c.boardExcluded).length;
+            actions.push({
+              key: "connection",
+              label: "Connector",
+              title: `What this off-board part's wires arrive at (now: ${OFF_BOARD_CONNECTIONS.find((o) => o.id === current)?.name ?? ""})`,
+              icon: PackageIcon,
+              onClick: () => {},
+              menu: [
+                ...OFF_BOARD_CONNECTIONS.map((o) => ({
+                  key: o.id,
+                  label: o.name,
+                  checked: o.id === current,
+                  title: "Changes the shape, so it goes back to the unplaced list",
+                  onClick: () => {
+                    setOffBoardPackage(pad.leadOf.componentId, o.id, "one");
+                    clearSelection();
+                  },
+                })),
+                ...(offBoardCount > 1 ? [{
+                  key: "all",
+                  label: `Apply to all ${offBoardCount} off-board parts`,
+                  separated: true,
+                  onClick: () => {
+                    setOffBoardPackage(pad.leadOf.componentId, current, "all");
+                    clearSelection();
+                  },
+                }] : []),
+              ],
+            });
+          }
+          if (baseDef && options.length > 1) {
+            const current = (comp.package && options.some((o) => o.id === comp.package))
+              ? comp.package
+              : defaultPackageId(baseDef, comp.value);
+            const sameType = components.filter((c) => c.defId === comp.defId).length;
+            const currentName = options.find((o) => o.id === current)?.name ?? "";
+            actions.push({
+              key: "package",
+              label: "Package",
+              title: `Which real part this is drawn as (now: ${currentName})`,
+              icon: PackageIcon,
+              onClick: () => {},
+              menu: [
+                ...options.map((o) => ({
+                  key: o.id,
+                  label: o.movesPins ? `${o.name} (moves pins)` : o.name,
+                  checked: o.id === current,
+                  title: o.movesPins
+                    ? "Changes the footprint: the part stays with its first pin where it is, or goes back to the unplaced list if it no longer fits"
+                    : undefined,
+                  onClick: () => setComponentPackage(selectedId, o.id, "one"),
+                })),
+                ...(sameType > 1 && current ? [{
+                  key: "all",
+                  label: `Apply to all ${sameType} ${baseDef.name.toLowerCase()}s`,
+                  separated: true,
+                  onClick: () => setComponentPackage(selectedId, current, "type"),
+                }] : []),
+              ],
+            });
+          }
+          if (!isFlexible && onEditFootprint && !pad) {
             actions.push({
               key: "footprint",
               label: "Edit Footprint",
@@ -1202,14 +1536,37 @@ export default function StripboardCanvas({
               onClick: () => onEditFootprint(selectedId),
             });
           }
-          actions.push({
-            key: "rotate",
-            label: "Rotate",
-            title: "Rotate selected component 90°",
-            shortcut: "R",
-            icon: RotateIcon,
-            onClick: () => rotateComponent(selectedId),
-          });
+          if (!pad || pad.leadOf.pinId === GROUP_PIN) {
+            actions.push({
+              key: "rotate",
+              label: "Rotate",
+              title: "Rotate selected component 90°",
+              shortcut: "R",
+              icon: RotateIcon,
+              onClick: () => rotateComponent(selectedId),
+            });
+          }
+          actions.push(pad
+            ? {
+                key: "onboard",
+                label: "Mount on board",
+                title: "Put the part itself back on the board; its solder pads go away",
+                icon: OffBoardIcon,
+                onClick: () => {
+                  setOffBoard(pad.leadOf.componentId, false);
+                  clearSelection();
+                },
+              }
+            : {
+                key: "offboard",
+                label: "Mount off board",
+                title: "The part is mounted off the board and wired to it: each wired pin becomes a solder pad you place",
+                icon: OffBoardIcon,
+                onClick: () => {
+                  setOffBoard(selectedId, true);
+                  clearSelection();
+                },
+              });
           actions.push({
             key: "lock",
             label: comp.locked ? "Unlock" : "Lock",
@@ -1258,6 +1615,27 @@ export default function StripboardCanvas({
             icon: allLocked ? UnlockIcon : LockIcon,
             onClick: () => setBoardLock(selectedIds, !allLocked),
           });
+          {
+            // pads go back to their parts, anything else goes off the board
+            const picked = components.filter((c) => selectedIds.includes(c.id));
+            const parents = [...new Set(picked.filter(isLead).map((c) => c.leadOf.componentId))];
+            const real = picked.filter((c) => !isLead(c));
+            const back = real.length === 0 && parents.length > 0;
+            if (back || real.length > 0) {
+              actions.push({
+                key: "offboard",
+                label: back ? `Mount ${parents.length} on board` : `Mount ${real.length} off board`,
+                title: back
+                  ? "Put these parts themselves back on the board; their solder pads go away"
+                  : "These parts are mounted off the board and wired to it: each wired pin becomes a solder pad you place",
+                icon: OffBoardIcon,
+                onClick: () => {
+                  transact(() => (back ? parents.forEach((id) => setOffBoard(id, false)) : real.forEach((c) => setOffBoard(c.id, true))));
+                  clearSelection();
+                },
+              });
+            }
+          }
           actions.push({
             key: "delete",
             label: `Delete ${selectedIds.length}`,
@@ -1275,7 +1653,38 @@ export default function StripboardCanvas({
           return <SelectionActionBar actions={actions} />;
         })()}
 
-        {/* Insert-line context menu (right-click on a row/column number) */}
+        {/* Selected link wires and cuts */}
+        {!readOnly && !selectedId && selectedIds.length === 0 && selectedWireIds.length + selectedCuts.length > 0 && (() => {
+          const w = selectedWireIds.length;
+          const c = selectedCuts.length;
+          const label = w && c ? `Delete ${w + c} items`
+            : w ? (w > 1 ? `Delete ${w} wires` : "Delete wire")
+            : c > 1 ? `Delete ${c} cuts` : "Delete cut";
+          return (
+            <SelectionActionBar
+              actions={[{
+                key: "delete",
+                label,
+                title: "Remove the selected link wires and cuts",
+                shortcut: "Del",
+                icon: DeleteIcon,
+                variant: "danger",
+                onClick: () => {
+                  transact(() => {
+                    selectedWireIds.forEach((id) => removeWire(id));
+                    selectedCuts.forEach((cut) => removeCut(cut));
+                  });
+                  setSelectedWireIds([]);
+                  setSelectedCuts([]);
+                },
+              }]}
+            />
+          );
+        })()}
+
+        {!readOnly && <BoardTools tool={boardTool} onChange={setBoardTool} />}
+
+        {/* Row and column menu (right-click on the board) */}
         {lineMenu && (
           <>
             <div
@@ -1288,31 +1697,28 @@ export default function StripboardCanvas({
             />
             <div
               className="fixed z-50 rounded-md border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 shadow-lg dark:shadow-neutral-900/50 py-1"
-              style={{ left: lineMenu.x, top: lineMenu.y }}
+              style={{
+                left: Math.min(lineMenu.x, window.innerWidth - 240),
+                top: Math.min(lineMenu.y, window.innerHeight - 230),
+              }}
             >
-              {(lineMenu.axis === "row"
-                ? [
-                    { label: `Insert row above ${lineMenu.index + 1}`, at: lineMenu.index },
-                    { label: `Insert row below ${lineMenu.index + 1}`, at: lineMenu.index + 1 },
-                    { label: `Delete row ${lineMenu.index + 1}`, at: lineMenu.index, remove: true },
-                  ]
-                : [
-                    { label: `Insert column left of ${lineMenu.index + 1}`, at: lineMenu.index },
-                    { label: `Insert column right of ${lineMenu.index + 1}`, at: lineMenu.index + 1 },
-                    { label: `Delete column ${lineMenu.index + 1}`, at: lineMenu.index, remove: true },
-                  ]
-              ).map(({ label, at, remove }) => (
+              {([
+                { axis: "row", label: `Insert row above ${lineMenu.row + 1}`, at: lineMenu.row },
+                { axis: "row", label: `Insert row below ${lineMenu.row + 1}`, at: lineMenu.row + 1 },
+                { axis: "col", label: `Insert column left of ${lineMenu.col + 1}`, at: lineMenu.col, divided: true },
+                { axis: "col", label: `Insert column right of ${lineMenu.col + 1}`, at: lineMenu.col + 1 },
+                { axis: "row", label: `Delete row ${lineMenu.row + 1}`, at: lineMenu.row, remove: true, divided: true },
+                { axis: "col", label: `Delete column ${lineMenu.col + 1}`, at: lineMenu.col, remove: true },
+              ] as { axis: "row" | "col"; label: string; at: number; remove?: boolean; divided?: boolean }[]).map(({ axis, label, at, remove, divided }) => (
                 <button
                   key={label}
                   className={`block w-full text-left px-3 py-1.5 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-700 ${
-                    remove
-                      ? "text-red-600 dark:text-red-400 border-t border-neutral-200 dark:border-neutral-700"
-                      : "text-neutral-700 dark:text-neutral-200"
-                  }`}
+                    remove ? "text-red-600 dark:text-red-400" : "text-neutral-700 dark:text-neutral-200"
+                  } ${divided ? "border-t border-neutral-200 dark:border-neutral-700" : ""}`}
                   title={remove ? "Parts on this line are unplaced; parts and wires spanning it shrink to close the gap" : undefined}
                   onClick={() => {
-                    if (remove) deleteBoardLine(lineMenu.axis, at);
-                    else insertBoardLine(lineMenu.axis, at);
+                    if (remove) deleteBoardLine(axis, at);
+                    else insertBoardLine(axis, at);
                     setLineMenu(null);
                   }}
                 >

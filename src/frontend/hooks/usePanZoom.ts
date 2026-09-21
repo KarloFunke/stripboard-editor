@@ -10,10 +10,13 @@ const MIN_ZOOM = 0.2;
 const MAX_ZOOM = 3;
 const ZOOM_SENSITIVITY = 0.001;
 
-export function usePanZoom(initialZoom = 1) {
+const ORIGIN = { x: 0, y: 0 };
+
+/** `home` is where the view starts and returns to on reset (pass a stable object). */
+export function usePanZoom(initialZoom = 1, home: { x: number; y: number } = ORIGIN) {
   const [state, setState] = useState<PanZoomState>({
-    panX: 0,
-    panY: 0,
+    panX: home.x,
+    panY: home.y,
     zoom: initialZoom,
   });
 
@@ -197,8 +200,8 @@ export function usePanZoom(initialZoom = 1) {
 
   /** Reset pan and zoom to defaults */
   const resetView = useCallback(() => {
-    setState({ panX: 0, panY: 0, zoom: initialZoom });
-  }, [initialZoom]);
+    setState({ panX: home.x, panY: home.y, zoom: initialZoom });
+  }, [initialZoom, home]);
 
   return {
     ...state,

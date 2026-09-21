@@ -1,8 +1,8 @@
 import { Board, Component, ComponentDef, NetAssignment } from "@/types";
 import { holeKey } from "../keys";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
-import { getComponentBounds } from "../boardLayout";
-import { bodyIntersectsRect, clearanceOf, corridorHoles } from "../flexGeometry";
+import { corridorHoles, coveredHoles } from "../flexGeometry";
+import { FlexProfile, flexClashesRect, flexProfile, rigidBody } from "../partGeometry";
 import { computeStripSegments } from "../stripSegments";
 import { Candidate, Chooser } from "./chooser";
 
@@ -37,9 +37,9 @@ export function repairSlantWires(
       // — cuts, wire endpoints — is re-derived per candidate anyway
       const phys = new Set<string>();
       const tapAt = new Map<string, Component>();
-      // Flexible bodies with their clearance moats: a tap parked inside one
-      // would violate the body's free lines, which no re-route can fix
-      const moats: { p1: { row: number; col: number }; p2: { row: number; col: number }; clr: number }[] = [];
+      // Flexible bodies at their true size: a tap parked inside one, or in
+      // the free lines it keeps, is something no re-route can fix
+      const moats: { p1: { row: number; col: number }; p2: { row: number; col: number }; profile: FlexProfile }[] = [];
       for (const c of cur.virtual) {
         if (!c.boardPos || c.boardExcluded) continue;
         const def = resolveComponentDef(c, componentDefs);
@@ -49,9 +49,10 @@ export function repairSlantWires(
           for (const h of corridorHoles(c.boardPos, p2)) phys.add(holeKey(h.row, h.col));
           phys.add(holeKey(c.boardPos.row, c.boardPos.col));
           phys.add(holeKey(p2.row, p2.col));
-          moats.push({ p1: c.boardPos, p2, clr: clearanceOf(def) });
+          moats.push({ p1: c.boardPos, p2, profile: flexProfile(def) });
         } else {
-          const b = getComponentBounds(def, c.boardPos, c.rotation);
+          // every hole the package lies over is taken, not just its cells
+          const b = coveredHoles(rigidBody(def, c.boardPos, c.rotation));
           for (let r = b.minRow; r <= b.maxRow; r++) {
             for (let cc = b.minCol; cc <= b.maxCol; cc++) phys.add(holeKey(r, cc));
           }
@@ -62,7 +63,7 @@ export function repairSlantWires(
       }
       const tapSpotOk = (row: number, col: number) =>
         !moats.some((f) =>
-          bodyIntersectsRect(f.p1, f.p2, { minRow: row, maxRow: row, minCol: col, maxCol: col }, f.clr)
+          flexClashesRect(f.profile, f.p1, f.p2, { minRow: row, maxRow: row, minCol: col, maxCol: col })
         );
       let attempts = 0;
       for (const w of offenders) {

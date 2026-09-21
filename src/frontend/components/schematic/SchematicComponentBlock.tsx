@@ -196,6 +196,11 @@ export default function SchematicComponentBlock({
               {component.value}
             </tspan>
           )}
+          {component.offBoard && !component.boardExcluded && (
+            <tspan x={labelX} dy="1.2em" fontSize={9} fontWeight={400} fontStyle="italic" fillOpacity={0.7}>
+              off board
+            </tspan>
+          )}
         </text>
       )}
 
