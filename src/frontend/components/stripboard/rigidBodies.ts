@@ -358,13 +358,16 @@ export function rigidShape(spec: RigidSpec, geom: RigidGeom): RigidShape {
       // brass adjustment screw on top at one end.
       const fr = lineFrame(geom);
       const body = fr.box(-4.75, -2.4, 9.5, 4.8);
+      // The screw stays at the pin 3 end whichever way the part is turned
+      const last = geom.pins.find((p) => p.id === "3") ?? geom.pins[geom.pins.length - 1];
+      const end = fr.u(last) < 0 ? -1 : 1;
       return {
         body,
         pieces: [
           rect(body.x, body.y, body.w, body.h, spec.fill, 0.4),
           // in the corner, clear of the end leg and its name
-          fr.circle(3.65, -1.35, 0.85, "#c8a24a", true),
-          fr.line(3.05, -1.35, 4.25, -1.35, "rgba(0,0,0,0.5)", 0.3),
+          fr.circle(end * 3.65, -1.35, 0.85, "#c8a24a", true),
+          fr.line(end * 3.05, -1.35, end * 4.25, -1.35, "rgba(0,0,0,0.5)", 0.3),
         ],
         aloft: [],
       };

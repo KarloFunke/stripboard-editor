@@ -141,5 +141,15 @@ for (const rotation of [0, 90, 180, 270]) {
   ok(longAxis === (wx === 0 ? "y" : "x"), `trimmer at ${rotation}: the body is longer along the wiper axis`);
 }
 
+const multiTurn = { ...pot, ...footprintFor(pot, "trim-3296") };
+for (const rotation of [0, 90, 180, 270]) {
+  const screw = shapeAt(multiTurn, "trim-3296", rotation).pieces.find((p) => p.t === "circle");
+  const pins = getRotatedPinPositions(multiTurn, { row: 10, col: 10 }, rotation);
+  const b = getComponentBounds(multiTurn, { row: 10, col: 10 }, rotation);
+  const mm = (p) => ({ x: (p.col - (b.minCol + b.maxCol) / 2) * 2.54, y: (p.row - (b.minRow + b.maxRow) / 2) * 2.54 });
+  const d = (p) => Math.hypot(mm(p).x - screw.cx, mm(p).y - screw.cy);
+  ok(d(pins[2]) < d(pins[0]), `3296 trimmer at ${rotation}: the screw stays at the pin 3 end`);
+}
+
 console.log(failed === 0 ? "\nall passed" : `\n${failed} checks FAILED`);
 process.exit(failed === 0 ? 0 : 1);
