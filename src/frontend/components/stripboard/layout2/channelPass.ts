@@ -1,8 +1,9 @@
-import { BoardPosition, Component, ComponentDef } from "@/types";
+import { Component, ComponentDef } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { getComponentBounds } from "../boardLayout";
 import { FootprintRect, WireObstacles, spanLimits, wireExtraLength, wireStackDepth } from "../flexGeometry";
 import { Candidate, Chooser } from "./chooser";
+import { insertLine } from "./edgePadding";
 import { DimLimits } from "./tileModel";
 import { IC_MIN_PINS } from "./tidyScore";
 
@@ -55,48 +56,24 @@ export function insertWireChannels(
         const r = getComponentBounds(def, c.boardPos, c.rotation);
         return isCol ? r.minCol < at && at <= r.maxCol : r.minRow < at && at <= r.maxRow;
       });
-    const insertLine = (comps: Component[], isCol: boolean, at: number): Component[] =>
-      comps.map((c) => {
-        if (!c.boardPos) return c;
-        const shift = (p: BoardPosition): BoardPosition =>
-          isCol
-            ? p.col >= at ? { row: p.row, col: p.col + 1 } : p
-            : p.row >= at ? { row: p.row + 1, col: p.col } : p;
-        return {
-          ...c,
-          boardPos: shift(c.boardPos),
-          ...(c.flexibleEndPos ? { flexibleEndPos: shift(c.flexibleEndPos) } : {}),
-        };
-      });
-    // an edge line must not push a connector off the board edge it sits on
-    const connectorFlush = (comps: Component[], isCol: boolean, at: number, n: number): boolean =>
-      (at === 0 || at === n) &&
-      comps.some((c) => {
-        if (!c.boardPos || c.boardExcluded) return false;
-        const def = resolveComponentDef(c, componentDefs);
-        if (!def || def.category !== "connector") return false;
-        let lo: number, hi: number;
-        if (def.flexible) {
-          const p2 = c.flexibleEndPos ?? c.boardPos;
-          lo = Math.min(isCol ? c.boardPos.col : c.boardPos.row, isCol ? p2.col : p2.row);
-          hi = Math.max(isCol ? c.boardPos.col : c.boardPos.row, isCol ? p2.col : p2.row);
-        } else {
-          const r = getComponentBounds(def, c.boardPos, c.rotation);
-          lo = isCol ? r.minCol : r.minRow;
-          hi = isCol ? r.maxCol : r.maxRow;
-        }
-        return at === 0 ? lo === 0 : hi === n - 1;
-      });
     const colOk = (cur: Candidate, at: number) =>
       (strict ? at >= 0 && at <= cur.cols : at >= 1 && at <= cur.cols - 1) &&
       !(limits.maxCols !== undefined && cur.cols + 1 > limits.maxCols) &&
-      !lineStraddled(cur.virtual, true, at) &&
-      !connectorFlush(cur.virtual, true, at, cur.cols);
+      !lineStraddled(cur.virtual, true, at);
     const rowOk = (cur: Candidate, at: number) =>
       (strict ? at >= 0 && at <= cur.rows : at >= 1 && at <= cur.rows - 1) &&
       !(limits.maxRows !== undefined && cur.rows + 1 > limits.maxRows) &&
-      !lineStraddled(cur.virtual, false, at) &&
-      !connectorFlush(cur.virtual, false, at, cur.rows);
+      !lineStraddled(cur.virtual, false, at);
+    // An edge line keeps rim connectors on the rim (insertLine); only when
+    // that board does not route is the plain shift offered instead
+    const offer = (cur: Candidate, lines: { isCol: boolean; at: number }[]) => {
+      const build = (pin: boolean) =>
+        lines.reduce((comps, l) => insertLine(comps, componentDefs, l.isCol, l.at, pin), cur.virtual);
+      const dRows = lines.filter((l) => !l.isCol).length;
+      const dCols = lines.length - dRows;
+      const c = chooser.route(build(true), cur.rows + dRows, cur.cols + dCols, cur.movedIds);
+      if (c.bad > 0) chooser.route(build(false), cur.rows + dRows, cur.cols + dCols, cur.movedIds);
+    };
     // strict: the nearest insertable line above/below a row (left/right of
     // a column), walking outward past straddling bodies
     const nearLines = (ok: (at: number) => boolean, at0: number, max: number): number[] => {
@@ -187,12 +164,10 @@ export function insertWireChannels(
         }
       }
       for (const at of colCands) {
-        if (!colOk(cur, at)) continue; // interior only unless strict: edge channels are tried above
-        chooser.route(insertLine(cur.virtual, true, at), cur.rows, cur.cols + 1, cur.movedIds);
+        if (colOk(cur, at)) offer(cur, [{ isCol: true, at }]);
       }
       for (const at of rowCands) {
-        if (!rowOk(cur, at)) continue;
-        chooser.route(insertLine(cur.virtual, false, at), cur.rows + 1, cur.cols, cur.movedIds);
+        if (rowOk(cur, at)) offer(cur, [{ isCol: false, at }]);
       }
       if (chooser.chosen !== cur) continue;
       if (!strict) break; // no insertion paid for itself
@@ -215,10 +190,7 @@ export function insertWireChannels(
           // same-kind pairs: insert the higher position first so the lower
           // one's index stays valid
           const [first, second] = a.isCol === b.isCol && a.at < b.at ? [b, a] : [a, b];
-          const comps = insertLine(insertLine(cur.virtual, first.isCol, first.at), second.isCol, second.at);
-          const dRows = (a.isCol ? 0 : 1) + (b.isCol ? 0 : 1);
-          const dCols = (a.isCol ? 1 : 0) + (b.isCol ? 1 : 0);
-          chooser.route(comps, cur.rows + dRows, cur.cols + dCols, cur.movedIds);
+          offer(cur, [first, second]);
         }
       }
       if (chooser.chosen === cur) break; // nothing opens a clean route
@@ -244,7 +216,7 @@ export function insertWireChannels(
         let rows = cur.rows;
         for (const at of laneRows) {
           if (at < 1 || at > rows - 1 || lineStraddled(comps, false, at)) continue;
-          comps = insertLine(comps, false, at);
+          comps = insertLine(comps, componentDefs, false, at);
           rows++;
         }
         if (rows > cur.rows) chooser.route(comps, rows, cur.cols, cur.movedIds);

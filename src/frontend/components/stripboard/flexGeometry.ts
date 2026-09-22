@@ -276,6 +276,88 @@ export function wireStackDepth(
 }
 
 /**
+ * The routed wires of one pass, kept by line so a candidate's stack depth
+ * only looks at the wires that can lie on its line: a vertical wire at
+ * the wires of its column, a horizontal one at those of its row, a
+ * slanted one at the slanted wires. Same answer as wireStackDepth over
+ * every wire, since collinear overlap needs the same line.
+ */
+export class WireStackIndex {
+  private byCol = new Map<number, { from: Pt; to: Pt }[]>();
+  private byRow = new Map<number, { from: Pt; to: Pt }[]>();
+  private slanted: { from: Pt; to: Pt }[] = [];
+
+  constructor(wires: { from: Pt; to: Pt }[]) {
+    for (const w of wires) this.add(w);
+  }
+
+  add(w: { from: Pt; to: Pt }): void {
+    if (w.from.col === w.to.col) {
+      const list = this.byCol.get(w.from.col);
+      if (list) list.push(w); else this.byCol.set(w.from.col, [w]);
+    } else if (w.from.row === w.to.row) {
+      const list = this.byRow.get(w.from.row);
+      if (list) list.push(w); else this.byRow.set(w.from.row, [w]);
+    } else this.slanted.push(w);
+  }
+
+  depth(from: Pt, to: Pt): number {
+    if (from.col === to.col) {
+      if (from.row === to.row) return 0;
+      const wires = this.byCol.get(from.col);
+      return wires ? axisStackDepth(from.row, to.row, wires, true) : 0;
+    }
+    if (from.row === to.row) {
+      const wires = this.byRow.get(from.row);
+      return wires ? axisStackDepth(from.col, to.col, wires, false) : 0;
+    }
+    return this.slanted.length > 0 ? wireStackDepth(from, to, this.slanted) : 0;
+  }
+}
+
+// Scratch for axisStackDepth: the overlap intervals along the candidate
+let stackLo = new Float64Array(64);
+let stackHi = new Float64Array(64);
+
+/**
+ * wireStackDepth for a candidate on a hole column (row) against the wires
+ * of that same column (row): the same intervals and the same sweep answer,
+ * without the sort. Closed intervals, so the sweep's depth right after a
+ * start point is the number of intervals holding that point, and the
+ * maximum lies at a start point.
+ */
+function axisStackDepth(a: number, b: number, wires: { from: Pt; to: Pt }[], vertical: boolean): number {
+  const aMin = Math.min(a, b);
+  const aMax = Math.max(a, b);
+  let n = 0;
+  for (const w of wires) {
+    const p = vertical ? w.from.row : w.from.col;
+    const q = vertical ? w.to.row : w.to.col;
+    const lo = Math.max(aMin, Math.min(p, q));
+    const hi = Math.min(aMax, Math.max(p, q));
+    if (hi - lo <= 1e-9) continue;
+    if (n === stackLo.length) {
+      const lo2 = new Float64Array(n * 2), hi2 = new Float64Array(n * 2);
+      lo2.set(stackLo);
+      hi2.set(stackHi);
+      stackLo = lo2;
+      stackHi = hi2;
+    }
+    stackLo[n] = lo;
+    stackHi[n] = hi;
+    n++;
+  }
+  let max = 0;
+  for (let i = 0; i < n; i++) {
+    const x = stackLo[i];
+    let depth = 0;
+    for (let j = 0; j < n; j++) if (stackLo[j] <= x && x <= stackHi[j]) depth++;
+    if (depth > max) max = depth;
+  }
+  return max;
+}
+
+/**
  * Extra effective length a wire pays for joining a stack of `depth`
  * existing wires. Beyond the cap: Infinity normally (the candidate is
  * rejected), the rescue rate when completing the net has no alternative.

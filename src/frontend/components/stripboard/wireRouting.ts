@@ -7,7 +7,7 @@ import {
   WIRE_OFFAXIS_RATE,
   WIRE_STRICT_MESS,
   WireObstacleIndex,
-  wireStackDepth,
+  WireStackIndex,
   wireStackPenalty,
 } from "./flexGeometry";
 
@@ -36,6 +36,9 @@ const RELAY_WIRE_TAX = 1;
 // A wire end in a hole that already holds one: a quarter of a hole of wire,
 // so it only ever decides between otherwise equal choices.
 const WIRE_SHARED_HOLE = 0.25;
+// the router's own hole sets are probed per candidate pair, so they key on
+// a number, not the shared string key (which only `occupied` needs here)
+const hk = (row: number, col: number): number => row * 65536 + col;
 
 interface WireChoice {
   from: BoardPosition;
@@ -189,7 +192,7 @@ export function deriveWires(
   };
   interface RelayCand {
     holes: BoardPosition[];
-    holeSet: Set<string>;
+    holeSet: Set<number>;
     byCol: Map<number, number[]>;
     // Tail donation only: the severing cut (gap col), the donor group whose
     // free holes shrink by `holes`, and its net
@@ -200,13 +203,13 @@ export function deriveWires(
     // strict bus rows: remainders already offered
     split?: boolean;
   }
-  const pinHoles = new Set(pins.map((p) => holeKey(p.row, p.col)));
+  const pinHoles = new Set(pins.map((p) => hk(p.row, p.col)));
   const relayCands: RelayCand[] = [];
   groups.forEach((_, gi) => {
     if (skipRelays || groupPins.has(gi)) return;
     const holes = freeHolesOfGroup(gi);
     if (holes.length === 0) return;
-    relayCands.push({ holes, holeSet: new Set(holes.map((h) => holeKey(h.row, h.col))), byCol: byColOf(holes) });
+    relayCands.push({ holes, holeSet: new Set(holes.map((h) => hk(h.row, h.col))), byCol: byColOf(holes) });
   });
   segments.forEach((seg, si) => {
     if (skipRelays) return;
@@ -230,7 +233,7 @@ export function deriveWires(
           (drillCol < seg.startCol || drillCol > seg.endCol ||
             // a floating (netless) pin can sit on a donor segment, and its
             // hole must survive
-            pinHoles.has(holeKey(seg.row, drillCol)))) {
+            pinHoles.has(hk(seg.row, drillCol)))) {
         continue;
       }
       const beyond = drillTailRelays ? drillCol : side === "L" ? pinMin : pinMax;
@@ -243,8 +246,8 @@ export function deriveWires(
       if (new Set(tail.map((h) => h.col)).size < 2) continue;
       // The sacrificed hole counts as consumed (nothing may route to it or
       // keep it as a spare) but is not offered as a hop endpoint.
-      const holeSet = new Set(tail.map((h) => holeKey(h.row, h.col)));
-      if (drillTailRelays) holeSet.add(holeKey(seg.row, drillCol));
+      const holeSet = new Set(tail.map((h) => hk(h.row, h.col)));
+      if (drillTailRelays) holeSet.add(hk(seg.row, drillCol));
       relayCands.push({
         holes: tail,
         holeSet,
@@ -268,7 +271,7 @@ export function deriveWires(
     relayCands.push(...freeCands, ...tailCands);
   }
 
-  const sharedPinPen = new Map<string, number>();
+  const sharedPinPen = new Map<number, number>();
   const endpointCache = new Map<number, BoardPosition[]>();
   const endpointHolesOfGroup = (gi: number): BoardPosition[] => {
     let holes = endpointCache.get(gi);
@@ -278,7 +281,7 @@ export function deriveWires(
         holes = free;
       } else {
         holes = groupPins.get(gi) ?? [];
-        for (const p of holes) sharedPinPen.set(holeKey(p.row, p.col), PIN_SHARE_PENALTY);
+        for (const p of holes) sharedPinPen.set(hk(p.row, p.col), PIN_SHARE_PENALTY);
       }
       endpointCache.set(gi, holes);
     }
@@ -305,18 +308,18 @@ export function deriveWires(
 
   const routeAll = (order: Net[]): RoutePass => {
     const pass: RoutePass = { wires: [], extraCuts: [], issues: [], starved: [], starvedPins: [], mess: 0, sharedJoints: 0 };
-    const allWires = [...existingWires];
+    const stack = new WireStackIndex(existingWires);
     const relayOwner = new Map<number, string>();
     // Holes given away with a claimed tail: they belong to the claimant's
     // net now, so the donor's own routing must not touch them.
-    const donated = new Set<string>();
+    const donated = new Set<number>();
     const passFree = (gi: number): BoardPosition[] => {
       const holes = freeHolesOfGroup(gi);
-      return donated.size === 0 ? holes : holes.filter((h) => !donated.has(holeKey(h.row, h.col)));
+      return donated.size === 0 ? holes : holes.filter((h) => !donated.has(hk(h.row, h.col)));
     };
     const passEndpoints = (gi: number): BoardPosition[] => {
       const holes = endpointHolesOfGroup(gi);
-      return donated.size === 0 ? holes : holes.filter((h) => !donated.has(holeKey(h.row, h.col)));
+      return donated.size === 0 ? holes : holes.filter((h) => !donated.has(hk(h.row, h.col)));
     };
     // Endpoint columns per group, rebuilt only when a donation shrinks the
     // pass's endpoint sets — the relay search asks for them per wire.
@@ -330,10 +333,10 @@ export function deriveWires(
       return m;
     };
     // A tail cannot be severed once a routed wire already ends inside it
-    const wireEnds = new Set<string>();
+    const wireEnds = new Set<number>();
     for (const w of existingWires) {
-      wireEnds.add(holeKey(w.from.row, w.from.col));
-      wireEnds.add(holeKey(w.to.row, w.to.col));
+      wireEnds.add(hk(w.from.row, w.from.col));
+      wireEnds.add(hk(w.to.row, w.to.col));
     }
     // Rescue mode (per wire, see below): allow over-cap stacks at the
     // rescue rate when nothing under the cap can complete the net.
@@ -344,10 +347,10 @@ export function deriveWires(
     // longer or messier wire for it. It stays out of `mess`, which is about
     // tidiness and decides when the relay search runs.
     const sharedHole = (from: BoardPosition, to: BoardPosition) =>
-      (wireEnds.has(holeKey(from.row, from.col)) ? WIRE_SHARED_HOLE : 0) +
-      (wireEnds.has(holeKey(to.row, to.col)) ? WIRE_SHARED_HOLE : 0);
+      (wireEnds.has(hk(from.row, from.col)) ? WIRE_SHARED_HOLE : 0) +
+      (wireEnds.has(hk(to.row, to.col)) ? WIRE_SHARED_HOLE : 0);
     const overlapPenalty = (from: BoardPosition, to: BoardPosition) => {
-      const depth = wireStackDepth(from, to, allWires);
+      const depth = stack.depth(from, to);
       return noWireStacking ? WIRE_STRICT_MESS * depth : wireStackPenalty(depth, allowDeepStacks);
     };
 
@@ -389,9 +392,13 @@ export function deriveWires(
       while (remaining.size > 0) {
         const findBest = (): WireChoice | null => {
           let best: WireChoice | null = null;
-          const consider = (ha: BoardPosition, hb: BoardPosition, gi: number): WireChoice | null => {
-            const dc = ha.col - hb.col;
-            const dist = Math.hypot(ha.row - hb.row, dc);
+          // the connected-side hole under test, allocated only once it wins
+          const ha = { row: 0, col: 0 };
+          const consider = (row: number, col: number, hb: BoardPosition, gi: number): WireChoice | null => {
+            ha.row = row;
+            ha.col = col;
+            const dc = col - hb.col;
+            const dist = Math.hypot(row - hb.row, dc);
             // Tidiness (off-axis length, component crossings) is priced as
             // extra length; the bare distance is a lower bound, so most
             // pairs skip the obstacle tests entirely.
@@ -401,8 +408,8 @@ export function deriveWires(
             if (best && slantLowerBound(ha.row - hb.row, dc) > best.cost + 1e-9) return null;
             let mess =
               obstacleIndex.extraLength(ha, hb) +
-              (sharedPinPen.get(holeKey(ha.row, ha.col)) ?? 0) +
-              (sharedPinPen.get(holeKey(hb.row, hb.col)) ?? 0);
+              (sharedPinPen.get(hk(ha.row, ha.col)) ?? 0) +
+              (sharedPinPen.get(hk(hb.row, hb.col)) ?? 0);
             // Overlap pricing only for pairs still in the running: the scan
             // over routed wires is the priciest term here.
             if (best && dist + mess > best.cost + 1e-9) return null;
@@ -417,7 +424,7 @@ export function deriveWires(
               (cost < best.cost + 1e-9 &&
                 Math.abs(dc) < Math.abs(best.from.col - best.to.col));
             if (!better) return null;
-            return { from: ha, to: hb, group: gi, cost, mess, shared };
+            return { from: { row, col }, to: hb, group: gi, cost, mess, shared };
           };
           for (const gi of remaining) {
             for (const hb of passEndpoints(gi)) {
@@ -437,11 +444,11 @@ export function deriveWires(
                   // the pair's cost floor can no longer beat (or tie) the best.
                   for (let k = lo; k < cols.length; k++) {
                     if (best && slantLowerBound(dr, cols[k] - hb.col) > best.cost + 1e-9) break;
-                    best = consider({ row, col: cols[k] }, hb, gi) ?? best;
+                    best = consider(row, cols[k], hb, gi) ?? best;
                   }
                   for (let k = lo - 1; k >= 0; k--) {
                     if (best && slantLowerBound(dr, hb.col - cols[k]) > best.cost + 1e-9) break;
-                    best = consider({ row, col: cols[k] }, hb, gi) ?? best;
+                    best = consider(row, cols[k], hb, gi) ?? best;
                   }
                 }
               }
@@ -450,26 +457,34 @@ export function deriveWires(
           return best;
         };
 
+        // the pair under test, allocated only once it wins
+        const hopA = { row: 0, col: 0 };
+        const hopB = { row: 0, col: 0 };
         const vertHop = (colsA: Map<number, number[]>, colsB: Map<number, number[]>): Hop | null => {
           let best: Hop | null = null;
           for (const [col, rowsA] of colsA) {
             const rowsB = colsB.get(col);
             if (!rowsB) continue;
+            hopA.col = col;
+            hopB.col = col;
             for (const ra of rowsA) {
+              hopA.row = ra;
               for (const rb of rowsB) {
                 const d = Math.abs(ra - rb);
                 if (best && d >= best.cost + 1e-9) continue;
-                const from = { row: ra, col };
-                const to = { row: rb, col };
-                const mess =
-                  obstacleIndex.extraLength(from, to) +
-                  (sharedPinPen.get(holeKey(ra, col)) ?? 0) +
-                  (sharedPinPen.get(holeKey(rb, col)) ?? 0) +
-                  overlapPenalty(from, to);
+                hopB.row = rb;
+                // the stack scan is the priciest term: only pairs that can
+                // still win pay for it
+                let mess =
+                  obstacleIndex.extraLength(hopA, hopB) +
+                  (sharedPinPen.get(hk(ra, col)) ?? 0) +
+                  (sharedPinPen.get(hk(rb, col)) ?? 0);
+                if (best && d + mess >= best.cost - 1e-9) continue;
+                mess += overlapPenalty(hopA, hopB);
                 if (!isFinite(mess)) continue; // over the stack cap
-                const shared = sharedHole(from, to);
+                const shared = sharedHole(hopA, hopB);
                 const cost = d + mess + shared;
-                if (!best || cost < best.cost - 1e-9) best = { from, to, cost, mess, shared };
+                if (!best || cost < best.cost - 1e-9) best = { from: { row: ra, col }, to: { row: rb, col }, cost, mess, shared };
               }
             }
           }
@@ -477,6 +492,9 @@ export function deriveWires(
         };
         const findRelayBest = (maxHops: number): RelayChoice | null => {
           let best: RelayChoice | null = null;
+          // the hop from the connected copper into a relay does not depend
+          // on the group being reached: found once per relay
+          const w1Of: (Hop | null | undefined)[] = new Array(relayCands.length);
           for (const gi of remaining) {
             const bCols = bColsOf(gi);
             if (bCols.size === 0) continue;
@@ -498,11 +516,15 @@ export function deriveWires(
                 }
                 if (blocked) continue;
                 if (cand.donorNeedy &&
-                    !passFree(cand.donorGroup!).some((h) => !cand.holeSet.has(holeKey(h.row, h.col)))) {
+                    !passFree(cand.donorGroup!).some((h) => !cand.holeSet.has(hk(h.row, h.col)))) {
                   continue;
                 }
               }
-              const w1 = vertHop(connectedCols, cand.byCol);
+              let w1 = w1Of[ci];
+              if (w1 === undefined) {
+                w1 = vertHop(connectedCols, cand.byCol);
+                w1Of[ci] = w1;
+              }
               if (!w1) continue;
               const w2 = vertHop(cand.byCol, bCols);
               if (!w2) continue;
@@ -558,11 +580,11 @@ export function deriveWires(
           }
           for (const w of [relay.w1, relay.w2]) {
             pass.wires.push({ from: w.from, to: w.to });
-            allWires.push({ from: w.from, to: w.to });
-            wireEnds.add(holeKey(w.from.row, w.from.col));
-            wireEnds.add(holeKey(w.to.row, w.to.col));
-            if (sharedPinPen.has(holeKey(w.from.row, w.from.col)) ||
-                sharedPinPen.has(holeKey(w.to.row, w.to.col))) pass.sharedJoints++;
+            stack.add({ from: w.from, to: w.to });
+            wireEnds.add(hk(w.from.row, w.from.col));
+            wireEnds.add(hk(w.to.row, w.to.col));
+            if (sharedPinPen.has(hk(w.from.row, w.from.col)) ||
+                sharedPinPen.has(hk(w.to.row, w.to.col))) pass.sharedJoints++;
           }
           pass.mess += relay.mess;
           relayOwner.set(relay.relay, net.id);
@@ -575,12 +597,12 @@ export function deriveWires(
         }
 
         pass.wires.push({ from: best!.from, to: best!.to });
-        allWires.push({ from: best!.from, to: best!.to });
-        wireEnds.add(holeKey(best!.from.row, best!.from.col));
-        wireEnds.add(holeKey(best!.to.row, best!.to.col));
+        stack.add({ from: best!.from, to: best!.to });
+        wireEnds.add(hk(best!.from.row, best!.from.col));
+        wireEnds.add(hk(best!.to.row, best!.to.col));
         pass.mess += best!.mess;
-        if (sharedPinPen.has(holeKey(best!.from.row, best!.from.col)) ||
-            sharedPinPen.has(holeKey(best!.to.row, best!.to.col))) pass.sharedJoints++;
+        if (sharedPinPen.has(hk(best!.from.row, best!.from.col)) ||
+            sharedPinPen.has(hk(best!.to.row, best!.to.col))) pass.sharedJoints++;
         remaining.delete(best!.group);
         // Endpoints stay available: further wires of this net may chain there
         for (const h of passEndpoints(best!.group)) addConnected(h);
@@ -601,7 +623,7 @@ export function deriveWires(
           let maxC = -Infinity;
           for (const w of pass.wires) {
             for (const p of [w.from, w.to]) {
-              if (!cand.holeSet.has(holeKey(p.row, p.col))) continue;
+              if (!cand.holeSet.has(hk(p.row, p.col))) continue;
               if (p.col < minC) minC = p.col;
               if (p.col > maxC) maxC = p.col;
             }
@@ -617,9 +639,9 @@ export function deriveWires(
                 : (side === "L" ? h.col < minC : h.col > maxC)
             );
             if (new Set(tail.map((h) => h.col)).size < 2) continue;
-            if (drillTailRelays && !cand.holeSet.has(holeKey(row, sacrificed))) continue;
-            const holeSet = new Set(tail.map((h) => holeKey(h.row, h.col)));
-            if (drillTailRelays) holeSet.add(holeKey(row, sacrificed));
+            if (drillTailRelays && !cand.holeSet.has(hk(row, sacrificed))) continue;
+            const holeSet = new Set(tail.map((h) => hk(h.row, h.col)));
+            if (drillTailRelays) holeSet.add(hk(row, sacrificed));
             relayCands.push({
               holes: tail,
               holeSet,

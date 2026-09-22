@@ -263,9 +263,6 @@ interface Genome {
 interface Decoded {
   eBase: number;
   hardPen: number;
-  // which margin lines the skeleton's wiring attached to: the finish must
-  // keep the padding outside a flush connector on those sides
-  marginUsed: { top: boolean; bottom: boolean; left: boolean; right: boolean };
   slants: number;
   crossings: number;
   H: number;
@@ -274,6 +271,8 @@ interface Decoded {
   xI: Int32Array;
   geo: { w: number; h: number; sh?: RigidShape; mode?: "H" | "V" }[];
   vBot: Map<number, number>;
+  // the genome's branch bits, part of what identifies the board
+  br: number[];
   dbg?: Record<string, number | string[]>;
 }
 
@@ -490,6 +489,8 @@ export function computeAutoLayout5(
   let gridCap = 0;
   let occBuf = new Int8Array(0), ownerBuf = new Int16Array(0), pinNetBuf = new Int32Array(0);
   let usedBuf = new Uint8Array(0), bodyPreBuf = new Int32Array(0), hopBuf = new Int32Array(0);
+  // free and wire-used holes per row as bit words (32 columns a word)
+  let freeMaskBuf = new Int32Array(0), usedMaskBuf = new Int32Array(0);
   const ensureGrid = (n: number) => {
     if (n <= gridCap) return;
     gridCap = Math.max(n, gridCap * 2);
@@ -498,8 +499,14 @@ export function computeAutoLayout5(
     pinNetBuf = new Int32Array(gridCap);
     usedBuf = new Uint8Array(gridCap);
     bodyPreBuf = new Int32Array(gridCap);
+    freeMaskBuf = new Int32Array(gridCap);
+    usedMaskBuf = new Int32Array(gridCap);
   };
-  function decode(g: Genome): Decoded | null {
+  // `ref` is the board the proposal is measured against: a proposal that
+  // puts every part on the same hole in the same shape is that board, and
+  // its measurement is returned as is (about a third of all proposals, the
+  // label and gap moves that do not bite)
+  function decode(g: Genome, ref?: Decoded): Decoded | null {
     const posP = new Int32Array(nP), posN = new Int32Array(nP);
     g.gp.forEach((p, i) => (posP[p] = i));
     g.gn.forEach((p, i) => (posN[p] = i));
@@ -900,6 +907,15 @@ export function computeAutoLayout5(
     const yI = new Int32Array(nNode), xI = new Int32Array(nP);
     for (let i = 0; i < nNode - 1; i++) yI[i] = Math.round(y[i]);
     for (let i = 0; i < nP; i++) xI[i] = Math.round(xd[i]);
+    if (ref && !labMode) {
+      let same = ref.yI.length === nNode;
+      for (let i = 0; same && i < nNode - 1; i++) if (yI[i] !== ref.yI[i]) same = false;
+      for (let i = 0; same && i < nP; i++) {
+        if (xI[i] !== ref.xI[i] || geo[i].sh !== ref.geo[i].sh || geo[i].mode !== ref.geo[i].mode) same = false;
+      }
+      for (let i = 0; same && i < g.br.length; i++) if (g.br[i] !== ref.br[i]) same = false;
+      if (same) return ref;
+    }
     if (labMode === 2) pushF({ stage: 3, msg: `Nothing moves any more. Every part has a row and a column: a ${labRowsNow()} by ${labColsNow()} board, as tight as the relations allow.`, board: { rows: labRowsNow(), cols: labColsNow(), parts: labPlaced(yI, xI, 0), segs: [], cuts: [], wires: [], busRows: [], arrows: labXArrows("ok") } });
 
     // ── grid + exact measurement ──
@@ -1117,23 +1133,47 @@ export function computeAutoLayout5(
     }
     let wires = 0, wireLen = 0, slants = 0, crossings = 0, starved = 0, starvedHard = 0, relays = 0;
     const hardSegs: string[] = [];
-    // cleanest hop column from a segment to a bus row: free holes at both
-    // ends, fewest bodies between
-    const hop = (S: { row: number; c1: number; c2: number }, r: number): number => {
-      const rowS = S.row * GW, rowR = r * GW;
-      const preTop = (Math.min(S.row, r) + 1) * GW, preBot = Math.max(S.row, r) * GW;
+    // a column free on two rows is a set bit in the AND of their words, so
+    // a scan visits only those columns instead of the whole range
+    const WPR = (GW + 31) >> 5;
+    const freeM = freeMaskBuf.fill(0, 0, GH * WPR);
+    const usedM = usedMaskBuf.fill(0, 0, GH * WPR);
+    for (let r = 0; r < GH; r++) {
+      const row = r * GW, rw = r * WPR;
+      for (let c = 0; c < GW; c++) if (occ[row + c] === 0) freeM[rw + (c >> 5)] |= 1 << (c & 31);
+    }
+    const markUsed = (r: number, c: number) => {
+      used[r * GW + c] = 1;
+      usedM[r * WPR + (c >> 5)] |= 1 << (c & 31);
+    };
+    // cleanest column shared by two rows over [c1, c2]: free and unused
+    // on both, fewest bodies between; the column plus the body count in
+    // the high bits, or -1
+    const sharedCol = (rowA: number, rowB: number, c1: number, c2: number): number => {
+      const wA = rowA * WPR, wB = rowB * WPR;
+      const preTop = (Math.min(rowA, rowB) + 1) * GW, preBot = Math.max(rowA, rowB) * GW;
       let bestC = -1, bestCross = Infinity;
-      for (let c = S.c1; c <= S.c2; c++) {
-        if (occ[rowS + c] !== 0 || occ[rowR + c] !== 0 || used[rowS + c] || used[rowR + c]) continue;
-        const cr = bodyPre[preBot + c] - bodyPre[preTop + c];
-        if (cr < bestCross) {
-          bestCross = cr;
-          bestC = c;
+      const wLo = c1 >> 5, wHi = c2 >> 5;
+      for (let w = wLo; w <= wHi; w++) {
+        let m = freeM[wA + w] & freeM[wB + w] & ~usedM[wA + w] & ~usedM[wB + w];
+        if (w === wLo) m &= -1 << (c1 & 31);
+        if (w === wHi && (c2 & 31) < 31) m &= (1 << ((c2 & 31) + 1)) - 1;
+        while (m !== 0) {
+          const low = m & -m;
+          m ^= low;
+          const c = (w << 5) + 31 - Math.clz32(low);
+          const cr = bodyPre[preBot + c] - bodyPre[preTop + c];
+          if (cr < bestCross) {
+            bestCross = cr;
+            bestC = c;
+          }
+          if (cr === 0) return bestC;
         }
-        if (cr === 0) break;
       }
       return bestC < 0 ? -1 : bestC + (bestCross << 16);
     };
+    // cleanest hop column from a segment to a bus row
+    const hop = (S: { row: number; c1: number; c2: number }, r: number): number => sharedCol(S.row, r, S.c1, S.c2);
     const labBoard5 = (extra: Partial<LabBoard> = {}): LabBoard => ({ rows: GH, cols: GW, parts: labParts, segs: [...labSegs], cuts: [...labCuts], wires: [...labWires], busRows: [...busRows], ...extra });
     for (const [net, segs] of segsOfNet) {
       if (segs.length < 2) continue;
@@ -1168,28 +1208,16 @@ export function computeAutoLayout5(
       };
       const offer = (ti: number, b2: number, force: boolean) => {
         const A = segs[tree[ti]], B = segs[b2];
-        const rowA = A.row * GW;
         const lo = Math.max(A.c1, B.c1), hi = Math.min(A.c2, B.c2);
         let cost: number, cross = 0, bestCol = -1;
         if (A.row === B.row) cost = 50;
         else if (lo <= hi) {
-          let bestCross = Infinity;
-          const rowB = B.row * GW;
-          const preTop = (Math.min(A.row, B.row) + 1) * GW, preBot = Math.max(A.row, B.row) * GW;
-          for (let c = lo; c <= hi; c++) {
-            if (occ[rowA + c] !== 0 || occ[rowB + c] !== 0) continue;
-            if (used[rowA + c] || used[rowB + c]) continue;
-            const cr = bodyPre[preBot + c] - bodyPre[preTop + c];
-            if (cr < bestCross) {
-              bestCross = cr;
-              bestCol = c;
-            }
-            if (cr === 0) break;
-          }
-          if (bestCross === Infinity) cost = 50;
+          const h = sharedCol(A.row, B.row, lo, hi);
+          if (h < 0) cost = 50;
           else {
-            cost = 1 + bestCross * 8;
-            cross = bestCross;
+            bestCol = h & 0xffff;
+            cross = h >> 16;
+            cost = 1 + cross * 8;
           }
         } else cost = 50;
         let len = Math.abs(A.row - B.row);
@@ -1283,10 +1311,10 @@ export function computeAutoLayout5(
         }
         if (kRow[bb] >= 0) {
           const r = kRow[bb];
-          used[segs[a].row * GW + kCA[bb]] = 1;
-          used[r * GW + kCA[bb]] = 1;
-          used[r * GW + kCB[bb]] = 1;
-          used[segs[bb].row * GW + kCB[bb]] = 1;
+          markUsed(segs[a].row, kCA[bb]);
+          markUsed(r, kCA[bb]);
+          markUsed(r, kCB[bb]);
+          markUsed(segs[bb].row, kCB[bb]);
           if (!busClaims.has(r)) busClaims.set(r, []);
           busClaims.get(r)!.push({ c1: Math.min(kCA[bb], kCB[bb]), c2: Math.max(kCA[bb], kCB[bb]), net });
           wires += 2;
@@ -1294,8 +1322,8 @@ export function computeAutoLayout5(
         } else {
           wires++;
           if (kCol[bb] >= 0) {
-            used[segs[a].row * GW + kCol[bb]] = 1;
-            used[segs[bb].row * GW + kCol[bb]] = 1;
+            markUsed(segs[a].row, kCol[bb]);
+            markUsed(segs[bb].row, kCol[bb]);
           }
         }
         linkCount[a]++;
@@ -1421,13 +1449,6 @@ export function computeAutoLayout5(
     // connectors belong on a board edge, any of the four (on edge 0, 1 away
     // 50%, 2 away 75%, then 100% of the full price; the small slope keeps a
     // gradient on the plateau); a locked connector is the user's placement
-    // a margin line the wiring attached to becomes a real board line in
-    // the finish (padding outside), so a connector flush on that side sits
-    // one line in and is priced that way: the anneal weighs the channel
-    // against the connectors it pushes off the edge
-    const marginUsed = { top: false, bottom: false, left: false, right: false };
-    if (mRow) for (let c = 0; c < GW; c++) { if (used[c]) marginUsed.top = true; if (used[(GH - 1) * GW + c]) marginUsed.bottom = true; }
-    if (mCol) for (let r = 0; r < GH; r++) { if (used[r * GW]) marginUsed.left = true; if (used[r * GW + GW - 1]) marginUsed.right = true; }
     let connEdge = 0;
     for (let pi = 0; pi < nP; pi++) {
       const p = parts[pi];
@@ -1435,10 +1456,10 @@ export function computeAutoLayout5(
       const h = geo[pi].mode === "V" ? yI[vBot.get(pi)!] - yI[pi] + 1 : geo[pi].h;
       const w = geo[pi].w;
       const FAR = 50;
-      const dl = connSides.left ? xI[pi] + (marginUsed.left ? 1 : 0) : FAR;
-      const dr = connSides.right ? physW - (xI[pi] + w) + (marginUsed.right ? 1 : 0) : FAR;
-      const dt = connSides.top ? yI[pi] + (marginUsed.top ? 1 : 0) : FAR;
-      const db = connSides.bottom ? physH - (yI[pi] + h) + (marginUsed.bottom ? 1 : 0) : FAR;
+      const dl = connSides.left ? xI[pi] : FAR;
+      const dr = connSides.right ? physW - (xI[pi] + w) : FAR;
+      const dt = connSides.top ? yI[pi] : FAR;
+      const db = connSides.bottom ? physH - (yI[pi] + h) : FAR;
       const d = Math.min(dl, dr, dt, db);
       // a multi-pin connector should run along its nearest edge, not point
       // into the board, or its external wires come in across the parts. The
@@ -1486,7 +1507,7 @@ export function computeAutoLayout5(
       pushF({ stage: 5, msg: `Every net is joined: ${wires} link wire${wires === 1 ? "" : "s"} of total length ${wireLen} hole${wireLen === 1 ? "" : "s"}.`, board: labBoardOut });
       pushF({ stage: 6, msg: `Board ${GH} by ${GW} = ${GH * GW} cells, ${wires} link wires of total length ${wireLen}, ${cuts} cuts${bCuts ? ` (${bCuts} with a knife)` : ""}, ${slants + crossings} messy wire${slants + crossings === 1 ? "" : "s"}${starvedHard ? `, ${starvedHard} starved pin${starvedHard === 1 ? "" : "s"}` : ""}${connEdge ? `, a connector away from the edge` : ""}. Score ${(eBase + W_MESS * (slants + crossings)).toFixed(1)}.`, board: labBoardOut });
     }
-    return { eBase, hardPen, marginUsed, slants, crossings, H, W, yI, xI, geo, vBot, dbg: { wires, wireLen, relays, cuts, bCuts, starved, starvedHard, geoBad, overlapBad, connEdge, lockOver, spanBad, hardSegs } };
+    return { eBase, hardPen, slants, crossings, H, W, yI, xI, geo, vBot, dbg: { wires, wireLen, relays, cuts, bCuts, starved, starvedHard, geoBad, overlapBad, connEdge, lockOver, spanBad, hardSegs }, br: g.br };
   }
 
   // ── mutation ──
@@ -1716,7 +1737,7 @@ export function computeAutoLayout5(
         if (g2 || !lean) break;
       }
       if (!g2) { tNull++; if (ml) logMove(it, 0, null, 0, false); continue; }
-      const e2 = decode(g2);
+      const e2 = decode(g2, cur);
       if (!e2) { tInf++; if (ml) logMove(it, 1, null, 0, false); continue; }
       const w = wOf(itV);
       hardScale = hardOf(itV);
@@ -1836,7 +1857,8 @@ export function computeAutoLayout5(
         c.flexibleEndPos = { row: brBit === 0 ? b : t, col: d.xI[pi] + dCol };
       }
     }
-    const padded = padAroundEdgeConnectors(comps0, componentDefs, d.H, d.W, { top: padRows, bottom: padRows, left: padCols, right: 2 * padCols }, d.marginUsed);
+    const padLines = { top: padRows, bottom: padRows, left: padCols, right: 2 * padCols };
+    const padded = padAroundEdgeConnectors(comps0, componentDefs, d.H, d.W, padLines);
     const comps = padded.comps;
     const H = lockedRowsCap !== undefined ? Math.max(padded.rows, lockedRowsCap) : padded.rows;
     const W = lockedColsCap !== undefined ? Math.max(padded.cols, lockedColsCap) : padded.cols;
@@ -1844,6 +1866,11 @@ export function computeAutoLayout5(
     const movedIds = new Set(parts.map((p) => p.comp.id));
     const chooser = new Chooser(routeBoard, componentDefs, nets, netAssignments, false, {}, options?.drilledCutsOnly ?? false, true, options?.noWireStacking ?? false);
     chooser.route(comps, H, W, movedIds);
+    // rim connectors kept on the rim first; a board that does not route that
+    // way (a pin left without a free hole) gets the plain shift instead
+    if (chooser.chosen!.bad > 0) {
+      chooser.route(padAroundEdgeConnectors(comps0, componentDefs, d.H, d.W, padLines, false).comps, H, W, movedIds);
+    }
     chooser.freezePool();
     const pushFin = (msg: string) => {
       const c = chooser.chosen;
@@ -1855,7 +1882,7 @@ export function computeAutoLayout5(
       const full = labFinBoard(c.virtual, c.rows, c.cols, c.plan.cuts, c.plan.wires);
       const nWires = full.wires.length;
       const knives = c.plan.cuts.filter((k) => k.kind !== "hole").length;
-      labFinFrames.push({ stage: 7, msg: `The editor's own router starts over from the same components. First it buys routing room: a blank line on each side and two on the right, except where such a line would push a connector off the rim, in which case it goes just inside that connector, or is left out where nothing fits. Then the cuts: ${full.cuts.length}${knives === 0 ? ", every one of them a drilled-out spare hole" : `, ${knives} of them cut with a knife between two holes`}.`, board: { ...full, wires: [] } });
+      labFinFrames.push({ stage: 7, msg: `The editor's own router starts over from the same components. First it buys routing room: a blank line on each side and two on the right; a connector on the rim keeps its place there and everything else moves inward. Then the cuts: ${full.cuts.length}${knives === 0 ? ", every one of them a drilled-out spare hole" : `, ${knives} of them cut with a knife between two holes`}.`, board: { ...full, wires: [] } });
       full.wires.forEach((w, k) => {
         const name = w.net >= 0 ? nets[w.net]?.name ?? "A net" : "A net";
         const how = w.c1 === w.c2
