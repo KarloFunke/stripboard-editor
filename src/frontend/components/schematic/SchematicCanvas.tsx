@@ -2,6 +2,7 @@
 
 import { useRef, useState, useCallback, useEffect, useMemo } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
+import { useLibraryStore } from "@/store/useLibraryStore";
 import { Component, NetLabel, NetLabelKind, SchematicWire } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { usePanZoom } from "@/hooks/usePanZoom";
@@ -121,6 +122,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
   const netAssignments = useProjectStore((s) => s.netAssignments);
   const removeComponent = useProjectStore((s) => s.removeComponent);
   const addComponent = useProjectStore((s) => s.addComponent);
+  const addLibraryComponent = useProjectStore((s) => s.addLibraryComponent);
   const addSchematicWire = useProjectStore((s) => s.addSchematicWire);
   const removeSchematicWire = useProjectStore((s) => s.removeSchematicWire);
   const rotateSchematicComponent = useProjectStore((s) => s.rotateSchematicComponent);
@@ -862,7 +864,10 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
     const defId = e.dataTransfer.getData("application/schematic-component");
     if (defId) {
       e.preventDefault();
-      addComponent(defId, snapped);
+      // A part from the user's library is copied into the project first
+      const libDef = useLibraryStore.getState().defs.find((d) => d.id === defId);
+      if (libDef) addLibraryComponent(libDef, snapped);
+      else addComponent(defId, snapped);
       return;
     }
     const raw = e.dataTransfer.getData("application/schematic-netlabel");
@@ -875,7 +880,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
         placeLabel(kind, snapped, tile.name);
       }
     }
-  }, [readOnly, panZoom.screenToSvg, addComponent, placeLabel]);
+  }, [readOnly, panZoom.screenToSvg, addComponent, addLibraryComponent, placeLabel]);
 
   // ── Render ────────────────────────────────────────────
 

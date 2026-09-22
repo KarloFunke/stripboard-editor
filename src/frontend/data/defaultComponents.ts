@@ -143,12 +143,11 @@ const SEMICONDUCTOR = "Semiconductor";
 const OPAMPS = "Op amps & comparators";
 const TIMERS = "Timers";
 const MCU = "Microcontrollers & modules";
-const GENERIC_IC = "Generic ICs";
 const CONNECTOR = "Connector";
 
 /** Panel groups in the order they are listed */
 export const COMPONENT_GROUP_LABELS = [
-  PASSIVE, SEMICONDUCTOR, OPAMPS, TIMERS, "Audio", "Logic", "Regulators & references", "Optocouplers", "Drivers & sensors", MCU, GENERIC_IC, CONNECTOR,
+  PASSIVE, SEMICONDUCTOR, CONNECTOR, "Regulators & references", TIMERS, OPAMPS, "Optocouplers", MCU, "Logic", "Audio", "Drivers & sensors",
 ];
 
 const TRANSISTOR_PRESETS = ["def-generic-3pin-compact", "def-generic-3pin-spaced"];
@@ -189,18 +188,6 @@ const BUILT_IN_PARTS: PartSpec[] = [
     flexible: true,
   },
   {
-    id: "def-diode",
-    name: "Diode",
-    group: PASSIVE,
-    category: "passive",
-    hasValue: true,
-    symbol: "diode",
-    labelPrefix: "D",
-    footprint: { kind: "inline", pins: 2, step: 3 },
-    pins: ["A", "K"],
-    flexible: true,
-  },
-  {
     id: "def-led",
     name: "LED",
     group: PASSIVE,
@@ -215,6 +202,38 @@ const BUILT_IN_PARTS: PartSpec[] = [
     flexible: true,
   },
   {
+    id: "def-diode",
+    name: "Diode",
+    group: PASSIVE,
+    category: "passive",
+    hasValue: true,
+    symbol: "diode",
+    labelPrefix: "D",
+    footprint: { kind: "inline", pins: 2, step: 3 },
+    pins: ["A", "K"],
+    flexible: true,
+  },
+  {
+    id: "def-potentiometer",
+    name: "Potentiometer",
+    group: PASSIVE,
+    category: "passive",
+    hasValue: true,
+    symbol: "potentiometer",
+    labelPrefix: "RV",
+    footprint: { kind: "inline", pins: 3 },
+    pins: ["VCC", "OUT", "GND"],
+  },
+  {
+    id: "def-switch",
+    name: "Switch (toggle/slide)",
+    group: PASSIVE,
+    category: "passive",
+    symbol: "switch",
+    labelPrefix: "S",
+    footprint: { kind: "inline", pins: 2, step: 3 },
+  },
+  {
     id: "def-zener",
     name: "Zener Diode",
     group: PASSIVE,
@@ -225,6 +244,31 @@ const BUILT_IN_PARTS: PartSpec[] = [
     footprint: { kind: "inline", pins: 2, step: 3 },
     pins: ["A", "K"],
     flexible: true,
+  },
+  {
+    id: "def-pushbutton",
+    name: "Push button (momentary)",
+    group: PASSIVE,
+    category: "passive",
+    symbol: "pushbutton",
+    labelPrefix: "SW",
+    footprint: {
+      kind: "cells",
+      width: 4,
+      height: 3,
+      // 4 legs, 2 electrical nodes: same-id legs share a net (and a strip).
+      pins: [
+        { id: "1", name: "1", offsetRow: 0, offsetCol: 0 },
+        { id: "1", name: "1", offsetRow: 0, offsetCol: 3 },
+        { id: "2", name: "2", offsetRow: 2, offsetCol: 0 },
+        { id: "2", name: "2", offsetRow: 2, offsetCol: 3 },
+      ],
+      bodyCells: [
+        { row: 0, col: 1 }, { row: 0, col: 2 },
+        { row: 1, col: 0 }, { row: 1, col: 1 }, { row: 1, col: 2 }, { row: 1, col: 3 },
+        { row: 2, col: 1 }, { row: 2, col: 2 },
+      ],
+    },
   },
   {
     id: "def-inductor",
@@ -270,75 +314,6 @@ const BUILT_IN_PARTS: PartSpec[] = [
       bodyCells: [
         { row: 0, col: 1 }, { row: 0, col: 2 },
         { row: 1, col: 1 }, { row: 1, col: 2 },
-      ],
-    },
-  },
-  {
-    id: "def-switch",
-    name: "Switch",
-    group: PASSIVE,
-    category: "passive",
-    symbol: "switch",
-    labelPrefix: "S",
-    footprint: { kind: "inline", pins: 2, step: 3 },
-  },
-  {
-    id: "def-potentiometer",
-    name: "Potentiometer",
-    group: PASSIVE,
-    category: "passive",
-    hasValue: true,
-    symbol: "potentiometer",
-    labelPrefix: "RV",
-    footprint: { kind: "inline", pins: 3 },
-    pins: ["VCC", "OUT", "GND"],
-  },
-  {
-    id: "def-trimpot",
-    name: "Trimmer",
-    group: PASSIVE,
-    category: "passive",
-    hasValue: true,
-    symbol: "potentiometer",
-    labelPrefix: "RV",
-    footprint: {
-      kind: "cells",
-      width: 3,
-      height: 3,
-      pins: [
-        { id: "1", name: "VCC", offsetRow: 2, offsetCol: 0 },
-        { id: "2", name: "OUT", offsetRow: 0, offsetCol: 1 },
-        { id: "3", name: "GND", offsetRow: 2, offsetCol: 2 },
-      ],
-      bodyCells: [
-        { row: 0, col: 0 }, { row: 0, col: 2 },
-        { row: 1, col: 0 }, { row: 1, col: 1 }, { row: 1, col: 2 },
-        { row: 2, col: 1 },
-      ],
-    },
-  },
-  {
-    id: "def-pushbutton",
-    name: "Push Button",
-    group: PASSIVE,
-    category: "passive",
-    symbol: "pushbutton",
-    labelPrefix: "SW",
-    footprint: {
-      kind: "cells",
-      width: 4,
-      height: 3,
-      // 4 legs, 2 electrical nodes: same-id legs share a net (and a strip).
-      pins: [
-        { id: "1", name: "1", offsetRow: 0, offsetCol: 0 },
-        { id: "1", name: "1", offsetRow: 0, offsetCol: 3 },
-        { id: "2", name: "2", offsetRow: 2, offsetCol: 0 },
-        { id: "2", name: "2", offsetRow: 2, offsetCol: 3 },
-      ],
-      bodyCells: [
-        { row: 0, col: 1 }, { row: 0, col: 2 },
-        { row: 1, col: 0 }, { row: 1, col: 1 }, { row: 1, col: 2 }, { row: 1, col: 3 },
-        { row: 2, col: 1 }, { row: 2, col: 2 },
       ],
     },
   },
@@ -422,12 +397,6 @@ const BUILT_IN_PARTS: PartSpec[] = [
     group: MCU,
     footprint: { kind: "breakout", width: 7, left: NANO_LEFT, right: NANO_RIGHT },
   },
-  ...[4, 6, 8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40].map((pinCount): PartSpec => ({
-    id: `def-ic-dip${pinCount}`,
-    name: `Generic IC (${pinCount}-pin)`,
-    group: GENERIC_IC,
-    footprint: { kind: "dip", pins: pinCount },
-  })),
   ...Array.from({ length: 20 }, (_, i): PartSpec => ({
     id: `def-connector-${i + 1}`,
     name: `Connector (${i + 1}-pin)`,
@@ -450,17 +419,52 @@ export interface ComponentGroup {
   rows: boolean;
 }
 
-const TILE_GROUPS = new Set([PASSIVE, SEMICONDUCTOR, GENERIC_IC, CONNECTOR]);
+const TILE_GROUPS = new Set([PASSIVE, SEMICONDUCTOR, CONNECTOR]);
 
-export const COMPONENT_GROUPS: ComponentGroup[] = COMPONENT_GROUP_LABELS.map((label) => ({
-  label,
-  components: PART_SPECS.filter((s) => s.group === label).map(partDef),
-  rows: !TILE_GROUPS.has(label),
-}));
+// Tile groups keep the order they are written in above (most used first);
+// named parts are listed by name, numbers compared as numbers (LM324 before LM3914)
+export const COMPONENT_GROUPS: ComponentGroup[] = COMPONENT_GROUP_LABELS.map((label) => {
+  const rows = !TILE_GROUPS.has(label);
+  const components = PART_SPECS.filter((s) => s.group === label).map(partDef);
+  if (rows) components.sort((a, b) => a.name.localeCompare(b.name, "en", { numeric: true }));
+  return { label, components, rows };
+});
 
-// The first generic stand-ins, replaced by specific parts from the IC list:
-// no longer offered, kept so projects that use them still open
+// No longer offered, kept so projects that use them still open: the first
+// generic stand-ins, replaced by specific parts from the IC list; the generic
+// ICs, replaced by those parts or a custom part; the trimmer, now a package of
+// the potentiometer
 const RETIRED_PARTS: PartSpec[] = [
+  ...[4, 6, 8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40].map((pinCount): PartSpec => ({
+    id: `def-ic-dip${pinCount}`,
+    name: `Generic IC (${pinCount}-pin)`,
+    group: "",
+    footprint: { kind: "dip", pins: pinCount },
+  })),
+  {
+    id: "def-trimpot",
+    name: "Trimmer",
+    group: "",
+    category: "passive",
+    hasValue: true,
+    symbol: "potentiometer",
+    labelPrefix: "RV",
+    footprint: {
+      kind: "cells",
+      width: 3,
+      height: 3,
+      pins: [
+        { id: "1", name: "VCC", offsetRow: 2, offsetCol: 0 },
+        { id: "2", name: "OUT", offsetRow: 0, offsetCol: 1 },
+        { id: "3", name: "GND", offsetRow: 2, offsetCol: 2 },
+      ],
+      bodyCells: [
+        { row: 0, col: 0 }, { row: 0, col: 2 },
+        { row: 1, col: 0 }, { row: 1, col: 1 }, { row: 1, col: 2 },
+        { row: 2, col: 1 },
+      ],
+    },
+  },
   {
     id: "def-opamp",
     name: "Op-Amp",

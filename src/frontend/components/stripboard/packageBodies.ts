@@ -163,7 +163,12 @@ export function packageOptions(def: ComponentDef): PackageOption[] {
     case "def-trimpot":
       return [{ id: "trimmer", name: "Trimmer, 9 mm" }, { id: "trim-3296", name: "Multi-turn trimmer, 3296W", movesPins: true }];
     case "def-potentiometer":
-      return [{ id: "pot", name: "Panel pot, 16 mm" }, { id: "pot-9mm", name: "PCB pot, 9 mm" }];
+      return [
+        { id: "pot", name: "Panel pot, 16 mm" },
+        { id: "pot-9mm", name: "PCB pot, 9 mm" },
+        { id: "trimmer", name: "Trimmer, 9 mm", movesPins: true },
+        { id: "trim-3296", name: "Multi-turn trimmer, 3296W", movesPins: true },
+      ];
     default:
       return [];
   }
@@ -294,6 +299,17 @@ export function footprintFor(def: ComponentDef, packageId: string): PackageFootp
       }
     }
     return { width: 3, height, pins, bodyCells };
+  }
+  if (packageId === "trimmer" && def.pins.length === 3) {
+    // The wiper leg alone on the far side, the two ends 5.08 mm apart below it
+    const at = [{ offsetRow: 2, offsetCol: 0 }, { offsetRow: 0, offsetCol: 1 }, { offsetRow: 2, offsetCol: 2 }];
+    const pins = def.pins.map((pin, i) => ({ ...pin, ...at[i] }));
+    const bodyCells: BodyCell[] = [
+      { row: 0, col: 0 }, { row: 0, col: 2 },
+      { row: 1, col: 0 }, { row: 1, col: 1 }, { row: 1, col: 2 },
+      { row: 2, col: 1 },
+    ];
+    return { width: 3, height: 3, pins, bodyCells };
   }
   if (packageId === "trim-3296") {
     // Three legs in one line, 2.54 mm apart, under a body 9.5 mm long.

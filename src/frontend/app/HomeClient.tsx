@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import SiteFooter from "@/components/SiteFooter";
 import {
   getUserProjects,
+  getLibraryParts,
   deleteProject,
   deleteAccount,
   changePassword,
@@ -34,6 +35,12 @@ export default function HomeClient({
   const resetProject = useProjectStore((s) => s.resetProject);
 
   const [user, setUser] = useState<User | null>(initialUser);
+  // Size of the user's part library, once known
+  const [partCount, setPartCount] = useState<number | null>(null);
+  useEffect(() => {
+    if (!user) return;
+    getLibraryParts().then((parts) => setPartCount(parts ? parts.length : null)).catch(() => setPartCount(null));
+  }, [user]);
   const [projects, setProjects] = useState<ProjectMeta[]>(initialProjects);
 
   const [showAuth, setShowAuth] = useState<"login" | "register" | null>(null);
@@ -389,6 +396,24 @@ export default function HomeClient({
                 </button>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* The user's part library */}
+        {user && (
+          <div className="mb-8">
+            <h2 className="text-lg font-semibold text-neutral-800 dark:text-neutral-200 mb-3">Your Parts</h2>
+            <Link
+              href="/parts"
+              className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-lg px-4 py-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 hover:border-neutral-300 dark:hover:border-neutral-600 transition-colors"
+            >
+              <span className="text-sm text-neutral-600 dark:text-neutral-400">
+                {partCount === null
+                  ? "Custom parts you can use in all your projects"
+                  : `${partCount} custom ${partCount === 1 ? "part" : "parts"} in your library, usable in all your projects`}
+              </span>
+              <span className="text-sm text-[#113768] dark:text-[#5b9bd5]">Manage parts →</span>
+            </Link>
           </div>
         )}
 

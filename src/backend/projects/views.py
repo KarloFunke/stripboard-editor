@@ -18,6 +18,7 @@ from django.utils import timezone
 from django.utils.encoding import force_bytes, force_str
 from django.utils.html import escape
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
+from django.db import transaction
 from django.db.models import Count, F, Max, Q
 from django.db.models.functions import Coalesce
 from django.views.decorators.cache import cache_control
@@ -27,7 +28,7 @@ from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny
 from rest_framework.response import Response
 
 from .migrations_data.pipeline import migrate_to_current
-from .models import Project, Feedback, LayoutRating
+from .models import Project, Feedback, LayoutRating, UserPart
 from .serializers import (
     ProjectListSerializer,
     ProjectDetailSerializer,
@@ -56,11 +57,27 @@ from .throttles import (
     LayoutRatingUserThrottle,
 )
 from .pow import create_challenge, verify_and_consume, DIFFICULTY
+from .user_parts import (
+    MAX_PARTS_PER_USER, apply_to_project, found_in_projects, link_copies, linked_copies, placed_count,
+    stored_part, validate_part,
+)
 
 _log = logging.getLogger(__name__)
 
 
 # ── Projects ────────────────────────────────────────────
+
+MAX_PROJECTS_PER_USER = 500
+
+
+def _project_limit_response(user):
+    """A 403 when a signed-in user already owns as many projects as allowed."""
+    if user.is_authenticated and Project.objects.filter(owner=user).count() >= MAX_PROJECTS_PER_USER:
+        return Response(
+            {"error": f"You have reached the limit of {MAX_PROJECTS_PER_USER} projects. Delete one to make room."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    return None
 
 
 @api_view(["POST"])
@@ -75,6 +92,10 @@ def project_create(request):
                 {"error": "Invalid or missing proof of work"},
                 status=status.HTTP_403_FORBIDDEN,
             )
+
+    limit = _project_limit_response(request.user)
+    if limit:
+        return limit
 
     serializer = ProjectCreateSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -153,6 +174,9 @@ def project_fork(request, view_uuid):
         original = Project.objects.get(view_uuid=view_uuid)
     except Project.DoesNotExist:
         return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+    limit = _project_limit_response(request.user)
+    if limit:
+        return limit
 
     # A fork of a row the one-shot command has not reached yet still starts
     # on the current schema.
@@ -172,6 +196,9 @@ def project_fork(request, view_uuid):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def project_claim(request, edit_uuid):
+    limit = _project_limit_response(request.user)
+    if limit:
+        return limit
     # Atomic: only claim if currently unowned
     updated = Project.objects.filter(
         edit_uuid=edit_uuid,
@@ -197,6 +224,158 @@ def project_claim(request, edit_uuid):
 def user_projects(request):
     projects = Project.objects.filter(owner=request.user)
     return Response(ProjectListSerializer(projects, many=True).data)
+
+
+# ── The user's part library ─────────────────────────────
+
+
+def _part_json(p):
+    return {"id": str(p.id), "part": p.part, "rev": p.rev, "updated_at": p.updated_at}
+
+
+@cache_control(private=True, no_store=True)
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def user_parts(request):
+    parts = UserPart.objects.filter(owner=request.user)
+    if request.method == "GET":
+        out = [_part_json(p) for p in parts]
+        # With ?usage=1 each part says how many projects hold a linked copy.
+        # It reads every project of the user, so only the parts page asks.
+        if request.query_params.get("usage"):
+            used = {}
+            for project in Project.objects.filter(owner=request.user):
+                for d in project.data.get("componentDefs") or [] if isinstance(project.data, dict) else []:
+                    lib = d.get("library") if isinstance(d, dict) else None
+                    if isinstance(lib, dict):
+                        used.setdefault(lib.get("id"), set()).add(project.edit_uuid)
+            for row in out:
+                row["used_in"] = len(used.get(row["id"], ()))
+        return Response(out)
+
+    part = request.data.get("part")
+    error = validate_part(part)
+    if error:
+        return Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
+    if parts.count() >= MAX_PARTS_PER_USER:
+        return _library_full()
+    created = UserPart.objects.create(owner=request.user, part=stored_part(part))
+    return Response(_part_json(created), status=status.HTTP_201_CREATED)
+
+
+def _library_full():
+    return Response(
+        {"error": f"Your library is full ({MAX_PARTS_PER_USER} parts). Delete a part to make room."},
+        status=status.HTTP_403_FORBIDDEN,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def user_parts_import(request):
+    """Adds every part of an exported parts file as a new library part."""
+    parts = request.data.get("parts")
+    if not isinstance(parts, list) or not parts:
+        return Response({"error": "The file holds no parts"}, status=status.HTTP_400_BAD_REQUEST)
+    for i, part in enumerate(parts):
+        error = validate_part(part)
+        if error:
+            return Response({"error": f"Part {i + 1}: {error}"}, status=status.HTTP_400_BAD_REQUEST)
+    if UserPart.objects.filter(owner=request.user).count() + len(parts) > MAX_PARTS_PER_USER:
+        return _library_full()
+    created = UserPart.objects.bulk_create([UserPart(owner=request.user, part=stored_part(p)) for p in parts])
+    return Response([_part_json(p) for p in created], status=status.HTTP_201_CREATED)
+
+
+@cache_control(private=True, no_store=True)
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def user_parts_found(request):
+    """Custom parts that so far live only inside the user's projects."""
+    library_ids = {str(i) for i in UserPart.objects.filter(owner=request.user).values_list("id", flat=True)}
+    return Response(found_in_projects(Project.objects.filter(owner=request.user), library_ids))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def user_parts_adopt(request):
+    """
+    Makes a part found in the user's projects a library part and links every
+    identical copy in those projects to it. The part comes from the projects
+    themselves, named by its key, never from the request.
+    """
+    key = request.data.get("key")
+    library_ids = {str(i) for i in UserPart.objects.filter(owner=request.user).values_list("id", flat=True)}
+    with transaction.atomic():
+        projects = list(Project.objects.filter(owner=request.user).select_for_update())
+        group = next((g for g in found_in_projects(projects, library_ids) if g["key"] == key), None)
+        if group is None:
+            return Response({"error": "Part not found in your projects"}, status=status.HTTP_404_NOT_FOUND)
+        if len(library_ids) >= MAX_PARTS_PER_USER:
+            return _library_full()
+        created = UserPart.objects.create(owner=request.user, part=group["part"])
+        linked = 0
+        for project in projects:
+            n = link_copies(project.data, key, str(created.id), library_ids)
+            if n:
+                project.save(update_fields=["data", "updated_at"])
+                linked += 1
+    return Response({**_part_json(created), "linked_projects": linked}, status=status.HTTP_201_CREATED)
+
+
+@api_view(["PUT", "DELETE"])
+@permission_classes([IsAuthenticated])
+def user_part_detail(request, part_id):
+    try:
+        user_part = UserPart.objects.get(id=part_id, owner=request.user)
+    except UserPart.DoesNotExist:
+        return Response({"error": "Part not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == "DELETE":
+        # Copies in projects stay as they are; their link just leads nowhere now
+        user_part.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    part = request.data.get("part")
+    error = validate_part(part)
+    if error:
+        return Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
+    part = stored_part(part)
+    # The project being edited applies the change itself and saves it; writing
+    # it here as well would race that save
+    skip = str(request.data.get("skip_project") or "")
+    updated = 0
+    with transaction.atomic():
+        user_part.part = part
+        user_part.rev += 1
+        user_part.save()
+        if request.data.get("update_projects"):
+            for project in Project.objects.filter(owner=request.user).select_for_update():
+                if str(project.edit_uuid) == skip:
+                    continue
+                if apply_to_project(project.data, str(user_part.id), part, user_part.rev):
+                    project.save(update_fields=["data", "updated_at"])
+                    updated += 1
+    return Response({**_part_json(user_part), "updated_projects": updated})
+
+
+@cache_control(private=True, no_store=True)
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def user_part_usage(request, part_id):
+    """The owner's projects holding a linked copy, and how many of those are placed."""
+    if not UserPart.objects.filter(id=part_id, owner=request.user).exists():
+        return Response({"error": "Part not found"}, status=status.HTTP_404_NOT_FOUND)
+    out = []
+    for project in Project.objects.filter(owner=request.user):
+        copies = linked_copies(project.data, str(part_id))
+        if copies:
+            out.append({
+                "edit_uuid": str(project.edit_uuid),
+                "name": project.name,
+                "placed": placed_count(project.data, {d.get("id") for d in copies}),
+            })
+    return Response(out)
 
 
 # ── Auth ────────────────────────────────────────────────

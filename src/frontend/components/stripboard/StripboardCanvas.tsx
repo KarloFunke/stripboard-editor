@@ -1520,7 +1520,7 @@ export default function StripboardCanvas({
                 })),
                 ...(sameType > 1 && current ? [{
                   key: "all",
-                  label: `Apply to all ${sameType} ${baseDef.name.toLowerCase()}s`,
+                  label: `Apply to all ${sameType} of this part`,
                   separated: true,
                   onClick: () => setComponentPackage(selectedId, current, "type"),
                 }] : []),

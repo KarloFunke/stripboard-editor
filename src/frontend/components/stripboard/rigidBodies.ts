@@ -38,7 +38,12 @@ function horizontal(geom: RigidGeom): boolean {
   const ys = new Set(geom.pins.map((p) => Math.round(p.y * 100)));
   if (ys.size === 1) return true;
   const xs = new Set(geom.pins.map((p) => Math.round(p.x * 100)));
-  return xs.size > ys.size;
+  if (xs.size !== ys.size) return xs.size > ys.size;
+  // Two pins a side (a DIP-4, a tactile switch): the rows are further apart
+  // than the pins in them, so the part lies along the shorter span
+  const x = span(geom, "x");
+  const y = span(geom, "y");
+  return x.hi - x.lo < y.hi - y.lo;
 }
 
 function span(geom: RigidGeom, along: "x" | "y") {
@@ -331,13 +336,20 @@ export function rigidShape(spec: RigidSpec, geom: RigidGeom): RigidShape {
     }
 
     case "trimmer": {
-      // 9 mm single-turn trimmer: square body with a cross-slot screw.
-      const body: Box = { x: -4.75, y: -5.0, w: 9.5, h: 10.0 };
+      // 9 mm single-turn trimmer: square body with a cross-slot screw. The
+      // wiper leg sits alone on one side, and the screw goes in that half:
+      // the label then sits in the other, and the two end pin names stay on
+      // the dark body where they read. Unrotated the wiper is at the top.
+      const f = front(geom.rotation);
+      const w = { x: f.y, y: -f.x };
+      const body: Box = w.x === 0 ? { x: -4.75, y: -5.0, w: 9.5, h: 10.0 } : { x: -5.0, y: -4.75, w: 10.0, h: 9.5 };
       const pieces: Piece[] = [rect(body.x, body.y, body.w, body.h, spec.fill, 0.5)];
-      // The screw goes in the upper half: the label then sits below it, and
-      // the two bottom pin names stay on the dark body where they read.
-      pieces.push({ t: "circle", cx: 0, cy: -2.1, rad: 2.3, fill: "#e4e6e8", outline: true });
-      pieces.push({ t: "line", x1: -1.55, y1: -2.1, x2: 1.55, y2: -2.1, stroke: "rgba(0,0,0,0.45)", sw: 0.4 });
+      const screw = { x: w.x * 2.1, y: w.y * 2.1 };
+      pieces.push({ t: "circle", cx: screw.x, cy: screw.y, rad: 2.3, fill: "#e4e6e8", outline: true });
+      pieces.push({
+        t: "line", x1: screw.x - w.y * 1.55, y1: screw.y - w.x * 1.55, x2: screw.x + w.y * 1.55, y2: screw.y + w.x * 1.55,
+        stroke: "rgba(0,0,0,0.45)", sw: 0.4,
+      });
       return { body, pieces, aloft: [] };
     }
 

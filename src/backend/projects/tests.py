@@ -16,7 +16,7 @@ from projects.migrations_data.ic_unification import (
 from projects.migrations_data.optocoupler_v4 import migrate_optocoupler_v4
 from projects.migrations_data.pipeline import CURRENT_SCHEMA_VERSION, migrate_to_current
 from projects.migrations_data.schematic_v3 import SCHEMA_VERSION as V3, decide_wiring, migrate_schematic_v3
-from projects.models import Project
+from projects.models import Project, UserPart
 
 
 FIXTURE_PATH = os.path.join(os.path.dirname(__file__), "ic-migration-test-project.json")
@@ -800,3 +800,226 @@ class OptocouplerV4Tests(TestCase):
         from projects.migrations_data.schematic_v3 import DEFAULT_DEF_SYMBOL, _symbol_pins
         self.assertEqual(DEFAULT_DEF_SYMBOL["def-optocoupler"], "optocoupler")
         self.assertIn(("1", -60, -20), _symbol_pins("optocoupler"))
+
+
+def _grid_part(name="Relay", width=2, pins=None):
+    return {
+        "id": "custom-x", "name": name, "category": "generic", "symbol": "custom-footprint-custom-x",
+        "defaultLabelPrefix": "K", "width": width, "height": 2,
+        "pins": pins or [{"id": "1", "name": "1", "offsetRow": 0, "offsetCol": 0}],
+    }
+
+
+class UserPartLibraryTests(TestCase):
+    """The per-user part library: storage, limits, ownership, and carrying an
+    edit into the projects that hold a linked copy."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("owner", password="x" * 64)
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def _post(self, part):
+        return self.client.post("/api/users/me/parts/", data=json.dumps({"part": part}), content_type="application/json")
+
+    def _project_with_copy(self, part_id, rev=1, placed=True, name="P"):
+        copy = {**_grid_part(), "id": "custom-copy", "symbol": "custom-footprint-custom-copy",
+                "library": {"id": part_id, "rev": rev}}
+        comp = {"id": "k1", "defId": "custom-copy", "boardPos": {"row": 1, "col": 1} if placed else None,
+                "footprintOverride": {"width": 2, "height": 2, "pins": []}, "package": "to220"}
+        data = {"version": CURRENT_SCHEMA_VERSION, "componentDefs": [copy], "components": [comp]}
+        return Project.objects.create(owner=self.user, name=name, data=data)
+
+    def test_create_list_delete(self):
+        res = self._post(_grid_part())
+        self.assertEqual(res.status_code, 201)
+        part_id = res.json()["id"]
+        listed = self.client.get("/api/users/me/parts/").json()
+        self.assertEqual([p["id"] for p in listed], [part_id])
+        self.assertEqual(self.client.delete(f"/api/users/me/parts/{part_id}/").status_code, 204)
+        self.assertEqual(self.client.get("/api/users/me/parts/").json(), [])
+
+    def test_requires_login(self):
+        self.assertIn(Client().get("/api/users/me/parts/").status_code, (401, 403))
+
+    def test_rejects_malformed_and_oversize_parts(self):
+        self.assertEqual(self._post({"name": "x"}).status_code, 400)
+        huge = _grid_part(pins=[{"id": str(i), "name": "N" * 40, "offsetRow": 0, "offsetCol": i} for i in range(1500)])
+        res = self._post(huge)
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("too large", res.json()["error"])
+
+    def test_rejects_parts_the_editor_cannot_show(self):
+        # An imported file can carry anything; what gets in must render and open in the editor
+        bad = [
+            {**_grid_part(), "symbol": None},
+            {**_grid_part(), "symbol": "sip-ic-100000000"},
+            {**_grid_part(), "width": 10000},
+            {**_grid_part(), "defaultLabelPrefix": 7},
+            {**_grid_part(), "group": ["Passive"]},
+            _grid_part(pins=[{"id": "1", "name": "1", "offsetRow": 5, "offsetCol": 0}]),
+            _grid_part(pins=[{"id": 1, "name": "1", "offsetRow": 0, "offsetCol": 0}]),
+            _grid_part(pins=["1"]),
+            {**_grid_part(), "bodyCells": [{"row": "a"}]},
+            {**_grid_part(), "spec": {"footprint": "dip"}},
+            {**_grid_part(), "spec": {"footprint": {"kind": "dip"}, "pins": "12345678"}},
+        ]
+        for part in bad:
+            self.assertEqual(self._post(part).status_code, 400, part)
+        good = {**_grid_part(), "symbol": "generic-ic-8", "group": "Passive", "description": "",
+                "bodyCells": [{"row": 1, "col": 1}], "spec": {"footprint": {"kind": "dip", "pins": 8}, "pins": ["1"] * 8}}
+        self.assertEqual(self._post(good).status_code, 201)
+
+    def test_library_limit(self):
+        from projects.user_parts import MAX_PARTS_PER_USER
+        UserPart.objects.bulk_create([UserPart(owner=self.user, part=_grid_part()) for _ in range(MAX_PARTS_PER_USER)])
+        self.assertEqual(self._post(_grid_part()).status_code, 403)
+
+    def test_other_users_parts_are_invisible(self):
+        other = User.objects.create_user("other", password="x" * 64)
+        theirs = UserPart.objects.create(owner=other, part=_grid_part())
+        self.assertEqual(self.client.get("/api/users/me/parts/").json(), [])
+        res = self.client.put(f"/api/users/me/parts/{theirs.id}/", data=json.dumps({"part": _grid_part()}),
+                              content_type="application/json")
+        self.assertEqual(res.status_code, 404)
+        self.assertEqual(self.client.delete(f"/api/users/me/parts/{theirs.id}/").status_code, 404)
+
+    def test_update_carries_into_linked_projects(self):
+        part = UserPart.objects.create(owner=self.user, part=_grid_part())
+        linked = self._project_with_copy(str(part.id))
+        skipped = self._project_with_copy(str(part.id), name="Open in the editor")
+        unlinked = Project.objects.create(owner=self.user, data={"componentDefs": [{**_grid_part(), "id": "custom-copy"}], "components": []})
+        usage = self.client.get(f"/api/users/me/parts/{part.id}/usage/").json()
+        self.assertEqual(sorted(u["name"] for u in usage), ["Open in the editor", "P"])
+        self.assertEqual(usage[0]["placed"], 1)
+
+        wider = _grid_part(name="Relay 2", width=3)
+        res = self.client.put(f"/api/users/me/parts/{part.id}/", content_type="application/json",
+                              data=json.dumps({"part": wider, "update_projects": True, "skip_project": str(skipped.edit_uuid)}))
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["rev"], 2)
+        self.assertEqual(res.json()["updated_projects"], 1)
+
+        linked.refresh_from_db()
+        copy = linked.data["componentDefs"][0]
+        self.assertEqual((copy["id"], copy["name"], copy["width"]), ("custom-copy", "Relay 2", 3))
+        self.assertEqual(copy["symbol"], "custom-footprint-custom-copy", "the symbol follows the project's own id")
+        self.assertEqual(copy["library"], {"id": str(part.id), "rev": 2})
+        comp = linked.data["components"][0]
+        self.assertIsNone(comp["boardPos"], "a changed footprint sends the placed part back to unplaced")
+        self.assertNotIn("footprintOverride", comp)
+        self.assertNotIn("package", comp, "the package was chosen for the old footprint")
+
+        skipped.refresh_from_db()
+        self.assertEqual(skipped.data["componentDefs"][0]["name"], "Relay")
+        unlinked.refresh_from_db()
+        self.assertEqual(unlinked.data["componentDefs"][0]["name"], "Relay")
+
+    def test_update_drops_net_assignments_of_removed_pins(self):
+        part = UserPart.objects.create(owner=self.user, part=_grid_part())
+        linked = self._project_with_copy(str(part.id))
+        linked.data["components"].append({"id": "r1", "defId": "def-resistor", "boardPos": None})
+        linked.data["netAssignments"] = [
+            {"netId": "n1", "componentId": "k1", "pinId": "1"},
+            {"netId": "n2", "componentId": "k1", "pinId": "2"},
+            {"netId": "n2", "componentId": "r1", "pinId": "2"},
+        ]
+        linked.save()
+        pin_two = _grid_part(pins=[{"id": "2", "name": "2", "offsetRow": 0, "offsetCol": 0}])
+        self.client.put(f"/api/users/me/parts/{part.id}/", content_type="application/json",
+                        data=json.dumps({"part": pin_two, "update_projects": True}))
+        linked.refresh_from_db()
+        self.assertEqual(
+            [(a["componentId"], a["pinId"]) for a in linked.data["netAssignments"]],
+            [("k1", "2"), ("r1", "2")],
+            "pin 1 is gone from the part; other parts' pins are left alone",
+        )
+
+    def test_same_footprint_keeps_parts_placed(self):
+        part = UserPart.objects.create(owner=self.user, part=_grid_part())
+        linked = self._project_with_copy(str(part.id))
+        renamed = _grid_part(name="Relay, 5 V", pins=[{"id": "1", "name": "COIL", "offsetRow": 0, "offsetCol": 0}])
+        self.client.put(f"/api/users/me/parts/{part.id}/", content_type="application/json",
+                        data=json.dumps({"part": renamed, "update_projects": True}))
+        linked.refresh_from_db()
+        self.assertEqual(linked.data["components"][0]["boardPos"], {"row": 1, "col": 1})
+
+    def test_update_without_projects_touches_none(self):
+        part = UserPart.objects.create(owner=self.user, part=_grid_part())
+        linked = self._project_with_copy(str(part.id))
+        self.client.put(f"/api/users/me/parts/{part.id}/", content_type="application/json",
+                        data=json.dumps({"part": _grid_part(name="Changed")}))
+        linked.refresh_from_db()
+        self.assertEqual(linked.data["componentDefs"][0]["name"], "Relay")
+
+
+class UserPartFoundAndImportTests(TestCase):
+    """Parts found in the user's projects can be adopted into the library,
+    which links the copies they came from; exported files can be imported."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("owner", password="x" * 64)
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def _project(self, name, defs):
+        return Project.objects.create(owner=self.user, name=name, data={"componentDefs": defs, "components": []})
+
+    def test_identical_parts_are_found_once_and_adopted_together(self):
+        a = self._project("A", [{**_grid_part(), "id": "custom-a", "symbol": "custom-footprint-custom-a"}])
+        b = self._project("B", [{**_grid_part(), "id": "custom-b", "symbol": "custom-footprint-custom-b"}])
+        other = self._project("C", [{**_grid_part(name="Buzzer"), "id": "custom-c", "symbol": "custom-footprint-custom-c"}])
+        found = self.client.get("/api/users/me/parts/found/").json()
+        self.assertEqual(sorted((g["part"]["name"], len(g["projects"])) for g in found), [("Buzzer", 1), ("Relay", 2)])
+
+        relay = next(g for g in found if g["part"]["name"] == "Relay")
+        res = self.client.post("/api/users/me/parts/adopt/", data=json.dumps({"key": relay["key"]}), content_type="application/json")
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual(res.json()["linked_projects"], 2)
+        part_id = res.json()["id"]
+        for project in (a, b):
+            project.refresh_from_db()
+            self.assertEqual(project.data["componentDefs"][0]["library"], {"id": part_id, "rev": 1})
+        other.refresh_from_db()
+        self.assertNotIn("library", other.data["componentDefs"][0])
+
+        remaining = self.client.get("/api/users/me/parts/found/").json()
+        self.assertEqual([g["part"]["name"] for g in remaining], ["Buzzer"], "adopted parts are no longer listed")
+        listed = self.client.get("/api/users/me/parts/?usage=1").json()
+        self.assertEqual(listed[0]["used_in"], 2)
+
+    def test_adopting_an_unknown_key_fails(self):
+        res = self.client.post("/api/users/me/parts/adopt/", data=json.dumps({"key": "nope"}), content_type="application/json")
+        self.assertEqual(res.status_code, 404)
+
+    def test_other_users_projects_are_not_searched(self):
+        other = User.objects.create_user("other", password="x" * 64)
+        Project.objects.create(owner=other, data={"componentDefs": [_grid_part()]})
+        self.assertEqual(self.client.get("/api/users/me/parts/found/").json(), [])
+
+    def test_import_adds_every_part_or_none(self):
+        good = [_grid_part(name="One"), {**_grid_part(name="Two"), "library": {"id": "someone-else", "rev": 9}}]
+        res = self.client.post("/api/users/me/parts/import/", data=json.dumps({"parts": good}), content_type="application/json")
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual([p["part"]["name"] for p in res.json()], ["One", "Two"])
+        self.assertTrue(all("library" not in p.part for p in UserPart.objects.all()), "imported parts carry no links")
+        bad = [_grid_part(name="Three"), {"name": "broken"}]
+        res = self.client.post("/api/users/me/parts/import/", data=json.dumps({"parts": bad}), content_type="application/json")
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("Part 2", res.json()["error"])
+        self.assertEqual(UserPart.objects.count(), 2)
+
+
+class ProjectLimitTests(TestCase):
+    def test_signed_in_users_are_capped(self):
+        from projects import views
+        user = User.objects.create_user("many", password="x" * 64)
+        client = Client()
+        client.force_login(user)
+        Project.objects.bulk_create([Project(owner=user, data={}) for _ in range(views.MAX_PROJECTS_PER_USER)])
+        payload = json.dumps({"name": "One more", "data": {"version": CURRENT_SCHEMA_VERSION}})
+        res = client.post("/api/projects/", data=payload, content_type="application/json")
+        self.assertEqual(res.status_code, 403)
+        anon = Project.objects.create(data={})
+        self.assertEqual(client.post(f"/api/projects/{anon.edit_uuid}/claim/").status_code, 403)
+        self.assertEqual(client.post(f"/api/projects/fork/{anon.view_uuid}/").status_code, 403)

@@ -550,6 +550,35 @@ export function createGenericIcSymbol(pinCount: number): SymbolDef {
   };
 }
 
+/** An IC with its pins in one row (SIP): a narrow box, every pin on the left, pin 1 at the top. */
+export function createSipIcSymbol(pinCount: number): SymbolDef {
+  const halfW = 20;
+  const extent = (pinCount - 1) * G;
+  const yStart = -Math.floor(extent / 2 / G) * G;
+  const bodyTop = yStart - 10;
+  const bodyBottom = yStart + extent + 10;
+
+  const pins: SymbolPinStub[] = Array.from({ length: pinCount }, (_, i) => ({
+    pinId: String(i + 1),
+    defaultName: String(i + 1),
+    stubStart: { x: -halfW, y: yStart + i * G },
+    stubEnd: { x: -halfW - G, y: yStart + i * G },
+    side: "left" as const,
+  }));
+
+  return {
+    symbolId: `sip-ic-${pinCount}`,
+    label: `SIP IC (${pinCount}-pin)`,
+    category: "ic",
+    labelYOffset: 14,
+    bodyPaths: [
+      { d: `M ${-halfW} ${bodyTop} L ${halfW} ${bodyTop} L ${halfW} ${bodyBottom} L ${-halfW} ${bodyBottom} Z`, fill: "none" },
+      ...pins.map((p) => ({ d: `M ${p.stubStart.x} ${p.stubStart.y} L ${p.stubEnd.x} ${p.stubEnd.y}`, fill: "none" })),
+    ],
+    pins,
+  };
+}
+
 const PIN_BOX_SIDES = {
   l: { start: { x: -18, y: 0 }, end: { x: -2 * G, y: 0 }, side: "left" },
   r: { start: { x: 18, y: 0 }, end: { x: 2 * G, y: 0 }, side: "right" },
@@ -713,6 +742,9 @@ export function getSymbolDef(symbolId: string): SymbolDef | undefined {
 
   const connMatch = symbolId.match(/^connector-(\d+)$/);
   if (connMatch) return createConnectorSymbol(parseInt(connMatch[1], 10));
+
+  const sipMatch = symbolId.match(/^sip-ic-(\d+)$/);
+  if (sipMatch) return createSipIcSymbol(parseInt(sipMatch[1], 10));
 
   if (/^box(-[lrtb]\d+)+$/.test(symbolId)) return createPinBoxSymbol(symbolId);
 

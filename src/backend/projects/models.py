@@ -110,3 +110,25 @@ class FeedbackReply(models.Model):
     def __str__(self):
         who = "staff" if self.from_staff else "user"
         return f"{who}: {self.body[:50]}"
+
+
+class UserPart(models.Model):
+    """A custom part in a user's own library, usable in all of their projects.
+    A project holds a copy of the part that remembers this id and the
+    revision it was copied at (`library` on the copy), so a later edit can
+    be carried into every project that still uses it unchanged."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name="parts")
+    # The part as the editor uses it (a ComponentDef)
+    part = models.JSONField()
+    rev = models.PositiveIntegerField(default=1)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["created_at"]
+        indexes = [models.Index(fields=["owner", "created_at"])]
+
+    def __str__(self):
+        name = self.part.get("name") if isinstance(self.part, dict) else None
+        return f"{name or 'part'} ({self.owner_id})"

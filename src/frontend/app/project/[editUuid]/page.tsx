@@ -96,6 +96,13 @@ export default function ProjectEditorPage() {
 
   const handleSave = doSave;
 
+  // A change to the user's part library saves the project with it (see CustomComponentEditor)
+  const setSaveNow = useProjectStore((s) => s.setSaveNow);
+  useEffect(() => {
+    setSaveNow(doSave);
+    return () => setSaveNow(null);
+  }, [doSave, setSaveNow]);
+
   // Toggling auto-save persists the flag to the server right away, so the
   // preference sticks for this project (in either direction).
   const handleToggleAutoSave = useCallback(() => {

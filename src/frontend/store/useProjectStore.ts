@@ -36,7 +36,7 @@ import {
   transformSelection,
 } from "@/components/schematic/schematicGeometry";
 import { pointKey, snapToGrid } from "@/utils/schematicConstants";
-import { createFootprintSymbol, registerCustomSymbol } from "@/data/symbolDefs";
+import { footprintChanged, newCustomId, registerPartSymbol, withPartId } from "@/data/customParts";
 import { computeAutoFinish, AutoFinishResult } from "@/components/stripboard/autoFinish";
 import { footprintFor } from "@/components/stripboard/packageBodies";
 import { AutoLayoutResult, LAYOUT_VERSION } from "@/components/stripboard/layoutTypes";
@@ -129,6 +129,12 @@ interface ProjectActions {
     defId: string,
     updates: Partial<Pick<ComponentDef, "width" | "height" | "pins" | "bodyCells">>
   ) => void;
+  // A new version of one custom part in this project
+  replaceComponentDef: (def: ComponentDef) => void;
+  // Places a library part, copying it into the project unless a linked copy is already here
+  addLibraryComponent: (libDef: ComponentDef, schematicPos: { x: number; y: number }) => void;
+  // Carries a saved library part into this project's linked copies
+  applyLibraryUpdate: (libDef: ComponentDef) => void;
 
   // Components
   addComponent: (defId: string, schematicPos: { x: number; y: number }) => void;
@@ -323,6 +329,9 @@ interface HistoryState {
   _lastBoardEditSeq: number;
   isDirty: boolean;
   markClean: () => void;
+  /** Saves the open project to the server, when the page can (a project already stored there). */
+  saveNow: (() => Promise<boolean>) | null;
+  setSaveNow: (save: (() => Promise<boolean>) | null) => void;
   /** Run fn as one undoable step: one snapshot up front, none in between. */
   transact: (fn: () => void) => void;
 }
@@ -367,6 +376,8 @@ function snapshotProject(s: Project): Project {
 }
 
 function restoreProject(snapshot: Project): Partial<ProjectStore> {
+  // A grid part's drawing is registered under its id, so an undone edit needs the old one back
+  snapshot.componentDefs.forEach(registerPartSymbol);
   return {
     name: snapshot.name,
     componentDefs: snapshot.componentDefs,
@@ -378,6 +389,32 @@ function restoreProject(snapshot: Project): Partial<ProjectStore> {
     wiring: snapshot.wiring,
     board: snapshot.board,
   };
+}
+
+/**
+ * Puts new versions of custom parts in place. A placed part whose footprint
+ * changed goes back to the unplaced list, as after a package change that no
+ * longer fits, and net assignments drop pins the part no longer has.
+ */
+function replaceDefs(
+  s: Pick<ProjectStore, "componentDefs" | "components" | "netAssignments">,
+  next: ComponentDef[],
+): Pick<ProjectStore, "componentDefs" | "components" | "netAssignments"> {
+  const byId = new Map(next.map((d) => [d.id, d]));
+  const moved = new Set(s.componentDefs.filter((d) => byId.has(d.id) && footprintChanged(d, byId.get(d.id)!)).map((d) => d.id));
+  next.forEach(registerPartSymbol);
+  const components = s.components.map((c) =>
+    moved.has(c.defId) && c.boardPos
+      ? { ...c, boardPos: null, flexibleEndPos: undefined, footprintOverride: undefined, package: undefined }
+      : c,
+  );
+  const pinIds = new Map(next.map((d) => [d.id, new Set(d.pins.map((p) => p.id))]));
+  const defOf = new Map(s.components.map((c) => [c.id, c.defId]));
+  const netAssignments = s.netAssignments.filter((a) => {
+    const ids = pinIds.get(defOf.get(a.componentId) ?? "");
+    return !ids || ids.has(a.pinId);
+  });
+  return { componentDefs: s.componentDefs.map((d) => byId.get(d.id) ?? d), components, netAssignments };
 }
 
 /**
@@ -448,12 +485,7 @@ function prepareProjectState(data: Project) {
   const customDefs = savedDefs.filter((d) => !defaultIds.has(d.id));
   const mergedDefs = [...DEFAULT_COMPONENTS, ...customDefs];
 
-  for (const def of customDefs) {
-    if (def.symbol.startsWith("custom-footprint-")) {
-      const symbol = createFootprintSymbol(def.pins, def.width, def.height);
-      registerCustomSymbol(def.id, { ...symbol, symbolId: def.symbol });
-    }
-  }
+  customDefs.forEach(registerPartSymbol);
 
   const components = (data.components ?? []).map((c) => ({
     ...c,
@@ -547,10 +579,55 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   canRedo: false,
   isDirty: false,
   markClean: () => set({ isDirty: false }),
+  saveNow: null,
+  setSaveNow: (saveNow) => set({ saveNow }),
 
   addComponentDef: (def) => {
     get().pushSnapshot();
+    registerPartSymbol(def);
     set((s) => ({ componentDefs: [...s.componentDefs, def] }));
+  },
+
+  replaceComponentDef: (def) => {
+    get().pushSnapshot();
+    set((s) => replaceDefs(s, [def]));
+    set(settleSchematic(get()));
+  },
+
+  applyLibraryUpdate: (libDef) => {
+    const copies = get().componentDefs.filter((d) => d.library && d.library.id === libDef.library?.id);
+    if (copies.length === 0) return;
+    get().pushSnapshot();
+    set((s) => replaceDefs(s, copies.map((c) => withPartId(libDef, c.id))));
+    set(settleSchematic(get()));
+  },
+
+  addLibraryComponent: (libDef, schematicPos) => {
+    get().pushSnapshot();
+    let def = get().componentDefs.find((d) => d.library && d.library.id === libDef.library?.id);
+    if (!def) {
+      def = withPartId(libDef, newCustomId());
+      registerPartSymbol(def);
+      const added = def;
+      set((s) => ({ componentDefs: [...s.componentDefs, added] }));
+    }
+    const defId = def.id;
+    const prefix = def.defaultLabelPrefix;
+    set((s) => ({
+      components: [
+        ...s.components,
+        {
+          id: generateId(),
+          defId,
+          label: nextLabel(s.components, prefix),
+          schematicPos,
+          schematicRotation: 0,
+          boardPos: null,
+          rotation: 0,
+        },
+      ],
+    }));
+    set(settleSchematic(get()));
   },
 
   removeComponentDef: (defId) => {

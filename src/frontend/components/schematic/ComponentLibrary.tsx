@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
+import { useLibraryStore } from "@/store/useLibraryStore";
 import { ComponentDef, NetLabel, NetLabelKind } from "@/types";
 import { snapToGrid } from "@/utils/schematicConstants";
 import { COMPONENT_GROUPS, DEFAULT_COMPONENTS } from "@/data/defaultComponents";
@@ -13,7 +14,9 @@ import CustomComponentEditor from "./CustomComponentEditor";
 // symbol's own dimensions.
 const THUMB_BOX = 56;
 
-function SymbolThumbnail({ def }: { def: ComponentDef }) {
+export function SymbolThumbnail({ def }: { def: ComponentDef }) {
+  // A grid part keeps its symbol id when edited, so a lookup memoized on the id would show the old drawing
+  "use no memo";
   const symbolDef = getSymbolDef(def.symbol);
   if (!symbolDef) return null;
 
@@ -80,7 +83,7 @@ function SymbolThumbnail({ def }: { def: ComponentDef }) {
 }
 
 /** What the part physically is, for the row under its name */
-function packageLabel(def: ComponentDef): string {
+export function packageLabel(def: ComponentDef): string {
   const f = def.footprint;
   if (f?.kind === "dip") return `DIP-${f.pins}`;
   if (f?.kind === "to") return "TO-92 / TO-220";
@@ -132,6 +135,27 @@ function PartRow({ def, onAdd, onDragStart }: { def: ComponentDef; onAdd: () => 
   );
 }
 
+function PartTile({ def, onAdd, onDragStart, tag }: { def: ComponentDef; onAdd: () => void; onDragStart: (e: React.DragEvent) => void; tag?: string }) {
+  return (
+    <button
+      draggable
+      onDragStart={onDragStart}
+      onClick={onAdd}
+      className="w-full h-full flex flex-col items-center gap-1 px-1 py-1.5 rounded border border-transparent hover:border-neutral-300 dark:hover:border-neutral-600 hover:bg-neutral-50 dark:hover:bg-neutral-800 active:bg-neutral-100 dark:active:bg-neutral-700 transition-colors cursor-grab active:cursor-grabbing"
+      title={def.description ? `${def.name}: ${def.description}` : def.name}
+    >
+      <SymbolThumbnail def={def} />
+      <span className="text-xs text-neutral-500 dark:text-neutral-400 leading-tight text-center max-w-full">
+        {def.name}
+      </span>
+      {tag && <span className="text-[10px] font-mono text-[var(--copper)] leading-none">{tag}</span>}
+    </button>
+  );
+}
+
+// A library part as the panel lists it, before it is copied into the project
+const isLibraryDef = (def: ComponentDef) => def.id.startsWith("library-");
+
 const FLAGS_GROUP = "Power & labels";
 function FlagGlyph({ kind, name }: { kind: NetLabelKind; name: string }) {
   const showName = kind !== "gnd" || name !== "GND";
@@ -170,20 +194,34 @@ export default function ComponentLibrary() {
   const addComponent = useProjectStore((s) => s.addComponent);
   const addNetLabel = useProjectStore((s) => s.addNetLabel);
   const netLabels = useProjectStore((s) => s.netLabels);
-  const addComponentDef = useProjectStore((s) => s.addComponentDef);
+  const addLibraryComponent = useProjectStore((s) => s.addLibraryComponent);
   const removeComponentDef = useProjectStore((s) => s.removeComponentDef);
   const componentDefs = useProjectStore((s) => s.componentDefs);
+  const libraryDefs = useLibraryStore((s) => s.defs);
+  // Signed in, so there is a library to manage
+  const libraryLoaded = useLibraryStore((s) => s.parts !== null);
+  const loadLibrary = useLibraryStore((s) => s.load);
 
-  const [showCustomEditor, setShowCustomEditor] = useState(false);
+  // "new", or the part being edited and where it lives
+  const [editor, setEditor] = useState<"new" | { def: ComponentDef; where: "project" | "library" } | null>(null);
+  // A new part started from a search that found nothing, named after it
+  const [newName, setNewName] = useState<string | undefined>(undefined);
   const [query, setQuery] = useState("");
   const [deleteConfirm, setDeleteConfirm] = useState<ComponentDef | null>(null);
-  const [openGroups, setOpenGroups] = useState<Set<string>>(
-    new Set([FLAGS_GROUP, COMPONENT_GROUPS[0].label])
-  );
 
-  // Custom components = defs not in DEFAULT_COMPONENTS
+  useEffect(() => {
+    loadLibrary();
+  }, [loadLibrary]);
+  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
+
+  // Custom parts: the project's own (defs not in DEFAULT_COMPONENTS), then the
+  // user's library parts that have no linked copy here yet
   const defaultIds = new Set(DEFAULT_COMPONENTS.map((d) => d.id));
-  const customDefs = componentDefs.filter((d) => !defaultIds.has(d.id));
+  const projectCustom = componentDefs.filter((d) => !defaultIds.has(d.id));
+  const linkedHere = new Set(projectCustom.map((d) => d.library?.id).filter(Boolean));
+  const customDefs = [...projectCustom, ...libraryDefs.filter((d) => !linkedHere.has(d.library!.id))];
+  const libraryIds = new Set(libraryDefs.map((d) => d.library!.id));
+  const tagOf = (def: ComponentDef) => (def.library && libraryIds.has(def.library.id) ? "library" : undefined);
 
   const toggleGroup = (label: string) => {
     setOpenGroups((prev) => {
@@ -194,10 +232,13 @@ export default function ComponentLibrary() {
     });
   };
 
-  const handleAdd = (defId: string) => {
-    addComponent(defId, { x: snapToGrid(100 + Math.random() * 200), y: snapToGrid(100 + Math.random() * 200) });
+  const handleAdd = (def: ComponentDef) => {
+    const pos = { x: snapToGrid(100 + Math.random() * 200), y: snapToGrid(100 + Math.random() * 200) };
+    if (isLibraryDef(def)) addLibraryComponent(def, pos);
+    else addComponent(def.id, pos);
   };
 
+  // A library part travels by its panel id; the canvas copies it in on drop
   const handleDragStart = (e: React.DragEvent, defId: string) => {
     e.dataTransfer.setData("application/schematic-component", defId);
     e.dataTransfer.effectAllowed = "copy";
@@ -206,10 +247,55 @@ export default function ComponentLibrary() {
   const results = searchParts([...COMPONENT_GROUPS.flatMap((g) => g.components), ...customDefs], query);
   const searching = query.trim() !== "";
 
-  const handleCreateCustom = (def: ComponentDef) => {
-    addComponentDef(def);
-    setShowCustomEditor(false);
-  };
+  // Your own parts, set apart below the built-in groups
+  const customSection = customDefs.length > 0 && (
+    <div className="mt-1.5 pt-1.5 border-t border-neutral-200 dark:border-neutral-700">
+      <button
+        onClick={() => toggleGroup("Custom")}
+        className="w-full flex items-center gap-1.5 px-3.5 py-1.5 text-sm font-medium text-neutral-600 dark:text-neutral-400 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors"
+      >
+        <span className="text-xs">{openGroups.has("Custom") ? "▼" : "▶"}</span>
+        Custom
+        <span className="text-neutral-400 dark:text-neutral-500 ml-auto text-xs">{customDefs.length}</span>
+      </button>
+      {openGroups.has("Custom") && (
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(80px,1fr))] gap-1.5 px-2.5 pb-2.5">
+          {customDefs.map((def) => (
+            <div key={def.id} className="relative group">
+              <PartTile def={def} tag={tagOf(def)} onAdd={() => handleAdd(def)} onDragStart={(e) => handleDragStart(e, def.id)} />
+              <div className="absolute -top-1 -right-1 hidden group-hover:flex group-focus-within:flex gap-0.5">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setEditor({ def, where: isLibraryDef(def) ? "library" : "project" });
+                  }}
+                  className="flex h-5 w-5 items-center justify-center rounded-full bg-[#113768] text-white text-[10px] leading-none"
+                  title="Edit part"
+                  aria-label={`Edit ${def.name}`}
+                >
+                  ✎
+                </button>
+                {/* A library part is deleted on the parts page; its copies here then become plain parts */}
+                {!tagOf(def) && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeleteConfirm(def);
+                    }}
+                    className="flex h-5 w-5 items-center justify-center rounded-full bg-red-400 text-white text-[11px] leading-none"
+                    title="Remove from this project"
+                    aria-label={`Delete ${def.name}`}
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className="font-sans flex flex-col flex-1 min-h-0 border-b border-neutral-200 dark:border-neutral-700">
@@ -233,10 +319,21 @@ export default function ComponentLibrary() {
         {searching && (
           <div className="px-2.5 pb-2.5">
             {results.length === 0 ? (
-              <p className="px-1 py-2 text-sm text-neutral-500 dark:text-neutral-400">No part matches &ldquo;{query.trim()}&rdquo;.</p>
+              <>
+                <p className="px-1 py-2 text-sm text-neutral-500 dark:text-neutral-400">No part matches &ldquo;{query.trim()}&rdquo;.</p>
+                <button
+                  onClick={() => {
+                    setNewName(query.trim());
+                    setEditor("new");
+                  }}
+                  className="px-1 text-sm text-[var(--copper)] hover:underline"
+                >
+                  Make it as a custom part
+                </button>
+              </>
             ) : (
               results.map((def) => (
-                <PartRow key={def.id} def={def} onAdd={() => handleAdd(def.id)} onDragStart={(e) => handleDragStart(e, def.id)} />
+                <PartRow key={def.id} def={def} onAdd={() => handleAdd(def)} onDragStart={(e) => handleDragStart(e, def.id)} />
               ))
             )}
           </div>
@@ -289,6 +386,7 @@ export default function ComponentLibrary() {
         })()}
         {!searching && COMPONENT_GROUPS.map((group) => {
           const isOpen = openGroups.has(group.label);
+          const parts = [...group.components, ...customDefs.filter((d) => d.group === group.label)];
           return (
             <div key={group.label}>
               <button
@@ -297,81 +395,26 @@ export default function ComponentLibrary() {
               >
                 <span className="text-xs">{isOpen ? "▼" : "▶"}</span>
                 {group.label}
-                <span className="text-neutral-400 dark:text-neutral-500 ml-auto text-xs">{group.components.length}</span>
+                <span className="text-neutral-400 dark:text-neutral-500 ml-auto text-xs">{parts.length}</span>
               </button>
               {isOpen && group.rows && (
                 <div className="px-2.5 pb-2.5">
-                  {group.components.map((def) => (
-                    <PartRow key={def.id} def={def} onAdd={() => handleAdd(def.id)} onDragStart={(e) => handleDragStart(e, def.id)} />
+                  {parts.map((def) => (
+                    <PartRow key={def.id} def={def} onAdd={() => handleAdd(def)} onDragStart={(e) => handleDragStart(e, def.id)} />
                   ))}
                 </div>
               )}
               {isOpen && !group.rows && (
                 <div className="grid grid-cols-[repeat(auto-fill,minmax(80px,1fr))] gap-1.5 px-2.5 pb-2.5">
-                  {group.components.map((def) => (
-                    <button
-                      key={def.id}
-                      draggable
-                      onDragStart={(e) => handleDragStart(e, def.id)}
-                      onClick={() => handleAdd(def.id)}
-                      className="w-full flex flex-col items-center gap-1 px-1 py-1.5 rounded border border-transparent hover:border-neutral-300 dark:hover:border-neutral-600 hover:bg-neutral-50 dark:hover:bg-neutral-800 active:bg-neutral-100 dark:active:bg-neutral-700 transition-colors cursor-grab active:cursor-grabbing"
-                      title={def.name}
-                    >
-                      <SymbolThumbnail def={def} />
-                      <span className="text-xs text-neutral-500 dark:text-neutral-400 leading-tight text-center max-w-full">
-                        {def.name}
-                      </span>
-                    </button>
+                  {parts.map((def) => (
+                    <PartTile key={def.id} def={def} onAdd={() => handleAdd(def)} onDragStart={(e) => handleDragStart(e, def.id)} />
                   ))}
                 </div>
               )}
             </div>
           );
         })}
-
-        {/* Custom components section */}
-        {!searching && customDefs.length > 0 && (
-          <div>
-            <button
-              onClick={() => toggleGroup("Custom")}
-              className="w-full flex items-center gap-1.5 px-3.5 py-1.5 text-sm font-medium text-neutral-600 dark:text-neutral-400 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors"
-            >
-              <span className="text-xs">{openGroups.has("Custom") ? "▼" : "▶"}</span>
-              Custom
-              <span className="text-neutral-400 dark:text-neutral-500 ml-auto text-xs">{customDefs.length}</span>
-            </button>
-            {openGroups.has("Custom") && (
-              <div className="flex flex-wrap gap-1.5 px-2.5 pb-2.5">
-                {customDefs.map((def) => (
-                  <div key={def.id} className="relative group">
-                    <button
-                      draggable
-                      onDragStart={(e) => handleDragStart(e, def.id)}
-                      onClick={() => handleAdd(def.id)}
-                      className="w-full flex flex-col items-center gap-1 px-1 py-1.5 rounded border border-transparent hover:border-neutral-300 dark:hover:border-neutral-600 hover:bg-neutral-50 dark:hover:bg-neutral-800 active:bg-neutral-100 dark:active:bg-neutral-700 transition-colors cursor-grab active:cursor-grabbing"
-                      title={def.name}
-                    >
-                      <SymbolThumbnail def={def} />
-                      <span className="text-xs text-neutral-500 dark:text-neutral-400 leading-tight text-center max-w-full">
-                        {def.name}
-                      </span>
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setDeleteConfirm(def);
-                      }}
-                      className="absolute -top-1 -right-1 hidden group-hover:flex h-4 w-4 items-center justify-center rounded-full bg-red-400 text-white text-[9px] leading-none"
-                      title="Remove custom component"
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+        {!searching && customSection}
       </div>
 
       <p className="px-3.5 py-2 border-t border-neutral-200 dark:border-neutral-700 text-[11px] leading-snug text-neutral-500 dark:text-neutral-400">
@@ -399,17 +442,31 @@ export default function ComponentLibrary() {
       {/* Create custom button */}
       <div className="px-2.5 py-2 border-t border-neutral-200 dark:border-neutral-700">
         <button
-          onClick={() => setShowCustomEditor(true)}
+          onClick={() => {
+            setNewName(undefined);
+            setEditor("new");
+          }}
           className="w-full font-mono text-xs py-1.5 rounded bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-colors"
         >
           + Create Custom Component
         </button>
+        {libraryLoaded && (
+          <a
+            href="/parts"
+            target="_blank"
+            rel="noopener"
+            className="block mt-1.5 text-center font-mono text-[11px] text-neutral-500 dark:text-neutral-400 hover:text-[var(--copper)]"
+          >
+            Manage my parts ↗
+          </a>
+        )}
       </div>
 
-      {showCustomEditor && (
+      {editor && (
         <CustomComponentEditor
-          onSave={handleCreateCustom}
-          onClose={() => setShowCustomEditor(false)}
+          editing={editor === "new" ? undefined : editor}
+          initialName={newName}
+          onClose={() => setEditor(null)}
         />
       )}
 

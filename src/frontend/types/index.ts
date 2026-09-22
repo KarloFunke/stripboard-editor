@@ -55,11 +55,17 @@ export interface ComponentDef {
   id: string;
   name: string;
   category: "passive" | "semiconductor" | "ic" | "connector" | "generic";
-  // Built-in parts only: what the part is built from, and the words the
-  // library search matches besides the name
+  // What the part is built from, and the words the library search matches
+  // besides the name
   footprint?: Footprint;
   description?: string;
   aliases?: string[];
+  // Custom parts only. `group` also lists the part in that panel group;
+  // `spec` is what a part made from a body was built from, kept for editing;
+  // `library` links a project's copy to the user's library part it came from.
+  group?: string;
+  spec?: PartSpec;
+  library?: { id: string; rev: number };
   symbol: string; // references SymbolDef.symbolId for schematic rendering
   defaultLabelPrefix: string; // e.g. "R", "C", "D", "Q", "U", "J", "X"
   width: number;  // columns spanned (stripboard footprint)

@@ -4,7 +4,8 @@ const path = require("path");
 const OUT = path.join(__dirname, "out");
 const { packageOptions, defaultPackageId, resolvePackage, footprintFor, bodyPieces } =
   require(path.join(OUT, "components/stripboard/packageBodies.js"));
-const { rigidPieces } = require(path.join(OUT, "components/stripboard/rigidBodies.js"));
+const { rigidPieces, rigidShape } = require(path.join(OUT, "components/stripboard/rigidBodies.js"));
+const { getRotatedPinPositions, getComponentBounds } = require(path.join(OUT, "components/stripboard/boardLayout.js"));
 const { parseResistance, parseCapacitance, resistorBands } =
   require(path.join(OUT, "components/stripboard/componentValues.js"));
 const { DEFAULT_COMPONENTS } = require(path.join(OUT, "data/defaultComponents.js"));
@@ -100,6 +101,44 @@ ok(resistorBands(173200) === null, "a value no standard band set can express get
   ok(mf.length === 5 && mf[4] === resistorBands(5560)[4], "metal film: 470 gets five bands, ending in the brown 1% band");
   ok(mf[2] === resistorBands(10)[1] && mf[3] === resistorBands(10)[1], "yellow violet black black: the third digit and the x1 multiplier are both black");
   ok(resistorBands(0.47, true) === null, "a value five bands cannot express (multiplier below silver) gets none");
+}
+
+// A rigid body is drawn around its already-rotated pins, so turning the part
+// must turn the body with it; 2-pins-a-side parts and the trimmer used not to.
+console.log("\nrotation");
+function shapeAt(def, packageId, rotation) {
+  const resolved = resolvePackage(def, undefined, packageId);
+  const pos = { row: 10, col: 10 };
+  const pins = getRotatedPinPositions(def, pos, rotation);
+  const b = getComponentBounds(def, pos, rotation);
+  const midRow = (b.minRow + b.maxRow) / 2, midCol = (b.minCol + b.maxCol) / 2;
+  return rigidShape(resolved.spec, {
+    pins: pins.map((p) => ({ x: (p.col - midCol) * 2.54, y: (p.row - midRow) * 2.54, id: p.pinId })),
+    width: (b.maxCol - b.minCol + 1) * 2.54,
+    height: (b.maxRow - b.minRow + 1) * 2.54,
+    rotation,
+  });
+}
+const turned = (a, b) => Math.abs(a.w - b.h) < 1e-6 && Math.abs(a.h - b.w) < 1e-6;
+const byId = (id) => DEFAULT_COMPONENTS.find((d) => d.id === id);
+for (const id of ["def-optocoupler", "def-pushbutton", "def-ic-dip8"]) {
+  const def = byId(id) || require(path.join(OUT, "data/defaultComponents.js")).RETIRED_PARTS.find((d) => d.id === id);
+  const at0 = shapeAt(def, undefined, 0), at90 = shapeAt(def, undefined, 90);
+  ok(turned(at0.body, at90.body) && turned(at0.body, shapeAt(def, undefined, 270).body), `${def.name}: the body turns with the part`);
+  ok(at0.body.w === shapeAt(def, undefined, 180).body.w, `${def.name}: and is the same shape upside down`);
+}
+const pot = byId("def-potentiometer");
+const trimmer = { ...pot, ...footprintFor(pot, "trimmer") };
+for (const rotation of [0, 90, 180, 270]) {
+  const shape = shapeAt(trimmer, "trimmer", rotation);
+  const pins = getRotatedPinPositions(trimmer, { row: 10, col: 10 }, rotation);
+  const b = getComponentBounds(trimmer, { row: 10, col: 10 }, rotation);
+  const wiper = pins[1];
+  const wx = (wiper.col - (b.minCol + b.maxCol) / 2) * 2.54, wy = (wiper.row - (b.minRow + b.maxRow) / 2) * 2.54;
+  const screw = shape.pieces.find((p) => p.t === "circle");
+  ok(Math.sign(screw.cx) === Math.sign(wx) && Math.sign(screw.cy) === Math.sign(wy), `trimmer at ${rotation}: the screw sits on the wiper's side`);
+  const longAxis = shape.body.w > shape.body.h ? "x" : "y";
+  ok(longAxis === (wx === 0 ? "y" : "x"), `trimmer at ${rotation}: the body is longer along the wiper axis`);
 }
 
 console.log(failed === 0 ? "\nall passed" : `\n${failed} checks FAILED`);

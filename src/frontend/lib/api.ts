@@ -1,3 +1,5 @@
+import type { ComponentDef } from "@/types";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL!;
 
 let csrfToken: string | null = null;
@@ -153,6 +155,102 @@ export async function claimProject(editUuid: string): Promise<ProjectDetail> {
 export async function getUserProjects(): Promise<ProjectMeta[]> {
   const res = await apiFetch("/users/me/projects/");
   if (!res.ok) throw new Error("Failed to load projects");
+  return res.json();
+}
+
+// ── The user's part library ──────────────────────────
+
+export interface LibraryPart {
+  id: string;
+  part: ComponentDef;
+  rev: number;
+  updated_at: string;
+  // With { usage: true }: how many projects hold a linked copy
+  used_in?: number;
+}
+
+async function errorText(res: Response, fallback: string): Promise<string> {
+  try {
+    const body = await res.json();
+    return typeof body.error === "string" ? body.error : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+/** The signed-in user's library, or null when nobody is signed in. */
+export async function getLibraryParts(opts: { usage?: boolean } = {}): Promise<LibraryPart[] | null> {
+  const res = await apiFetch(`/users/me/parts/${opts.usage ? "?usage=1" : ""}`);
+  if (res.status === 401 || res.status === 403) return null;
+  if (!res.ok) throw new Error("Failed to load your parts");
+  return res.json();
+}
+
+export async function createLibraryPart(part: ComponentDef): Promise<LibraryPart> {
+  const res = await apiFetch("/users/me/parts/", { method: "POST", body: JSON.stringify({ part }) });
+  if (!res.ok) throw new Error(await errorText(res, "Failed to save the part"));
+  return res.json();
+}
+
+/**
+ * Saves a new version of a library part. With `updateProjects` every linked
+ * copy in the user's other projects is updated too; `skipProject` is the
+ * project open in the editor, which applies the change itself.
+ */
+export async function updateLibraryPart(
+  id: string,
+  part: ComponentDef,
+  opts: { updateProjects: boolean; skipProject?: string },
+): Promise<LibraryPart & { updated_projects: number }> {
+  const res = await apiFetch(`/users/me/parts/${id}/`, {
+    method: "PUT",
+    body: JSON.stringify({ part, update_projects: opts.updateProjects, skip_project: opts.skipProject }),
+  });
+  if (!res.ok) throw new Error(await errorText(res, "Failed to save the part"));
+  return res.json();
+}
+
+export async function deleteLibraryPart(id: string): Promise<void> {
+  const res = await apiFetch(`/users/me/parts/${id}/`, { method: "DELETE" });
+  if (!res.ok) throw new Error("Failed to delete the part");
+}
+
+/** Adds the parts of an exported parts file to the library, all or none. */
+export async function importLibraryParts(parts: ComponentDef[]): Promise<LibraryPart[]> {
+  const res = await apiFetch("/users/me/parts/import/", { method: "POST", body: JSON.stringify({ parts }) });
+  if (!res.ok) throw new Error(await errorText(res, "Failed to import the parts"));
+  return res.json();
+}
+
+/** A custom part that so far lives only inside some of the user's projects. */
+export interface FoundPart {
+  key: string;
+  part: ComponentDef;
+  projects: { edit_uuid: string; name: string }[];
+}
+
+export async function getFoundParts(): Promise<FoundPart[]> {
+  const res = await apiFetch("/users/me/parts/found/");
+  if (!res.ok) throw new Error("Failed to look through your projects");
+  return res.json();
+}
+
+/** Makes a found part a library part and links the copies in the projects it came from. */
+export async function adoptFoundPart(key: string): Promise<LibraryPart & { linked_projects: number }> {
+  const res = await apiFetch("/users/me/parts/adopt/", { method: "POST", body: JSON.stringify({ key }) });
+  if (!res.ok) throw new Error(await errorText(res, "Failed to add the part"));
+  return res.json();
+}
+
+export interface LibraryPartUsage {
+  edit_uuid: string;
+  name: string;
+  placed: number;
+}
+
+export async function getLibraryPartUsage(id: string): Promise<LibraryPartUsage[]> {
+  const res = await apiFetch(`/users/me/parts/${id}/usage/`);
+  if (!res.ok) throw new Error("Failed to look up where the part is used");
   return res.json();
 }
 

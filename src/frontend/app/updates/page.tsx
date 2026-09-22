@@ -12,6 +12,12 @@ export const metadata: Metadata = {
 
 const updates: { date: string; items: string[]; link?: { href: string; lead: string; text: string } }[] = [
   {
+    date: "2026-09-22",
+    items: [
+      "Your own part library. Keep custom parts in your account and use them in every project, share them as a file, and carry a change into every project that uses the part.",
+    ],
+  },
+  {
     date: "2026-09-21",
     items: [
       "Parts are now drawn as their real packages at true size, and each part lets you pick the package you actually have. The auto layouter and the print use the same bodies.",
@@ -144,7 +150,6 @@ const updates: { date: string; items: string[]; link?: { href: string; lead: str
 
 const planned: string[] = [
   "Net list import, the other half of the KiCad compatibility: bring a circuit in from an EDA tool and lay it out on stripboard. Export is already available.",
-  "A big custom-component overhaul, including a searchable library of both your own and shared community components. Including a better custom component editor.",
 ];
 
 export default function UpdatesPage() {

@@ -10,6 +10,12 @@ urlpatterns = [
     path("projects/view/<uuid:view_uuid>/", views.project_view, name="project-view"),
     path("projects/fork/<uuid:view_uuid>/", views.project_fork, name="project-fork"),
     path("users/me/projects/", views.user_projects, name="user-projects"),
+    path("users/me/parts/", views.user_parts, name="user-parts"),
+    path("users/me/parts/import/", views.user_parts_import, name="user-parts-import"),
+    path("users/me/parts/found/", views.user_parts_found, name="user-parts-found"),
+    path("users/me/parts/adopt/", views.user_parts_adopt, name="user-parts-adopt"),
+    path("users/me/parts/<uuid:part_id>/", views.user_part_detail, name="user-part-detail"),
+    path("users/me/parts/<uuid:part_id>/usage/", views.user_part_usage, name="user-part-usage"),
 
     # Auth
     path("auth/register/", views.auth_register, name="auth-register"),
