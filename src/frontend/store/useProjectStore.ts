@@ -361,10 +361,13 @@ const initialProject: Project = {
 
 const MAX_HISTORY = 80;
 
+// The built-in definitions never change, so history keeps only the project's own
+const DEFAULT_DEF_IDS = new Set(DEFAULT_COMPONENTS.map((d) => d.id));
+
 function snapshotProject(s: Project): Project {
   return JSON.parse(JSON.stringify({
     name: s.name,
-    componentDefs: s.componentDefs,
+    componentDefs: s.componentDefs.filter((d) => !DEFAULT_DEF_IDS.has(d.id)),
     components: s.components,
     nets: s.nets,
     netAssignments: s.netAssignments,
@@ -380,7 +383,7 @@ function restoreProject(snapshot: Project): Partial<ProjectStore> {
   snapshot.componentDefs.forEach(registerPartSymbol);
   return {
     name: snapshot.name,
-    componentDefs: snapshot.componentDefs,
+    componentDefs: [...DEFAULT_COMPONENTS, ...snapshot.componentDefs],
     components: snapshot.components,
     nets: snapshot.nets,
     netAssignments: snapshot.netAssignments,

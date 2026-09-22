@@ -1,31 +1,20 @@
 "use client";
 
-import { useMemo } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useStripSegments } from "@/hooks/useStripSegments";
 import { useBoardView } from "@/hooks/useBoardView";
-import { checkNetCompleteness } from "./netCompleteness";
 
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 
 export default function ComponentTray({ readOnly = false }: { readOnly?: boolean }) {
   // the board's view: an off-board part shows up as its solder pads
-  const { components, netAssignments } = useBoardView();
+  const { components } = useBoardView();
   const componentDefs = useProjectStore((s) => s.componentDefs);
-  const nets = useProjectStore((s) => s.nets);
-
-  const { segments, connectivity } = useStripSegments();
 
   const unplaced = components.filter((c) => c.boardPos === null && !c.boardExcluded);
   const placed = components.filter((c) => c.boardPos !== null);
 
-  const incompleteNets = useMemo(
-    () =>
-      checkNetCompleteness(
-        nets, netAssignments, segments, connectivity, components, componentDefs
-      ),
-    [nets, netAssignments, segments, connectivity, components, componentDefs]
-  );
+  const { incompleteNets } = useStripSegments();
 
   const setTrayDragComponentId = useProjectStore((s) => s.setTrayDragComponentId);
   const setHighlightedNetId = useProjectStore((s) => s.setHighlightedNetId);

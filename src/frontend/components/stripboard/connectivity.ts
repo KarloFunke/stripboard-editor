@@ -106,12 +106,29 @@ export function computeConnectivity(
   return Array.from(groups.values());
 }
 
+// The board asks for every segment's and wire's group on each render, so
+// each groups array gets an index the first time it is asked
+const indexes = new WeakMap<ConnectedGroup[], { bySegment: Map<number, ConnectedGroup>; byWire: Map<string, ConnectedGroup> }>();
+
+function indexOf(groups: ConnectedGroup[]) {
+  let index = indexes.get(groups);
+  if (!index) {
+    index = { bySegment: new Map(), byWire: new Map() };
+    for (const g of groups) {
+      for (const si of g.segmentIndices) index.bySegment.set(si, g);
+      for (const w of g.wireIds) index.byWire.set(w, g);
+    }
+    indexes.set(groups, index);
+  }
+  return index;
+}
+
 /** Get the connected group that a given segment belongs to */
 export function getGroupForSegment(
   groups: ConnectedGroup[],
   segmentIndex: number
 ): ConnectedGroup | undefined {
-  return groups.find((g) => g.segmentIndices.includes(segmentIndex));
+  return indexOf(groups).bySegment.get(segmentIndex);
 }
 
 /** Get the connected group for a wire */
@@ -119,5 +136,5 @@ export function getGroupForWire(
   groups: ConnectedGroup[],
   wireId: string
 ): ConnectedGroup | undefined {
-  return groups.find((g) => g.wireIds.includes(wireId));
+  return indexOf(groups).byWire.get(wireId);
 }

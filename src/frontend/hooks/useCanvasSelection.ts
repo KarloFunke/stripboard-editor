@@ -8,6 +8,8 @@ export interface SelectionRect {
   startY: number;
   currentX: number;
   currentY: number;
+  /** Adds to the selection instead of replacing it (Shift or Ctrl held). */
+  keep: boolean;
 }
 
 export interface DragState {
@@ -28,14 +30,15 @@ export function useCanvasSelection() {
   const justDraggedRef = useRef(false);
 
   /** Start drawing a selection rectangle from the given SVG point */
-  const startSelectionRect = useCallback((svgPt: { x: number; y: number }) => {
+  const startSelectionRect = useCallback((svgPt: { x: number; y: number }, keep = false) => {
     setSelectionRect({
       startX: svgPt.x,
       startY: svgPt.y,
       currentX: svgPt.x,
       currentY: svgPt.y,
+      keep,
     });
-    setSelectedIds([]);
+    if (!keep) setSelectedIds([]);
   }, []);
 
   /** Update the selection rectangle to the current SVG point */
@@ -47,11 +50,12 @@ export function useCanvasSelection() {
 
   /**
    * Finalize the selection rectangle.
-   * @param getSelectedIds - callback that receives the rect bounds and returns matched IDs
+   * @param onSelect - receives the rect bounds, and whether the rect adds to
+   *   the selection, and sets the selection
    * @returns true if a selection rect was active (consumed the event)
    */
   const finalizeSelectionRect = useCallback(
-    (getSelectedIds: (x1: number, y1: number, x2: number, y2: number) => string[]) => {
+    (onSelect: (x1: number, y1: number, x2: number, y2: number, keep: boolean) => void) => {
       if (!selectionRect) return false;
 
       const x1 = Math.min(selectionRect.startX, selectionRect.currentX);
@@ -60,9 +64,7 @@ export function useCanvasSelection() {
       const y2 = Math.max(selectionRect.startY, selectionRect.currentY);
 
       if (x2 - x1 > MIN_RECT_SIZE || y2 - y1 > MIN_RECT_SIZE) {
-        const selected = getSelectedIds(x1, y1, x2, y2);
-        setSelectedIds(selected);
-        setSelectedId(null);
+        onSelect(x1, y1, x2, y2, selectionRect.keep);
         justDraggedRef.current = true;
       }
 

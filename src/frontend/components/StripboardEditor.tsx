@@ -1,9 +1,8 @@
 "use client";
 
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useStripSegments } from "@/hooks/useStripSegments";
-import { checkNetCompleteness } from "./stripboard/netCompleteness";
 import type { AutoLayoutRequest, AutoLayoutWorkerMessage } from "./stripboard/autoLayoutWorker";
 import { defaultPermWorkers, type AutoLayoutResult } from "./stripboard/layoutTypes";
 import { SPLIT_MIN_PARTS, SPLIT_VARIANTS } from "./stripboard/autoLayout5Split";
@@ -195,9 +194,10 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
       // requested board count is reached.
       const dispatch = (worker: Worker & { _idx?: number }): boolean => {
         if (nextIdx >= jobs) return false;
-        const idx = nextIdx++;
+        const idx = nextIdx;
+        nextIdx += 1;
         worker._idx = idx;
-        inFlight++;
+        inFlight += 1;
         const boardIdx = Math.floor(idx / perBoard);
         const k = idx % perBoard;
         worker.postMessage(k === 0
@@ -216,8 +216,8 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
             return;
           }
           partial.delete(worker);
-          inFlight--;
-          solved++;
+          inFlight -= 1;
+          solved += 1;
           doneOfBoard[Math.floor(worker._idx! / perBoard)]++;
           showProgress();
           const { result } = e.data;
@@ -240,7 +240,7 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
           if (runId !== autoRunIdRef.current) return;
           console.error("Auto-layout worker failed", err);
           partial.delete(worker);
-          inFlight--;
+          inFlight -= 1;
           worker.terminate();
           autoWorkersRef.current = autoWorkersRef.current.filter((w) => w !== worker);
           if (inFlight === 0) finalize();
@@ -281,12 +281,7 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
     worker.postMessage(engine === "v5" && !onlyIds ? { ...request, permutationIndex: seedBase } : request);
   };
 
-  const { segments, connectivity, conflictCount } = useStripSegments();
-
-  const incompleteNets = useMemo(
-    () => checkNetCompleteness(nets, netAssignments, segments, connectivity, components, componentDefs),
-    [nets, netAssignments, segments, connectivity, components, componentDefs]
-  );
+  const { conflictCount, incompleteNets } = useStripSegments();
 
   // Off-board components don't count toward board completion.
   const boardComponents = components.filter((c) => !c.boardExcluded);

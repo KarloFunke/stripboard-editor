@@ -733,10 +733,12 @@ export function registerCustomSymbol(defId: string, symbol: SymbolDef) {
   customSymbolCache.set(`custom-footprint-${defId}`, symbol);
 }
 
-export function getSymbolDef(symbolId: string): SymbolDef | undefined {
-  const staticMatch = STATIC_SYMBOLS.find((s) => s.symbolId === symbolId);
-  if (staticMatch) return staticMatch;
+// A symbol made to size is the same every time, so each id is built once.
+// Custom footprint symbols are not in here: theirs are replaced under the
+// same id when the part is edited.
+const generatedSymbols = new Map<string, SymbolDef>();
 
+function generateSymbol(symbolId: string): SymbolDef | undefined {
   const icMatch = symbolId.match(/^generic-ic-(\d+)$/);
   if (icMatch) return createGenericIcSymbol(parseInt(icMatch[1], 10));
 
@@ -748,11 +750,23 @@ export function getSymbolDef(symbolId: string): SymbolDef | undefined {
 
   if (/^box(-[lrtb]\d+)+$/.test(symbolId)) return createPinBoxSymbol(symbolId);
 
+  return undefined;
+}
+
+export function getSymbolDef(symbolId: string): SymbolDef | undefined {
+  const staticMatch = STATIC_SYMBOLS.find((s) => s.symbolId === symbolId);
+  if (staticMatch) return staticMatch;
+
   // Custom footprint symbols
   const cached = customSymbolCache.get(symbolId);
   if (cached) return cached;
 
-  return undefined;
+  let generated = generatedSymbols.get(symbolId);
+  if (!generated) {
+    generated = generateSymbol(symbolId);
+    if (generated) generatedSymbols.set(symbolId, generated);
+  }
+  return generated;
 }
 
 export const ALL_STATIC_SYMBOLS = STATIC_SYMBOLS;

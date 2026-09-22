@@ -21,20 +21,26 @@ export function usePanZoom(initialZoom = 1, home: { x: number; y: number } = ORI
   });
 
   const isPanning = useRef(false);
+  // The ref answers synchronously inside the move handler; the state lets a
+  // render pick the cursor
+  const [panning, setPanning] = useState(false);
   const panStart = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
 
   // Touch state for mobile
   const touchStart = useRef<{ touches: { x: number; y: number }[]; panX: number; panY: number; zoom: number } | null>(null);
 
-  /** Convert screen (client) coordinates to SVG coordinates */
+  /**
+   * Convert screen (client) coordinates to SVG coordinates. Reads the SVG's
+   * own transform, so it never changes identity and pan or zoom steps do not
+   * invalidate the handlers built on it.
+   */
   const screenToSvg = useCallback(
     (clientX: number, clientY: number, svgEl: SVGSVGElement) => {
-      const rect = svgEl.getBoundingClientRect();
-      const x = (clientX - rect.left) / state.zoom + state.panX;
-      const y = (clientY - rect.top) / state.zoom + state.panY;
-      return { x, y };
+      const m = svgEl.getScreenCTM()?.inverse();
+      if (!m) return { x: 0, y: 0 };
+      return { x: m.a * clientX + m.c * clientY + m.e, y: m.b * clientX + m.d * clientY + m.f };
     },
-    [state.zoom, state.panX, state.panY]
+    []
   );
 
   /** Get the viewBox string for the SVG */
@@ -77,6 +83,7 @@ export function usePanZoom(initialZoom = 1, home: { x: number; y: number } = ORI
       if (e.button === 2) {
         e.preventDefault();
         isPanning.current = true;
+        setPanning(true);
         panStart.current = {
           x: e.clientX,
           y: e.clientY,
@@ -107,6 +114,7 @@ export function usePanZoom(initialZoom = 1, home: { x: number; y: number } = ORI
   /** Handle mouse up to end panning */
   const handlePanEnd = useCallback(() => {
     isPanning.current = false;
+    setPanning(false);
   }, []);
 
   /** Prevent context menu on the SVG */
@@ -124,7 +132,9 @@ export function usePanZoom(initialZoom = 1, home: { x: number; y: number } = ORI
 
   // Store latest state in ref for use in imperative listeners
   const stateRef = useRef(state);
-  stateRef.current = state;
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
 
   useEffect(() => {
     const svg = touchSvgRef.current;
@@ -205,7 +215,7 @@ export function usePanZoom(initialZoom = 1, home: { x: number; y: number } = ORI
 
   return {
     ...state,
-    isPanning,
+    panning,
     screenToSvg,
     getViewBox,
     handleWheel,

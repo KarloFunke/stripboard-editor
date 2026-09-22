@@ -46,6 +46,21 @@ import { TOOL_STRIP_HOME } from "@/components/canvas/ToolStrip";
 import { computeWireLaneOffsets } from "./wireLanes";
 import { SelectionActionBar, RotateIcon, DeleteIcon, FootprintIcon, LockIcon, UnlockIcon, OffBoardIcon, PackageIcon, WandIcon, type CanvasAction } from "@/components/canvas/SelectionActionBar";
 
+// Ctrl toggles an item in the selection, Shift adds it, a plain press replaces it
+type SelMode = "replace" | "add" | "toggle";
+function selMode(e: React.MouseEvent): SelMode {
+  if (e.ctrlKey || e.metaKey) return "toggle";
+  if (e.shiftKey) return "add";
+  return "replace";
+}
+
+interface Selection {
+  comps: string[];
+  wires: string[];
+  cuts: Cut[];
+}
+const selCount = (sel: Selection) => sel.comps.length + sel.wires.length + sel.cuts.length;
+
 export default function StripboardCanvas({
   readOnly = false,
   onEditFootprint,
@@ -58,6 +73,7 @@ export default function StripboardCanvas({
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const panZoom = usePanZoom(1, readOnly ? undefined : TOOL_STRIP_HOME);
+  const { screenToSvg, handlePanMove, handlePanEnd } = panZoom;
   const [containerSize, setContainerSize] = useState({ width: 1000, height: 800 });
 
   useEffect(() => {
@@ -112,6 +128,8 @@ export default function StripboardCanvas({
   // lane offsets so parallel runs stay individually visible. Wires that
   // only touch at a shared endpoint keep the same lane.
   const wireLaneOffset = useMemo(() => computeWireLaneOffsets(board.wires, 3.5), [board.wires]);
+  // Every strip end asks whether a cut sits next to it
+  const cutKeys = useMemo(() => new Set(board.cuts.map((c) => `${c.kind === "hole" ? "h" : "b"}:${c.row}:${c.col}`)), [board.cuts]);
 
 
   const {
@@ -131,7 +149,7 @@ export default function StripboardCanvas({
     componentId: string;
   } | null>(null);
   const [dragging, setDragging] = useState<{
-    componentId: string;
+    componentId: string; // "" for a group dragged by one of its wires or cuts
     startX: number;
     startY: number;
     didDrag: boolean;
@@ -275,6 +293,86 @@ export default function StripboardCanvas({
     [components, componentDefs, board.cuts]
   );
 
+  // The whole selection in one place. A lone component stays in selectedId,
+  // which is what its action bar keys on.
+  const selection: Selection = useMemo(() => ({
+    comps: selectedIds.length > 0 ? selectedIds : selectedId ? [selectedId] : [],
+    wires: selectedWireIds,
+    cuts: selectedCuts,
+  }), [selectedIds, selectedId, selectedWireIds, selectedCuts]);
+  const applySelection = useCallback((sel: Selection) => {
+    const single = sel.comps.length === 1 && sel.wires.length === 0 && sel.cuts.length === 0;
+    setSelectedId(single ? sel.comps[0] : null);
+    setSelectedIds(single ? [] : sel.comps);
+    setSelectedWireIds(sel.wires);
+    setSelectedCuts(sel.cuts);
+  }, [setSelectedId, setSelectedIds]);
+
+  // A press on one item, the way the schematic takes it: Ctrl toggles it,
+  // Shift adds it, a plain press on a selected item keeps the group so it can
+  // be dragged, and on anything else selects it alone. Returns the selection
+  // the press leads to; a toggle changes the selection and nothing else.
+  const pressSelect = useCallback(
+    (e: React.MouseEvent, item: { comp?: string; wire?: string; cut?: Cut }): { next: Selection; drag: boolean } => {
+      const has = {
+        comp: item.comp !== undefined && selection.comps.includes(item.comp),
+        wire: item.wire !== undefined && selection.wires.includes(item.wire),
+        cut: item.cut !== undefined && selection.cuts.some((c) => sameCut(c, item.cut!)),
+      };
+      const selected = has.comp || has.wire || has.cut;
+      const mode = selMode(e);
+      if (mode === "toggle") {
+        const next: Selection = {
+          comps: item.comp === undefined ? selection.comps : has.comp ? selection.comps.filter((id) => id !== item.comp) : [...selection.comps, item.comp],
+          wires: item.wire === undefined ? selection.wires : has.wire ? selection.wires.filter((id) => id !== item.wire) : [...selection.wires, item.wire],
+          cuts: item.cut === undefined ? selection.cuts : has.cut ? selection.cuts.filter((c) => !sameCut(c, item.cut!)) : [...selection.cuts, item.cut],
+        };
+        applySelection(next);
+        return { next, drag: false };
+      }
+      if (selected) return { next: selection, drag: true };
+      const next: Selection = mode === "add"
+        ? {
+            comps: item.comp === undefined ? selection.comps : [...selection.comps, item.comp],
+            wires: item.wire === undefined ? selection.wires : [...selection.wires, item.wire],
+            cuts: item.cut === undefined ? selection.cuts : [...selection.cuts, item.cut],
+          }
+        : { comps: item.comp === undefined ? [] : [item.comp], wires: item.wire === undefined ? [] : [item.wire], cuts: item.cut === undefined ? [] : [item.cut] };
+      applySelection(next);
+      return { next, drag: true };
+    },
+    [selection, applySelection]
+  );
+
+  // A drag of a group: the move plan, anchored on the hole the drag started at
+  const startGroupDrag = useCallback((sel: Selection, anchor: { row: number; col: number }) => {
+    const b = computeBoardSelectionBounds(sel.comps, sel.wires, sel.cuts);
+    multiDragRef.current = {
+      moveIds: sel.comps,
+      moveWireIds: sel.wires,
+      moveCuts: sel.cuts,
+      bodyCuts: bodyCutsOf(sel.comps, sel.cuts),
+      anchorStartRow: anchor.row,
+      anchorStartCol: anchor.col,
+      startMinRow: b.minRow,
+      startMinCol: b.minCol,
+      startMaxRow: b.maxRow,
+      startMaxCol: b.maxCol,
+      appliedDRow: 0,
+      appliedDCol: 0,
+    };
+  }, [computeBoardSelectionBounds, bodyCutsOf]);
+
+  const deleteSelection = useCallback(() => {
+    if (selCount(selection) === 0) return;
+    transact(() => {
+      for (const id of selection.comps) removeFromBoard(id);
+      for (const id of selection.wires) removeWire(id);
+      for (const cut of selection.cuts) removeCut(cut);
+    });
+    applySelection({ comps: [], wires: [], cuts: [] });
+  }, [selection, transact, removeFromBoard, removeWire, removeCut, applySelection]);
+
   // A cut being dragged: where it started and where it is now
   const cutDragRef = useRef<{
     startX: number;
@@ -319,11 +417,8 @@ export default function StripboardCanvas({
         if (wirePlacementFrom) {
           cancelWirePlacement();
           setWireMousePos(null);
-        } else if (selectedId || selectedIds.length > 0 || selectedWireIds.length > 0 || selectedCuts.length > 0) {
-          setSelectedId(null);
-          setSelectedIds([]);
-          setSelectedWireIds([]);
-          setSelectedCuts([]);
+        } else if (selCount(selection) > 0) {
+          applySelection({ comps: [], wires: [], cuts: [] });
         } else {
           setBoardTool("select");
         }
@@ -363,18 +458,7 @@ export default function StripboardCanvas({
       if (e.key === "Delete") {
         // Delete acts on the whole selection: unplace components, remove
         // selected wires and cuts — one undo step for the lot.
-        const delIds = selectedIds.length > 0 ? selectedIds : selectedId ? [selectedId] : [];
-        if (delIds.length > 0 || selectedWireIds.length > 0 || selectedCuts.length > 0) {
-          transact(() => {
-            for (const id of delIds) removeFromBoard(id);
-            for (const wireId of selectedWireIds) removeWire(wireId);
-            for (const cut of selectedCuts) removeCut(cut);
-          });
-          setSelectedId(null);
-          setSelectedIds([]);
-          setSelectedWireIds([]);
-          setSelectedCuts([]);
-        }
+        deleteSelection();
         return;
       }
 
@@ -404,14 +488,14 @@ export default function StripboardCanvas({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [wirePlacementFrom, cancelWirePlacement, selectedId, selectedIds, selectedWireIds, selectedCuts, rotateComponent, removeFromBoard, removeWire, removeCut, transact, moveComponentsOnBoard, pushSnapshot, computeBoardSelectionBounds, board.rows, board.cols, setSelectedId, setSelectedIds, components, setBoardLock, boardTool, setBoardTool, bodyCutsOf]);
+  }, [readOnly, wirePlacementFrom, cancelWirePlacement, selection, selectedId, selectedIds, selectedWireIds, selectedCuts, rotateComponent, moveComponentsOnBoard, pushSnapshot, computeBoardSelectionBounds, board.rows, board.cols, components, setBoardLock, boardTool, setBoardTool, bodyCutsOf, applySelection, deleteSelection]);
 
 
   const getSVGPoint = useCallback((e: React.MouseEvent | React.DragEvent) => {
     const svg = svgRef.current;
     if (!svg) return { x: 0, y: 0 };
-    return panZoom.screenToSvg(e.clientX, e.clientY, svg);
-  }, [panZoom.screenToSvg]);
+    return screenToSvg(e.clientX, e.clientY, svg);
+  }, [screenToSvg]);
 
   const getSegmentColor = useCallback(
     (segment: StripSegment, segIndex: number): string => {
@@ -504,7 +588,7 @@ export default function StripboardCanvas({
         setTrayGhost(null);
       }
     },
-    [getSVGPoint, board.rows, board.cols, trayDragComponentId]
+    [readOnly, getSVGPoint, board.rows, board.cols, trayDragComponentId]
   );
 
   const handleDrop = useCallback(
@@ -522,7 +606,7 @@ export default function StripboardCanvas({
       }
       setTrayGhost(null);
     },
-    [getSVGPoint, board.rows, board.cols, isValidPlacement, placeOnBoard, pushSnapshot, autoAlignPolarity]
+    [readOnly, getSVGPoint, board.rows, board.cols, isValidPlacement, placeOnBoard, pushSnapshot, autoAlignPolarity]
   );
 
   const handleDragLeave = useCallback(() => {
@@ -541,17 +625,16 @@ export default function StripboardCanvas({
       // commitSnapshotOnce). A plain select-click must not touch history.
       pendingSnapshotRef.current = true;
 
-      // Dragging a component that's part of a multi-selection moves the whole
-      // selection together; otherwise it's a single-component drag (and selects it).
-      const selIds = selectedIds.length > 0 ? selectedIds : selectedId ? [selectedId] : [];
-      const isMulti = selIds.length > 1 && selIds.includes(componentId);
       // With a tool up a press on a part can still drag it, but a plain click
       // is the tool's, so nothing gets selected.
-      if (!isMulti && boardTool === "select") {
-        setSelectedId(componentId);
-        setSelectedWireIds([]);
-        setSelectedCuts([]);
+      const press = boardTool === "select" ? pressSelect(e, { comp: componentId }) : { next: selection, drag: true };
+      if (!press.drag) {
+        // the click that follows would otherwise toggle it right back
+        markDragComplete();
+        return;
       }
+      // Dragging a part that belongs to a group moves the whole group
+      const isMulti = press.next.comps.includes(componentId) && selCount(press.next) > 1;
       carriedCutsRef.current = isMulti ? [] : bodyCutsOf([componentId]);
 
       // Compute offset: where within the component the user clicked
@@ -561,23 +644,7 @@ export default function StripboardCanvas({
       const rowOffset = comp?.boardPos && clickHole ? clickHole.row - comp.boardPos.row : 0;
       const colOffset = comp?.boardPos && clickHole ? clickHole.col - comp.boardPos.col : 0;
 
-      if (isMulti && comp?.boardPos) {
-        const b = computeBoardSelectionBounds(selIds, selectedWireIds, selectedCuts);
-        multiDragRef.current = {
-          moveIds: selIds,
-          moveWireIds: selectedWireIds,
-          moveCuts: selectedCuts,
-          bodyCuts: bodyCutsOf(selIds, selectedCuts),
-          anchorStartRow: comp.boardPos.row,
-          anchorStartCol: comp.boardPos.col,
-          startMinRow: b.minRow,
-          startMinCol: b.minCol,
-          startMaxRow: b.maxRow,
-          startMaxCol: b.maxCol,
-          appliedDRow: 0,
-          appliedDCol: 0,
-        };
-      }
+      if (isMulti && comp?.boardPos) startGroupDrag(press.next, comp.boardPos);
 
       setDragging({
         componentId,
@@ -589,7 +656,7 @@ export default function StripboardCanvas({
         multi: isMulti,
       });
     },
-    [boardTool, bodyCutsOf, components, board.rows, board.cols, getSVGPoint, selectedId, selectedIds, selectedWireIds, selectedCuts, setSelectedId, computeBoardSelectionBounds]
+    [readOnly, boardTool, bodyCutsOf, components, board.rows, board.cols, getSVGPoint, selection, pressSelect, startGroupDrag, markDragComplete]
   );
 
   // Pressed on a wire: the run between its ends moves the wire, an end moves
@@ -603,20 +670,25 @@ export default function StripboardCanvas({
       e.stopPropagation();
       e.preventDefault();
       pendingSnapshotRef.current = true;
-      if (boardTool === "select") {
-        clearSelection();
-        setSelectedCuts([]);
-        setSelectedWireIds([wireId]);
-      }
+      const press = boardTool === "select" ? pressSelect(e, { wire: wireId }) : { next: selection, drag: true };
+      if (!press.drag) return;
       const pt = getSVGPoint(e);
+      const grabHole = nearestHole(pt.x, pt.y, board.rows, board.cols);
+      // The run of a wire in a group takes the group along; an end always moves alone
+      if (part === "whole" && press.next.wires.includes(wireId) && selCount(press.next) > 1) {
+        if (!grabHole) return;
+        startGroupDrag(press.next, grabHole);
+        setDragging({ componentId: "", startX: e.clientX, startY: e.clientY, didDrag: false, rowOffset: 0, colOffset: 0, multi: true });
+        return;
+      }
       wireDragRef.current = {
         wireId, part,
         startX: e.clientX, startY: e.clientY, didDrag: false,
-        grabHole: nearestHole(pt.x, pt.y, board.rows, board.cols),
+        grabHole,
         from: wire.from, to: wire.to,
       };
     },
-    [readOnly, board.wires, board.rows, board.cols, boardTool, clearSelection, getSVGPoint]
+    [readOnly, board.wires, board.rows, board.cols, boardTool, selection, pressSelect, startGroupDrag, getSVGPoint]
   );
 
   // Pressed on a cut with the select tool: selects it, and a drag moves it
@@ -626,17 +698,23 @@ export default function StripboardCanvas({
       e.stopPropagation();
       e.preventDefault();
       pendingSnapshotRef.current = true;
-      clearSelection();
-      setSelectedWireIds([]);
-      setSelectedCuts([cut]);
+      const press = pressSelect(e, { cut });
+      if (!press.drag) return;
       const pt = getSVGPoint(e);
+      const grabHole = nearestHole(pt.x, pt.y, board.rows, board.cols);
+      if (press.next.cuts.some((c) => sameCut(c, cut)) && selCount(press.next) > 1) {
+        if (!grabHole) return;
+        startGroupDrag(press.next, grabHole);
+        setDragging({ componentId: "", startX: e.clientX, startY: e.clientY, didDrag: false, rowOffset: 0, colOffset: 0, multi: true });
+        return;
+      }
       cutDragRef.current = {
         startX: e.clientX, startY: e.clientY, didDrag: false,
-        grabHole: nearestHole(pt.x, pt.y, board.rows, board.cols),
+        grabHole,
         origin: cut, at: cut,
       };
     },
-    [readOnly, board.rows, board.cols, clearSelection, getSVGPoint]
+    [readOnly, board.rows, board.cols, pressSelect, startGroupDrag, getSVGPoint]
   );
 
   // Start selection rectangle on mouseDown on empty SVG area
@@ -647,21 +725,22 @@ export default function StripboardCanvas({
       if (wirePlacementFrom) return;
       // Only start selection rect if clicking directly on SVG background elements
       const target = e.target as Element;
-      const isBackground = target.tagName === "svg" ||
-        target.getAttribute("fill") === "url(#grid)" ||
-        target.tagName === "circle" && target.getAttribute("stroke") === "var(--hole-stroke)"; // hole
+      const isBackground = target.tagName === "svg" || target.getAttribute("fill") === "url(#holes)";
       if (!isBackground) return;
 
-      startSelectionRect(getSVGPoint(e));
-      setSelectedWireIds([]);
-      setSelectedCuts([]);
+      const keep = selMode(e) !== "replace";
+      startSelectionRect(getSVGPoint(e), keep);
+      if (!keep) {
+        setSelectedWireIds([]);
+        setSelectedCuts([]);
+      }
     },
-    [getSVGPoint, wirePlacementFrom]
+    [readOnly, getSVGPoint, wirePlacementFrom, startSelectionRect]
   );
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
-      if (panZoom.handlePanMove(e)) return;
+      if (handlePanMove(e)) return;
 
       // Flexible pin drag
       if (flexPinDrag) {
@@ -833,11 +912,11 @@ export default function StripboardCanvas({
         }
       }
     },
-    [dragging, selectionRect, getSVGPoint, board.rows, board.cols, wirePlacementFrom, updateSelectionRect, checkDragThreshold, flexPinDrag, components, componentDefs, placeOnBoard, setFlexibleEndPos, commitSnapshotOnce, moveComponentsOnBoard, boardTool, readOnly, board.wires, board.cuts, wireEndBlocked, cutBlocked, setWireEnds]
+    [handlePanMove, dragging, selectionRect, getSVGPoint, board.rows, board.cols, wirePlacementFrom, updateSelectionRect, checkDragThreshold, flexPinDrag, components, componentDefs, placeOnBoard, setFlexibleEndPos, commitSnapshotOnce, moveComponentsOnBoard, boardTool, readOnly, board.wires, board.cuts, wireEndBlocked, cutBlocked, setWireEnds]
   );
 
   const handleMouseUp = useCallback(() => {
-    panZoom.handlePanEnd();
+    handlePanEnd();
     // Gesture over: disarm a pending snapshot that was never triggered
     // (e.g. a click that selected without moving anything).
     const moved = !pendingSnapshotRef.current;
@@ -863,7 +942,7 @@ export default function StripboardCanvas({
     }
 
     // Finalize selection rectangle
-    const rectHandled = finalizeSelectionRect((x1, y1, x2, y2) => {
+    const rectHandled = finalizeSelectionRect((x1, y1, x2, y2, keep) => {
       const selected: string[] = [];
       for (const comp of components) {
         if (!comp.boardPos) continue;
@@ -905,15 +984,20 @@ export default function StripboardCanvas({
         }
       }
 
-      setSelectedWireIds(selWires);
-      setSelectedCuts(selCuts);
-      return selected;
+      applySelection(keep
+        ? {
+            comps: [...new Set([...selection.comps, ...selected])],
+            wires: [...new Set([...selection.wires, ...selWires])],
+            cuts: [...selection.cuts, ...selCuts.filter((c) => !selection.cuts.some((sc) => sameCut(sc, c)))],
+          }
+        : { comps: selected, wires: selWires, cuts: selCuts });
     });
     if (rectHandled) return;
 
     if (dragging) {
-      // A press on a part that went nowhere: with a tool up, the click is the tool's
-      if (dragging.didDrag || boardTool === "select") markDragComplete();
+      // A press on a part that went nowhere: with a tool up, the click is the
+      // tool's. A group dragged by a wire or cut sees no canvas click at all.
+      if (dragging.didDrag || (boardTool === "select" && dragging.componentId)) markDragComplete();
       // Position already committed live during drag — no need to placeOnBoard here.
       // A real move can land a 2-pin part on the right nets but swapped: fix it.
       if (dragging.didDrag) {
@@ -926,7 +1010,7 @@ export default function StripboardCanvas({
     setDragging(null);
     setDragPreviewPos(null);
     multiDragRef.current = null;
-  }, [dragging, dragPreviewPos, components, componentDefs, board.wires, board.cuts, isValidPlacement, placeOnBoard, finalizeSelectionRect, markDragComplete, autoAlignPolarity, flexPinDrag, boardTool]);
+  }, [handlePanEnd, dragging, components, componentDefs, board.wires, board.cuts, finalizeSelectionRect, markDragComplete, autoAlignPolarity, flexPinDrag, boardTool, selection, applySelection]);
 
   // ── Canvas click ────────────────────────────────────────
   // A click means what the tool in hand says: a cut, a wire end, or a selection.
@@ -974,19 +1058,17 @@ export default function StripboardCanvas({
           ? findComponentAtHole(hole.row, hole.col)
           : null;
         if (compId) {
-          setSelectedId(compId);
+          pressSelect(e, { comp: compId });
           return;
         }
       }
 
-      clearSelection();
-      setSelectedWireIds([]);
-      setSelectedCuts([]);
+      if (selMode(e) === "replace") applySelection({ comps: [], wires: [], cuts: [] });
     },
     [
-      getSVGPoint, board, placeCut, removeCut, boardTool, cutBlocked, wireEndBlocked,
+      readOnly, getSVGPoint, board, placeCut, removeCut, boardTool, cutBlocked, wireEndBlocked,
       wirePlacementFrom, setWirePlacementFrom, cancelWirePlacement, addWire,
-      shouldSuppressClick, clearSelection, setSelectedId, findComponentAtHole,
+      shouldSuppressClick, pressSelect, applySelection, findComponentAtHole,
     ]
   );
 
@@ -1022,7 +1104,7 @@ export default function StripboardCanvas({
   const hoverBlocked = !!hover && (boardTool === "cut"
     ? cutBlocked(hover) && !board.cuts.some((c) => sameCut(c, hover))
     : wireEndBlocked(hover));
-  const cursorStyle = panZoom.isPanning.current
+  const cursorStyle = panZoom.panning
     ? "grabbing"
     : dragging?.didDrag
     ? "grabbing"
@@ -1096,10 +1178,8 @@ export default function StripboardCanvas({
             // A hole-cut drills out the hole: its isolated single-hole segment
             // draws no copper, and the neighbouring strips run up to the hole so
             // the break lands on it (not in the middle of the strip).
-            const hasHoleCut = (col: number) =>
-              board.cuts.some((c) => c.kind === "hole" && c.row === seg.row && c.col === col);
-            const hasBetweenCut = (col: number) =>
-              board.cuts.some((c) => c.kind !== "hole" && c.row === seg.row && c.col === col);
+            const hasHoleCut = (col: number) => cutKeys.has(`h:${seg.row}:${col}`);
+            const hasBetweenCut = (col: number) => cutKeys.has(`b:${seg.row}:${col}`);
             if (seg.startCol === seg.endCol && hasHoleCut(seg.startCol)) return null;
             const HOLE_CUT_GAP = HOLE_RADIUS + 1.5;
             // Only run the strip up to a neighbouring hole-cut when no between-cut
@@ -1176,23 +1256,22 @@ export default function StripboardCanvas({
             );
           })}
 
-          {/* Holes */}
-          {Array.from({ length: board.rows }, (_, row) =>
-            Array.from({ length: board.cols }, (_, col) => {
-              const center = holeCenter(row, col);
-              return (
-                <circle
-                  key={`h-${row}-${col}`}
-                  cx={center.x}
-                  cy={center.y}
-                  r={HOLE_RADIUS}
-                  fill="var(--hole-fill)"
-                  stroke="var(--hole-stroke)"
-                  strokeWidth={0.5}
-                />
-              );
-            })
-          )}
+          {/* Holes: one tiled pattern, not a node per hole */}
+          {(() => {
+            const origin = holeCenter(0, 0);
+            const x = origin.x - HOLE_SPACING / 2;
+            const y = origin.y - HOLE_SPACING / 2;
+            return (
+              <>
+                <defs>
+                  <pattern id="holes" width={HOLE_SPACING} height={HOLE_SPACING} patternUnits="userSpaceOnUse" x={x} y={y}>
+                    <circle cx={HOLE_SPACING / 2} cy={HOLE_SPACING / 2} r={HOLE_RADIUS} fill="var(--hole-fill)" stroke="var(--hole-stroke)" strokeWidth={0.5} />
+                  </pattern>
+                </defs>
+                <rect x={x} y={y} width={board.cols * HOLE_SPACING} height={board.rows * HOLE_SPACING} fill="url(#holes)" />
+              </>
+            );
+          })()}
 
           <g>
           {components
@@ -1223,6 +1302,10 @@ export default function StripboardCanvas({
                   readOnly={readOnly}
                   onPinDragStart={!readOnly ? (pinId, e) => {
                     e.stopPropagation();
+                    if (selMode(e) !== "replace") {
+                      handleComponentMouseDown(comp.id, e);
+                      return;
+                    }
                     // Defer snapshot until the leg actually moves (a click on a
                     // pin without a drag must not touch history/redo).
                     pendingSnapshotRef.current = true;
@@ -1592,8 +1675,8 @@ export default function StripboardCanvas({
           return <SelectionActionBar actions={actions} />;
         })()}
 
-        {/* Multi-selection actions */}
-        {!readOnly && !selectedId && selectedIds.length > 1 && (() => {
+        {/* Multi-selection actions: parts, with any wires and cuts selected along */}
+        {!readOnly && !selectedId && selectedIds.length > 0 && selCount(selection) > 1 && (() => {
           const actions: CanvasAction[] = [];
           if (onAutoLayoutSelection) {
             actions.push({
@@ -1636,19 +1719,15 @@ export default function StripboardCanvas({
               });
             }
           }
+          const mixed = selectedWireIds.length + selectedCuts.length > 0;
           actions.push({
             key: "delete",
-            label: `Delete ${selectedIds.length}`,
-            title: "Remove the selected components from the board",
+            label: mixed ? `Delete ${selCount(selection)} items` : `Delete ${selectedIds.length}`,
+            title: mixed ? "Remove the selected parts, link wires and cuts from the board" : "Remove the selected components from the board",
             shortcut: "Del",
             icon: DeleteIcon,
             variant: "danger",
-            onClick: () => {
-              transact(() => {
-                for (const id of selectedIds) removeFromBoard(id);
-              });
-              clearSelection();
-            },
+            onClick: deleteSelection,
           });
           return <SelectionActionBar actions={actions} />;
         })()}
@@ -1669,14 +1748,7 @@ export default function StripboardCanvas({
                 shortcut: "Del",
                 icon: DeleteIcon,
                 variant: "danger",
-                onClick: () => {
-                  transact(() => {
-                    selectedWireIds.forEach((id) => removeWire(id));
-                    selectedCuts.forEach((cut) => removeCut(cut));
-                  });
-                  setSelectedWireIds([]);
-                  setSelectedCuts([]);
-                },
+                onClick: deleteSelection,
               }]}
             />
           );

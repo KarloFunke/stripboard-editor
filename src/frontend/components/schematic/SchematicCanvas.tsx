@@ -114,6 +114,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const panZoom = usePanZoom(1, readOnly ? undefined : TOOL_STRIP_HOME);
+  const { screenToSvg, handlePanMove, handlePanEnd } = panZoom;
   const components = useProjectStore((s) => s.components);
   const componentDefs = useProjectStore((s) => s.componentDefs);
   const schematicWires = useProjectStore((s) => s.schematicWires);
@@ -313,8 +314,8 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
   const getSVGPoint = useCallback((e: React.MouseEvent | MouseEvent) => {
     const svg = svgRef.current;
     if (!svg) return { x: 0, y: 0 };
-    return panZoom.screenToSvg(e.clientX, e.clientY, svg);
-  }, [panZoom.screenToSvg]);
+    return screenToSvg(e.clientX, e.clientY, svg);
+  }, [screenToSvg]);
 
   const [containerSize, setContainerSize] = useState({ width: 1000, height: 800 });
   useEffect(() => {
@@ -737,7 +738,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     const pt = getSVGPoint(e);
     lastMouseRef.current = pt;
-    if (panZoom.handlePanMove(e)) return;
+    if (handlePanMove(e)) return;
 
     // Wire drawing preview + detect initial direction
     if (drawing && wireDrawingFrom) {
@@ -779,7 +780,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
     moveSchematicItems({ x: nx - drag.lastX, y: ny - drag.lastY });
     drag.lastX = nx;
     drag.lastY = ny;
-  }, [getSVGPoint, panZoom.handlePanMove, drawing, wireDrawingFrom, wireDirection, selectionRect, pushSnapshot, moveSchematicItems]);
+  }, [getSVGPoint, handlePanMove, drawing, wireDrawingFrom, wireDirection, selectionRect, pushSnapshot, moveSchematicItems]);
 
   const finishRect = useCallback(() => {
     const rect = selectionRect;
@@ -828,17 +829,17 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
   }, [finishSchematicGesture, cancelSchematicGesture]);
 
   const handleMouseUp = useCallback(() => {
-    panZoom.handlePanEnd();
+    handlePanEnd();
     if (finishRect()) return;
     endDrag();
-  }, [panZoom.handlePanEnd, finishRect, endDrag]);
+  }, [handlePanEnd, finishRect, endDrag]);
 
   const handleMouseLeave = useCallback(() => {
     mouseInsideRef.current = false;
-    panZoom.handlePanEnd();
+    handlePanEnd();
     setSelectionRect(null);
     endDrag();
-  }, [panZoom.handlePanEnd, endDrag]);
+  }, [handlePanEnd, endDrag]);
 
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
     if (readOnly) return;
@@ -859,7 +860,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     if (readOnly || !svgRef.current) return;
-    const pos = panZoom.screenToSvg(e.clientX, e.clientY, svgRef.current);
+    const pos = screenToSvg(e.clientX, e.clientY, svgRef.current);
     const snapped = { x: snapToGrid(pos.x), y: snapToGrid(pos.y) };
     const defId = e.dataTransfer.getData("application/schematic-component");
     if (defId) {
@@ -880,7 +881,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
         placeLabel(kind, snapped, tile.name);
       }
     }
-  }, [readOnly, panZoom.screenToSvg, addComponent, addLibraryComponent, placeLabel]);
+  }, [readOnly, screenToSvg, addComponent, addLibraryComponent, placeLabel]);
 
   // ── Render ────────────────────────────────────────────
 
@@ -890,7 +891,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
     ? [...components.filter((c) => !selectedCompSet.has(c.id)), ...components.filter((c) => selectedCompSet.has(c.id))]
     : components;
 
-  const cursorStyle = panZoom.isPanning.current
+  const cursorStyle = panZoom.panning
     ? "grabbing"
     : wireTool
     ? "crosshair"
