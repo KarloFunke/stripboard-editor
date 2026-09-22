@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { trackDemo } from "./trackDemo";
 
 // ── Sequence pair: two orderings of the components describe a whole packing ──
 // For any two components a and b: a before b in both orderings means a is left
@@ -95,7 +96,7 @@ export default function SequencePairDemo() {
     const picked = pick?.row === row && pick.id === id;
     return (
       <button
-        onClick={() => clickChip(row, id)}
+        onClick={() => { trackDemo("sequence-pair", "chip"); clickChip(row, id); }}
         onMouseEnter={() => setHover(id)}
         onMouseLeave={() => setHover(null)}
         className={`w-8 h-8 rounded text-white text-sm font-mono border-2 transition-transform ${picked ? "scale-110 border-neutral-900 dark:border-white" : "border-transparent"} ${hover === id ? "ring-2 ring-offset-1 ring-neutral-400" : ""}`}
@@ -123,8 +124,8 @@ export default function SequencePairDemo() {
             <div className="flex gap-1">{seqN.map((id) => <Chip key={id} row={1} id={id} />)}</div>
           </div>
           <div className="flex gap-2">
-            <button className={btn} onClick={shuffle}>Shuffle both</button>
-            <button className={btn} onClick={() => { setSeqP(["A", "B", "C", "E", "D"]); setSeqN(["C", "A", "B", "D", "E"]); setPick(null); }}>Reset</button>
+            <button className={btn} onClick={() => { trackDemo("sequence-pair", "shuffle"); shuffle(); }}>Shuffle both</button>
+            <button className={btn} onClick={() => { trackDemo("sequence-pair", "reset"); setSeqP(["A", "B", "C", "E", "D"]); setSeqN(["C", "A", "B", "D", "E"]); setPick(null); }}>Reset</button>
           </div>
           <p className="text-neutral-500 dark:text-neutral-400">Click two components in one row to swap them. Hover a component to read its relations.</p>
           <div className="font-mono min-h-[5.5rem]">

@@ -197,6 +197,7 @@ export default function HomeClient({
           </button>
           <Link
             href="/guide"
+            onClick={() => track("content-cta", { from: "home", to: "guide" })}
             className="font-mono py-3 px-6 rounded-md text-sm font-medium border-2 border-dashed border-[#113768] dark:border-[#5b9bd5] text-[#113768] dark:text-[#5b9bd5] hover:border-[var(--copper)] hover:text-[var(--copper)] dark:hover:text-[var(--copper)] transition-colors text-center"
           >
             see short guide
@@ -207,7 +208,7 @@ export default function HomeClient({
         <div className="mb-12 text-sm text-neutral-600 dark:text-neutral-400 space-y-1">
           <p>Stripboard Editor is a rather new and actively developing project, with new features getting added every now and then.</p>
           <p>
-            <Link href="/updates" className="font-mono text-[var(--copper)] hover:underline">
+            <Link href="/updates" onClick={() => track("content-cta", { from: "home", to: "updates" })} className="font-mono text-[var(--copper)] hover:underline">
               See what&apos;s new and what&apos;s coming next →
             </Link>
           </p>
@@ -258,7 +259,7 @@ export default function HomeClient({
                 </div>
                 <p className="text-xs text-neutral-500 dark:text-neutral-400">
                   Skip steps 2 and 3: the router places every part, picks a board size, and works out the cuts and link wires for you.{" "}
-                  <Link href="/how-auto-layout-works" className="text-[var(--copper)] hover:underline">How it works &rarr;</Link>
+                  <Link href="/how-auto-layout-works" onClick={() => track("content-cta", { from: "home", to: "explainer" })} className="text-[var(--copper)] hover:underline">How it works &rarr;</Link>
                 </p>
               </div>
               <div className="flex justify-center text-[var(--copper)] text-[10px] leading-none py-1" aria-hidden="true">▼</div>
@@ -405,6 +406,7 @@ export default function HomeClient({
             <h2 className="text-lg font-semibold text-neutral-800 dark:text-neutral-200 mb-3">Your Parts</h2>
             <Link
               href="/parts"
+              onClick={() => track("content-cta", { from: "home", to: "parts" })}
               className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-lg px-4 py-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 hover:border-neutral-300 dark:hover:border-neutral-600 transition-colors"
             >
               <span className="text-sm text-neutral-600 dark:text-neutral-400">

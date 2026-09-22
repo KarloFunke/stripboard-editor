@@ -5,6 +5,7 @@ import type { LabGenome } from "@/components/stripboard/autoLayout5";
 import { LAB, GENOME, PARTS, NETS } from "./lab";
 import GenomeView from "./GenomeView";
 import BoardView from "./BoardView";
+import { trackDemo } from "../trackDemo";
 
 // ── Section 5: one move at a time on the example description ──
 // The engine's own move generator proposes a change of the requested kind;
@@ -80,6 +81,7 @@ export default function MoveDemo({ caption }: { caption?: string }) {
   const after = useMemo(() => (trial ? LAB.decode(LAB.cloneG(trial.g), false).d : null), [trial]);
   const E = (d: NonNullable<typeof before>) => d.eBase + 400 * d.mess;
   const propose = (kind: Kind) => {
+    trackDemo("move", kind);
     for (let t = 0; t < 400; t++) {
       const g2 = LAB.mutate(cur, rng.current);
       if (!g2) continue;
@@ -111,9 +113,9 @@ export default function MoveDemo({ caption }: { caption?: string }) {
       <div className="flex flex-wrap items-center gap-2 mb-3">
         {BUTTONS.map((b) => <button key={b.kind} className={btn} onClick={() => propose(b.kind)}>{b.label}</button>)}
         <span className="ml-auto inline-flex gap-2">
-          <button className={btn} onClick={() => { if (trial && after) setCur(trial.g); setTrial(null); }} disabled={!trial || !after}>Keep</button>
+          <button className={btn} onClick={() => { trackDemo("move", "keep"); if (trial && after) setCur(trial.g); setTrial(null); }} disabled={!trial || !after}>Keep</button>
           <button className={btn} onClick={() => setTrial(null)} disabled={!trial}>Undo</button>
-          <button className={btn} onClick={() => { setCur(LAB.cloneG(GENOME)); setTrial(null); setNote(null); }}>Reset</button>
+          <button className={btn} onClick={() => { trackDemo("move", "reset"); setCur(LAB.cloneG(GENOME)); setTrial(null); setNote(null); }}>Reset</button>
         </span>
       </div>
       <div className="rounded border border-neutral-200 dark:border-neutral-700 bg-white/60 dark:bg-neutral-900/40 p-3">

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import SiteHeader from "@/components/SiteHeader";
+import ReadDepth from "@/components/ReadDepth";
 import SiteFooter from "@/components/SiteFooter";
 import AnnealDemo from "./figures/AnnealDemo";
 import SequencePairDemo from "./figures/SequencePairDemo";
@@ -56,6 +57,7 @@ export default function AutoLayoutGuidePage() {
   return (
     <div className="min-h-screen font-mono bg-[#fafafa] dark:bg-[#121212] bg-[radial-gradient(var(--page-dot)_1px,transparent_1.5px)] [background-size:24px_24px] flex flex-col">
       <SiteHeader breadcrumb="how_auto_layout_works" />
+      <ReadDepth page="explainer" />
 
       <div className="max-w-3xl mx-auto w-full px-4 sm:px-6 py-8 sm:py-12 flex-1">
         <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-sm dark:shadow-neutral-900/30 px-5 sm:px-8 py-7 sm:py-9">

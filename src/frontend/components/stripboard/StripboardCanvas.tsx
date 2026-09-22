@@ -45,6 +45,7 @@ import BoardTools from "./BoardTools";
 import { TOOL_STRIP_HOME } from "@/components/canvas/ToolStrip";
 import { computeWireLaneOffsets } from "./wireLanes";
 import { SelectionActionBar, RotateIcon, DeleteIcon, FootprintIcon, LockIcon, UnlockIcon, OffBoardIcon, PackageIcon, WandIcon, type CanvasAction } from "@/components/canvas/SelectionActionBar";
+import { track } from "@/lib/track";
 
 // Ctrl toggles an item in the selection, Shift adds it, a plain press replaces it
 type SelMode = "replace" | "add" | "toggle";
@@ -1599,13 +1600,19 @@ export default function StripboardCanvas({
                   title: o.movesPins
                     ? "Changes the footprint: the part stays with its first pin where it is, or goes back to the unplaced list if it no longer fits"
                     : undefined,
-                  onClick: () => setComponentPackage(selectedId, o.id, "one"),
+                  onClick: () => {
+                    track("package-set", { scope: "one" });
+                    setComponentPackage(selectedId, o.id, "one");
+                  },
                 })),
                 ...(sameType > 1 && current ? [{
                   key: "all",
                   label: `Apply to all ${sameType} of this part`,
                   separated: true,
-                  onClick: () => setComponentPackage(selectedId, current, "type"),
+                  onClick: () => {
+                    track("package-set", { scope: "type" });
+                    setComponentPackage(selectedId, current, "type");
+                  },
                 }] : []),
               ],
             });
@@ -1616,7 +1623,10 @@ export default function StripboardCanvas({
               label: "Edit Footprint",
               title: "Edit this component's footprint",
               icon: FootprintIcon,
-              onClick: () => onEditFootprint(selectedId),
+              onClick: () => {
+                track("footprint-edit-open");
+                onEditFootprint(selectedId);
+              },
             });
           }
           if (!pad || pad.leadOf.pinId === GROUP_PIN) {
@@ -1636,6 +1646,7 @@ export default function StripboardCanvas({
                 title: "Put the part itself back on the board; its solder pads go away",
                 icon: OffBoardIcon,
                 onClick: () => {
+                  track("off-board-toggle", { to: "on-board", count: 1 });
                   setOffBoard(pad.leadOf.componentId, false);
                   clearSelection();
                 },
@@ -1646,6 +1657,7 @@ export default function StripboardCanvas({
                 title: "The part is mounted off the board and wired to it: each wired pin becomes a solder pad you place",
                 icon: OffBoardIcon,
                 onClick: () => {
+                  track("off-board-toggle", { to: "off-board", count: 1 });
                   setOffBoard(selectedId, true);
                   clearSelection();
                 },
@@ -1713,6 +1725,7 @@ export default function StripboardCanvas({
                   : "These parts are mounted off the board and wired to it: each wired pin becomes a solder pad you place",
                 icon: OffBoardIcon,
                 onClick: () => {
+                  track("off-board-toggle", { to: back ? "on-board" : "off-board", count: back ? parents.length : real.length });
                   transact(() => (back ? parents.forEach((id) => setOffBoard(id, false)) : real.forEach((c) => setOffBoard(c.id, true))));
                   clearSelection();
                 },

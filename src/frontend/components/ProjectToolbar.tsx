@@ -235,7 +235,6 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
   };
 
   const handleExport = () => {
-    track("export-project");
     const data = exportProject();
     const json = JSON.stringify(data, null, 2);
     const blob = new Blob([json], { type: "application/json" });
@@ -245,6 +244,7 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
     a.download = `${data.name.replace(/[^a-zA-Z0-9_-]/g, "_")}.json`;
     a.click();
     URL.revokeObjectURL(url);
+    track("export-project");
   };
 
   const downloadBlob = (blob: Blob, filename: string) => {
@@ -257,7 +257,6 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
   };
 
   const handleExportNetlist = () => {
-    track("export-net");
     const s = useProjectStore.getState();
     const base = s.name.replace(/[^a-zA-Z0-9_-]/g, "_");
     const netlist = toKicadNetlist({
@@ -269,6 +268,7 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
       date: new Date().toISOString(),
     });
     downloadBlob(new Blob([netlist], { type: "text/plain" }), `${base}.net`);
+    track("export-net");
 
     // Parts with no stock KiCad footprint (e.g. custom parts with non-numeric
     // pin ids) reference a generated footprint library; ship it alongside.
@@ -315,7 +315,7 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
         }
       }
       importProject(data as Parameters<typeof importProject>[0]);
-      track("project-import", { migrated: migrated ? "yes" : "no" });
+      track("import-project", { migrated: migrated ? "yes" : "no" });
     };
     reader.readAsText(file);
     e.target.value = "";
@@ -323,9 +323,9 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
 
   const handleSave = async () => {
     if (!onSave) return;
-    track("project-save");
     const ok = await onSave();
     if (ok) {
+      track("project-save");
       setSaveFlash(true);
       setTimeout(() => setSaveFlash(false), 1500);
       if (!user && !hasShownSaveNotice.current) {

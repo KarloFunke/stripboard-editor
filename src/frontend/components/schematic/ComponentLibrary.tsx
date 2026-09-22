@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useLibraryStore } from "@/store/useLibraryStore";
 import { ComponentDef, NetLabel, NetLabelKind } from "@/types";
@@ -8,6 +8,7 @@ import { snapToGrid } from "@/utils/schematicConstants";
 import { COMPONENT_GROUPS, DEFAULT_COMPONENTS } from "@/data/defaultComponents";
 import { getSymbolDef } from "@/data/symbolDefs";
 import { getSymbolBounds } from "./SymbolRenderer";
+import { track } from "@/lib/track";
 import CustomComponentEditor from "./CustomComponentEditor";
 
 // Fixed thumbnail box so every tray tile is the same size regardless of the
@@ -92,6 +93,9 @@ export function packageLabel(def: ComponentDef): string {
 }
 
 const squash = (text: string) => text.toLowerCase().replace(/[\s\-_]/g, "");
+
+/** A search as it is reported: lower case, trimmed, and never long. */
+const searchTerm = (q: string) => q.trim().toLowerCase().slice(0, 40);
 
 /** Whether every word appears in the part's name, description or aliases */
 function matchesWords(def: ComponentDef, words: string[]): boolean {
@@ -234,8 +238,10 @@ export default function ComponentLibrary() {
 
   const handleAdd = (def: ComponentDef) => {
     const pos = { x: snapToGrid(100 + Math.random() * 200), y: snapToGrid(100 + Math.random() * 200) };
-    if (isLibraryDef(def)) addLibraryComponent(def, pos);
-    else addComponent(def.id, pos);
+    if (isLibraryDef(def)) {
+      track("part-library-use");
+      addLibraryComponent(def, pos);
+    } else addComponent(def.id, pos);
   };
 
   // A library part travels by its panel id; the canvas copies it in on drop
@@ -246,6 +252,20 @@ export default function ComponentLibrary() {
 
   const results = searchParts([...COMPONENT_GROUPS.flatMap((g) => g.components), ...customDefs], query);
   const searching = query.trim() !== "";
+
+  // What people look for and the library does not have. Reported once the
+  // typing settles, so a word typed letter by letter counts once, and only
+  // once per term so backspacing and retyping does not count twice.
+  const missed = useRef(new Set<string>());
+  useEffect(() => {
+    const term = searchTerm(query);
+    if (term.length < 2 || results.length > 0 || missed.current.has(term)) return;
+    const t = setTimeout(() => {
+      missed.current.add(term);
+      track("part-search-miss", { query: term });
+    }, 1000);
+    return () => clearTimeout(t);
+  }, [query, results.length]);
 
   // Your own parts, set apart below the built-in groups
   const customSection = customDefs.length > 0 && (
@@ -267,6 +287,7 @@ export default function ComponentLibrary() {
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
+                    track("part-editor-open", { source: isLibraryDef(def) ? "tray-edit-library" : "tray-edit-project" });
                     setEditor({ def, where: isLibraryDef(def) ? "library" : "project" });
                   }}
                   className="flex h-5 w-5 items-center justify-center rounded-full bg-[#113768] text-white text-[10px] leading-none"
@@ -323,6 +344,7 @@ export default function ComponentLibrary() {
                 <p className="px-1 py-2 text-sm text-neutral-500 dark:text-neutral-400">No part matches &ldquo;{query.trim()}&rdquo;.</p>
                 <button
                   onClick={() => {
+                    track("part-editor-open", { source: "search-miss", query: searchTerm(query) });
                     setNewName(query.trim());
                     setEditor("new");
                   }}
@@ -443,6 +465,7 @@ export default function ComponentLibrary() {
       <div className="px-2.5 py-2 border-t border-neutral-200 dark:border-neutral-700">
         <button
           onClick={() => {
+            track("part-editor-open", { source: "tray-new" });
             setNewName(undefined);
             setEditor("new");
           }}
@@ -495,6 +518,7 @@ export default function ComponentLibrary() {
               </button>
               <button
                 onClick={() => {
+                  track("part-delete", { source: "tray" });
                   removeComponentDef(deleteConfirm.id);
                   setDeleteConfirm(null);
                 }}

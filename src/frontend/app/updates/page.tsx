@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import SiteHeader from "@/components/SiteHeader";
+import ReadDepth from "@/components/ReadDepth";
+import TrackedLink from "@/components/TrackedLink";
 import SiteFooter from "@/components/SiteFooter";
 
 export const metadata: Metadata = {
@@ -156,6 +158,7 @@ export default function UpdatesPage() {
   return (
     <div className="min-h-screen font-mono bg-[#fafafa] dark:bg-[#121212] bg-[radial-gradient(var(--page-dot)_1px,transparent_1.5px)] [background-size:24px_24px] flex flex-col">
       <SiteHeader breadcrumb="whats_new" />
+      <ReadDepth page="updates" />
 
       <div className="max-w-3xl mx-auto w-full px-4 sm:px-6 py-8 sm:py-12 flex-1">
         <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-sm dark:shadow-neutral-900/30 px-5 sm:px-8 py-7 sm:py-9">
@@ -176,7 +179,7 @@ export default function UpdatesPage() {
                   {u.link && (
                     <p className="text-sm text-neutral-600 dark:text-neutral-400 mt-1.5">
                       {u.link.lead}{" "}
-                      <Link href={u.link.href} className="text-[var(--copper)] hover:underline">{u.link.text}</Link>
+                      <TrackedLink from="updates" to="entry-link" href={u.link.href} className="text-[var(--copper)] hover:underline">{u.link.text}</TrackedLink>
                     </p>
                   )}
                 </div>

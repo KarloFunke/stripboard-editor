@@ -19,6 +19,7 @@ export default function FinishWalk({ caption }: { caption?: string }) {
   const cols = Math.max(...frames.map((f) => f.board?.cols ?? 1));
   return (
     <Player
+      demo="finish-walk"
       frames={frames}
       caption={caption}
       stepMs={2200}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { trackDemo } from "./trackDemo";
 
 // ── A miniature of the real problem, annealed live ──
 // Eight blocks with a few connections on a small grid. Score = area of the
@@ -258,24 +259,25 @@ export default function AnnealDemo({
   const pathOf = (key: "E" | "best") => tr.map((t, i) => `${i === 0 ? "M" : "L"}${xAt(i).toFixed(1)},${yAt(t[key]).toFixed(1)}`).join(" ");
   const tPath = sim.greedy ? "" : tr.map((t, i) => `${i === 0 ? "M" : "L"}${xAt(i).toFixed(1)},${(PAD + (1 - Math.log(t.T / T1) / Math.log(T0 / T1)) * (TH - 2 * PAD)).toFixed(1)}`).join(" ");
 
+  const demo = `anneal-${mode}`;
   const btn = "px-2 py-1 rounded border border-neutral-300 dark:border-neutral-600 text-xs hover:bg-neutral-100 dark:hover:bg-neutral-700 text-neutral-800 dark:text-neutral-100 disabled:opacity-40";
   const sel = "px-1.5 py-1 rounded border border-neutral-300 dark:border-neutral-600 text-xs bg-white dark:bg-neutral-800 text-neutral-800 dark:text-neutral-100";
 
   return (
     <figure className="my-6 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800/40 p-3 sm:p-4">
       <div className="flex flex-wrap items-center gap-2 mb-3">
-        <button className={btn} onClick={() => setRunning((r) => !r)} disabled={sim.done}>{running ? "Pause" : sim.step === 0 ? "Play" : "Continue"}</button>
-        <button className={btn} onClick={() => { tick(sim); setFrame((f) => f + 1); }} disabled={sim.done}>+1 step</button>
-        <button className={btn} onClick={() => { for (let k = 0; k < 100 && !sim.done; k++) tick(sim); setFrame((f) => f + 1); }} disabled={sim.done}>+100 steps</button>
-        <button className={btn} onClick={() => reset()}>Restart</button>
-        <button className={btn} onClick={() => { const s = seedN + 1; setSeedN(s); reset(s); }}>New start</button>
+        <button className={btn} onClick={() => { trackDemo(demo, "play"); setRunning((r) => !r); }} disabled={sim.done}>{running ? "Pause" : sim.step === 0 ? "Play" : "Continue"}</button>
+        <button className={btn} onClick={() => { trackDemo(demo, "step"); tick(sim); setFrame((f) => f + 1); }} disabled={sim.done}>+1 step</button>
+        <button className={btn} onClick={() => { trackDemo(demo, "step"); for (let k = 0; k < 100 && !sim.done; k++) tick(sim); setFrame((f) => f + 1); }} disabled={sim.done}>+100 steps</button>
+        <button className={btn} onClick={() => { trackDemo(demo, "restart"); reset(); }}>Restart</button>
+        <button className={btn} onClick={() => { trackDemo(demo, "new-start"); const s = seedN + 1; setSeedN(s); reset(s); }}>New start</button>
         {!fixedMode && (
-          <select className={sel} value={greedy ? "greedy" : "anneal"} onChange={(e) => { const g = e.target.value === "greedy"; setGreedy(g); reset(seedN, g); }}>
+          <select className={sel} value={greedy ? "greedy" : "anneal"} onChange={(e) => { trackDemo(demo, "mode"); const g = e.target.value === "greedy"; setGreedy(g); reset(seedN, g); }}>
             <option value="anneal">annealing</option>
             <option value="greedy">only improvements</option>
           </select>
         )}
-        <select className={sel} value={steps} onChange={(e) => { const n = Number(e.target.value); setSteps(n); reset(seedN, greedy, n); }} title="How many steps the run takes; the annealer cools over this many">
+        <select className={sel} value={steps} onChange={(e) => { trackDemo(demo, "steps"); const n = Number(e.target.value); setSteps(n); reset(seedN, greedy, n); }} title="How many steps the run takes; the annealer cools over this many">
           <option value={750}>750 steps</option>
           <option value={1500}>1,500 steps</option>
           <option value={3000}>3,000 steps</option>

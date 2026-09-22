@@ -3,10 +3,10 @@ import { BoardPosition, Cut } from "@/types";
 // Shared contract between the two layout engines (autoLayout = v1,
 // autoLayout2 = v2), the worker transport, and the store's apply logic.
 
-// Published iteration of the v2 ("strip-first") layouter, recorded on every
+// Published iteration of the layouter that full runs use, recorded on every
 // applied result so stored boards can be grouped by the solver that made
 // them. Bump on any change that alters the layouts users get.
-export const LAYOUT_VERSION = "2.1.3";
+export const LAYOUT_VERSION = "5.1.0";
 
 // The shipped default for the layout portfolio: one alternative layout per
 // worker, all solved in one wave on three quarters of the machine's cores,

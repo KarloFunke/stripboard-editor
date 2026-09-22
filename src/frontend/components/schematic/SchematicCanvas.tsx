@@ -1136,7 +1136,10 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
                   ? "Put this part back on the stripboard itself"
                   : "Mounted off the board and wired to it: each wired pin gets a solder pad on the stripboard",
                 icon: OffBoardIcon,
-                onClick: () => setOffBoard(singleComponentId, !off),
+                onClick: () => {
+                  track("off-board-toggle", { to: off ? "on-board" : "off-board", count: 1 });
+                  setOffBoard(singleComponentId, !off);
+                },
               };
             })(),
             {
@@ -1257,7 +1260,10 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
                   ? "Put these parts back on the stripboard themselves"
                   : "Mounted off the board and wired to it: each wired pin gets a solder pad on the stripboard",
                 icon: OffBoardIcon,
-                onClick: () => transact(() => picked.forEach((c) => setOffBoard(c.id, !allOff))),
+                onClick: () => {
+                  track("off-board-toggle", { to: allOff ? "on-board" : "off-board", count: picked.length });
+                  transact(() => picked.forEach((c) => setOffBoard(c.id, !allOff)));
+                },
               };
             })()] : []),
             {

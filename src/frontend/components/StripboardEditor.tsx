@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useStripSegments } from "@/hooks/useStripSegments";
 import type { AutoLayoutRequest, AutoLayoutWorkerMessage } from "./stripboard/autoLayoutWorker";
-import { defaultPermWorkers, type AutoLayoutResult } from "./stripboard/layoutTypes";
+import { defaultPermWorkers, LAYOUT_VERSION, type AutoLayoutResult } from "./stripboard/layoutTypes";
 import { SPLIT_MIN_PARTS, SPLIT_VARIANTS } from "./stripboard/autoLayout5Split";
 import ComponentTray from "./stripboard/ComponentTray";
 import StripboardCanvas from "./stripboard/StripboardCanvas";
@@ -59,6 +59,10 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
   const [showLayoutSettings, setShowLayoutSettings] = useState(false);
   const autoWorkersRef = useRef<Worker[]>([]);
   const autoRunIdRef = useRef(0);
+  // When the running solve started, and the shape of what it was given, so
+  // the finish event can report both without the run event being joinable.
+  const autoStartRef = useRef(0);
+  const autoShapeRef = useRef<Record<string, string | number>>({});
   useEffect(() => () => {
     if (autoFinishMsgTimer.current) clearTimeout(autoFinishMsgTimer.current);
     if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current);
@@ -97,6 +101,16 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
     setMsgLeaving(false);
   };
 
+  /** How a solve ended, with what it was given and how long it took. */
+  const trackAutoFinish = (outcome: string, extra?: Record<string, string | number>) => {
+    track("auto-layout-finish", {
+      ...autoShapeRef.current,
+      outcome,
+      seconds: autoStartRef.current ? Math.round((Date.now() - autoStartRef.current) / 1000) : 0,
+      ...extra,
+    });
+  };
+
   const stopAutoWorkers = () => {
     autoRunIdRef.current++;
     for (const w of autoWorkersRef.current) w.terminate();
@@ -112,12 +126,12 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
   // finished result (quality, then guarded crossings, then score) wins.
   const handleAutoLayout = (onlyIds?: string[]) => {
     if (autoWorkersRef.current.length > 0) {
+      trackAutoFinish("cancelled");
       stopAutoWorkers();
       showAutoMsg("Auto-layout cancelled", []);
       return;
     }
     const engine = onlyIds ? "v1" : "v5";
-    track("auto-layout-run", { engine: onlyIds ? "selection" : engine });
     const runId = ++autoRunIdRef.current;
     const drilled = drilledCutsOnly !== false;
     const inputs = { board, components, componentDefs, nets, netAssignments, partSpacing, tidyWires, drilledCutsOnly: drilled };
@@ -125,6 +139,10 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
     // Edits made while solving are kept: the result is applied on top of
     // the current state (parts that no longer exist are simply skipped).
     const applyBest = (result: AutoLayoutResult, meta?: { boards: number; orderings: number; drilled: boolean }) => {
+      trackAutoFinish(result.issues.length > 0 ? "issues" : "ok", {
+        issues: result.issues.length,
+        starved: result.starvedNetIds.length,
+      });
       applyAutoLayout(result, meta);
       // Point the user at the first uncompletable net (or clear a stale one)
       setHighlightedNetId(result.starvedNetIds[0] ?? null);
@@ -156,6 +174,28 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
     const boards = onlyIds ? 1 : Math.max(1, Math.min(permWorkers ?? defaultPermWorkers(coresAvail), coresAvail));
     // seeds: the fixed series 0, 1, 2, ... or, on request, a fresh random base per run
     const seedBase = engine === "v5" && v5RandomSeeds ? Math.floor(Math.random() * 1e9) : 0;
+
+    // What the run was given: repeated on the finish event, which is the one
+    // that can be split by outcome.
+    autoShapeRef.current = {
+      engine: onlyIds ? "selection" : engine,
+      version: LAYOUT_VERSION,
+      parts: nPlaceable,
+      rows: board.rows,
+      cols: board.cols,
+    };
+    autoStartRef.current = Date.now();
+    track("auto-layout-run", {
+      ...autoShapeRef.current,
+      boards,
+      drilledCuts: drilled ? "on" : "off",
+      spacing: partSpacing ?? 1,
+      tidyWires: tidyWires === false ? "off" : "on",
+      wireStacking: noWireStacking !== false ? "off" : "on",
+      standing: allowStanding ? "on" : "off",
+      timeS: v5TimeS ?? 60,
+      randomSeeds: v5RandomSeeds ? "on" : "off",
+    });
     // every worker reports the decode speed it measured; the median is kept
     // for the next run's move count
     const speeds: number[] = [];
@@ -188,7 +228,10 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
         stopAutoWorkers();
         rememberSpeed();
         if (best) applyBest(best.result, { boards, orderings: solved, drilled });
-        else showAutoMsg("Auto-layout failed", []);
+        else {
+          trackAutoFinish("failed");
+          showAutoMsg("Auto-layout failed", []);
+        }
       };
       // Workers pull ordering indices from a shared counter until the
       // requested board count is reached.
@@ -274,6 +317,7 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
     worker.onerror = (err) => {
       if (runId !== autoRunIdRef.current) return;
       console.error("Auto-layout worker failed", err);
+      trackAutoFinish("failed");
       stopAutoWorkers();
       showAutoMsg("Auto-layout failed", []);
     };
@@ -405,7 +449,10 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
                     </button>
                     <div className="relative">
                       <button
-                        onClick={() => setShowLayoutSettings((v) => !v)}
+                        onClick={() => {
+                          if (!showLayoutSettings) track("auto-layout-settings-open");
+                          setShowLayoutSettings((v) => !v);
+                        }}
                         title="Auto-layout settings"
                         className={`p-1.5 rounded border transition-colors ${showLayoutSettings
                           ? "border-[#113768] text-[#113768] bg-[#113768]/10 dark:border-[#5b9bd5] dark:text-[#5b9bd5] dark:bg-[#5b9bd5]/15"

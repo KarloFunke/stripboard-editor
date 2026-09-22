@@ -45,15 +45,6 @@ export default function PrivacyPage() {
                 auto-layout algorithm. They are never published or shared with third parties.
               </li>
               <li>
-                <strong>Auto-layout ratings:</strong> The auto-layout router is in alpha. If you choose to rate a
-                generated layout with the star prompt, the rating is stored together with a copy of the project
-                exactly as the router left it (components, nets, cuts, wires, board layout), some technical details
-                about the run such as the board size and how long the solver took, and the project id if the project
-                is saved. This is used only to measure and improve the layout algorithm. Rating is entirely optional,
-                nothing is sent unless you click a star, and you can switch the prompt off for one project or for
-                good. These ratings are deleted when you delete the project they belong to, or your account.
-              </li>
-              <li>
                 <strong>Feedback:</strong> If you send a message through the feedback box, it is stored so it
                 can be acted on and replied to. When you are logged in, your messages are linked to your
                 account so you can read replies and continue the conversation on the site. Any contact details
@@ -73,9 +64,12 @@ export default function PrivacyPage() {
               <li>
                 <strong>Analytics:</strong> This site uses{" "}
                 <a href="https://umami.is" className="text-[#113768] dark:text-[#5b9bd5] hover:underline" target="_blank" rel="noopener noreferrer">Umami</a>,
-                a privacy-focused, cookieless analytics tool. It collects anonymous page view statistics
-                (no personal data, no tracking across sites, no cookies). The analytics data is
-                self-hosted in Germany.
+                a privacy-focused, cookieless analytics tool, to record page views and which
+                features get used. Each event also notes whether you were logged in (yes or no,
+                never which account), and a part search that finds nothing is recorded with the text
+                you searched for, so I can see which parts the library is missing. Nothing
+                identifies you, there is no tracking across sites, and the data is self-hosted in
+                Germany.
               </li>
               <li>
                 <strong>Server logs:</strong> Standard web server logs (IP address, timestamp, requested URL)
@@ -100,8 +94,7 @@ export default function PrivacyPage() {
             <p>
               Under the GDPR, you have the right to access, correct, or delete your personal data.
               You can delete your account at any time. Deleting your account will also permanently
-              delete all your projects and any auto-layout ratings you submitted. Deleting a single
-              project likewise deletes the ratings stored with it. For any
+              delete all your projects. For any
               data-related requests, please contact me at the address below.
             </p>
           </section>

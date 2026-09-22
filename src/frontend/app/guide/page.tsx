@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import Link from "next/link";
 import SiteHeader from "@/components/SiteHeader";
+import ReadDepth from "@/components/ReadDepth";
+import TrackedLink from "@/components/TrackedLink";
 import SiteFooter from "@/components/SiteFooter";
 
 export const metadata: Metadata = {
@@ -58,6 +59,7 @@ export default function GuidePage() {
   return (
     <div className="min-h-screen font-mono bg-[#fafafa] dark:bg-[#121212] bg-[radial-gradient(var(--page-dot)_1px,transparent_1.5px)] [background-size:24px_24px] flex flex-col">
       <SiteHeader breadcrumb="quick_guide" />
+      <ReadDepth page="guide" />
 
       <div className="max-w-3xl mx-auto w-full px-4 sm:px-6 py-8 sm:py-12 flex-1">
         <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-sm dark:shadow-neutral-900/30 px-5 sm:px-8 py-7 sm:py-9">
@@ -172,7 +174,7 @@ export default function GuidePage() {
             <li><strong>Settings</strong> (gear beside the button): standing parts, extra room between parts, drilled cuts only, no stacked wires, how many layouts to solve, and the anneal effort per layout. Each option explains itself in the panel.</li>
           </UL>
           <p className="text-sm text-neutral-700 dark:text-neutral-300 mt-3">
-            Curious how it decides all this? <Link href="/how-auto-layout-works" className="text-[var(--copper)] hover:underline font-semibold">How auto-layout works &rarr;</Link>
+            Curious how it decides all this? <TrackedLink from="guide" to="explainer" href="/how-auto-layout-works" className="text-[var(--copper)] hover:underline font-semibold">How auto-layout works &rarr;</TrackedLink>
           </p>
         </section>
 

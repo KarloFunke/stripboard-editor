@@ -9,6 +9,7 @@ import { libraryDef, libraryPayload, newCustomId } from "@/data/customParts";
 import { createLibraryPart, getLibraryPartUsage, updateLibraryPart, type LibraryPartUsage } from "@/lib/api";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useLibraryStore } from "@/store/useLibraryStore";
+import { track } from "@/lib/track";
 import SymbolRenderer from "./SymbolRenderer";
 
 type CellState = "body" | { pinId: string; pinName: string };
@@ -410,6 +411,20 @@ export default function CustomComponentEditor({ editing, libraryOnly = false, in
   // Saving an untouched part would only make a duplicate or a pointless update
   const changed = !def || editedFields(buildDef(def.id)) !== editedFields(def);
 
+  /** Closing without saving. After a split that means the copy stays project-only. */
+  const cancel = () => {
+    track(split ? "part-split-discard" : "part-editor-cancel");
+    onClose();
+  };
+
+  /** The shape of the part, as dimensions on the save events. */
+  const shape = () => ({
+    mode,
+    body: mode === "body" ? bodyKind : "-",
+    pins: mode === "grid" ? gridPins.length : names.length,
+    edit: def ? "update" : "new",
+  });
+
   async function run(task: () => Promise<void>) {
     setBusy(true);
     setError(null);
@@ -447,6 +462,7 @@ export default function CustomComponentEditor({ editing, libraryOnly = false, in
     if (inProject) replaceComponentDef(part);
     else addComponentDef(part);
     if (toLibrary) await saveProjectToo();
+    track("part-save", { ...shape(), target: toLibrary ? "project+library" : "project" });
     if (linked) setSplit(part);
     else onClose();
   });
@@ -454,6 +470,7 @@ export default function CustomComponentEditor({ editing, libraryOnly = false, in
   const keepSplitInLibrary = () => run(async () => {
     replaceComponentDef(await addToLibrary(split!));
     await saveProjectToo();
+    track("part-split-keep");
     onClose();
   });
 
@@ -461,6 +478,7 @@ export default function CustomComponentEditor({ editing, libraryOnly = false, in
     const created = await createLibraryPart(libraryPayload(buildDef(newCustomId())));
     upsertLibraryPart(created);
     await saveProjectToo();
+    track("part-save", { ...shape(), target: "library" });
     onClose();
   });
 
@@ -472,7 +490,9 @@ export default function CustomComponentEditor({ editing, libraryOnly = false, in
 
   const updateLibrary = () => run(async () => {
     const id = libraryId ?? def!.library!.id;
+    const usedIn = confirm!.usage.length;
     const saved = await updateLibraryPart(id, libraryPayload(confirm!.part), { updateProjects: true, skipProject: editUuid });
+    track("part-library-update", { ...shape(), projects: usedIn });
     upsertLibraryPart(saved);
     if (!libraryOnly) applyLibraryUpdate(libraryDef(saved));
     await saveProjectToo();
@@ -509,7 +529,7 @@ export default function CustomComponentEditor({ editing, libraryOnly = false, in
         <div className="flex items-center justify-between mb-5">
           <h2 className="font-mono text-lg font-semibold text-neutral-900 dark:text-neutral-100">{title}</h2>
           <button
-            onClick={onClose}
+            onClick={cancel}
             aria-label="Close"
             className="text-neutral-400 dark:text-neutral-500 hover:text-neutral-600 dark:hover:text-neutral-400 text-2xl leading-none"
           >
@@ -528,7 +548,7 @@ export default function CustomComponentEditor({ editing, libraryOnly = false, in
             {error && <p className="text-sm text-red-600 mb-3">{error}</p>}
             <div className="flex gap-2 font-mono">
               <button onClick={keepSplitInLibrary} disabled={busy} className={primary}>Add to my library</button>
-              <button onClick={onClose} disabled={busy} className={secondary}>No, done</button>
+              <button onClick={cancel} disabled={busy} className={secondary}>No, done</button>
             </div>
           </div>
         ) : confirm ? (
@@ -898,7 +918,7 @@ export default function CustomComponentEditor({ editing, libraryOnly = false, in
                     Save…
                   </button>
                 )}
-                <button onClick={onClose} className={secondary}>Cancel</button>
+                <button onClick={cancel} className={secondary}>Cancel</button>
               </div>
             </div>
           </>

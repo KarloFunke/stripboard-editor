@@ -12,6 +12,7 @@ import {
   importLibraryParts, type FoundPart, type LibraryPart, type LibraryPartUsage,
 } from "@/lib/api";
 import { useLibraryStore } from "@/store/useLibraryStore";
+import { track } from "@/lib/track";
 import type { ComponentDef } from "@/types";
 
 const button =
@@ -91,6 +92,7 @@ export default function PartsClient() {
     run("import", async () => {
       const incoming = readPartsFile(await file.text());
       const added = await importLibraryParts(incoming);
+      track("parts-page-action", { action: "import", count: added.length });
       return `Added ${added.length} ${added.length === 1 ? "part" : "parts"} to your library.`;
     });
 
@@ -152,10 +154,13 @@ export default function PartsClient() {
                 <option value="">All groups</option>
                 {COMPONENT_GROUP_LABELS.map((g) => <option key={g} value={g}>{g}</option>)}
               </select>
-              <button onClick={() => setEditor("new")} className={primary}>New part</button>
+              <button onClick={() => { track("part-editor-open", { source: "parts-page-new" }); setEditor("new"); }} className={primary}>New part</button>
               <button onClick={() => fileInput.current?.click()} disabled={busy !== null} className={button}>Import</button>
               <button
-                onClick={() => download("my-parts.parts.json", partsFile(defs.map((d) => d.def)))}
+                onClick={() => {
+                  track("parts-page-action", { action: "export-all", count: defs.length });
+                  download("my-parts.parts.json", partsFile(defs.map((d) => d.def)));
+                }}
                 disabled={defs.length === 0}
                 className={button}
               >
@@ -201,7 +206,7 @@ export default function PartsClient() {
                         {def.description && <p className="text-xs text-neutral-500 dark:text-neutral-400 truncate">{def.description}</p>}
                         <p className="text-xs text-neutral-400 dark:text-neutral-500" suppressHydrationWarning>
                           {lp.used_in ? (
-                            <button onClick={() => toggleUsage(lp.id)} className={link}>
+                            <button onClick={() => { track("parts-page-action", { action: "usage" }); toggleUsage(lp.id); }} className={link}>
                               Used in {lp.used_in} {lp.used_in === 1 ? "project" : "projects"}
                             </button>
                           ) : (
@@ -211,17 +216,18 @@ export default function PartsClient() {
                         </p>
                       </div>
                       <div className="flex flex-wrap gap-x-3 gap-y-1 max-sm:w-full max-sm:pl-[68px] sm:justify-end sm:shrink-0">
-                        <button onClick={() => setEditor(def)} className={link}>Edit</button>
+                        <button onClick={() => { track("part-editor-open", { source: "parts-page-edit" }); setEditor(def); }} className={link}>Edit</button>
                         <button
                           onClick={() => run(`dup-${lp.id}`, async () => {
                             await createLibraryPart({ ...libraryPayload(def), name: `${def.name} (copy)` });
+                            track("parts-page-action", { action: "duplicate" });
                           })}
                           disabled={busy !== null}
                           className={link}
                         >
                           Duplicate
                         </button>
-                        <button onClick={() => download(fileName(def.name), partsFile([def]))} className={link}>Export</button>
+                        <button onClick={() => { track("parts-page-action", { action: "export-one" }); download(fileName(def.name), partsFile([def])); }} className={link}>Export</button>
                         <button onClick={() => setDeleting(lp)} className="text-sm text-red-500 dark:text-red-400 hover:underline">Delete</button>
                       </div>
                     </div>
@@ -273,6 +279,7 @@ export default function PartsClient() {
                       <button
                         onClick={() => run(`adopt-${f.key}`, async () => {
                           const res = await adoptFoundPart(f.key);
+                          track("parts-page-action", { action: "adopt", projects: res.linked_projects });
                           return `${def.name} is in your library now and linked in ${res.linked_projects} ${res.linked_projects === 1 ? "project" : "projects"}.`;
                         })}
                         disabled={busy !== null}
@@ -316,6 +323,7 @@ export default function PartsClient() {
                   run(`del-${target.id}`, async () => {
                     await deleteLibraryPart(target.id);
                     useLibraryStore.getState().remove(target.id);
+                    track("part-delete", { source: "parts-page" });
                   });
                 }}
                 className="font-mono text-sm px-3 py-1.5 rounded bg-red-500 text-white hover:bg-red-600"

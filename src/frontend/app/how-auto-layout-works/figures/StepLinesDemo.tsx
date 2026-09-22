@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { trackDemo } from "./trackDemo";
 
 // ── How a packing is read into its two orders (Murata's step-lines) ──
 // Positive step-line of a component: from its lower-left corner go down, sliding
@@ -129,12 +130,12 @@ export default function StepLinesDemo() {
   return (
     <figure className="my-6 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800/40 p-3 sm:p-4">
       <div className="flex flex-wrap items-center gap-2 mb-3">
-        <button className={tab(sign === "pos")} onClick={() => switchSign("pos")}>first order</button>
-        <button className={tab(sign === "neg")} onClick={() => switchSign("neg")}>second order</button>
+        <button className={tab(sign === "pos")} onClick={() => { trackDemo("step-lines", "order"); switchSign("pos"); }}>first order</button>
+        <button className={tab(sign === "neg")} onClick={() => { trackDemo("step-lines", "order"); switchSign("neg"); }}>second order</button>
         <span className="w-2" />
-        <button className={btn} onClick={() => { if (shown >= MODS.length) setShown(0); setPlaying(true); }} disabled={playing}>Play</button>
-        <button className={btn} onClick={() => setShown((n) => Math.min(MODS.length, n + 1))} disabled={playing || shown >= MODS.length}>Next line</button>
-        <button className={btn} onClick={() => { setShown(0); setPlaying(false); }}>Clear</button>
+        <button className={btn} onClick={() => { trackDemo("step-lines", "play"); if (shown >= MODS.length) setShown(0); setPlaying(true); }} disabled={playing}>Play</button>
+        <button className={btn} onClick={() => { trackDemo("step-lines", "step"); setShown((n) => Math.min(MODS.length, n + 1)); }} disabled={playing || shown >= MODS.length}>Next line</button>
+        <button className={btn} onClick={() => { trackDemo("step-lines", "clear"); setShown(0); setPlaying(false); }}>Clear</button>
       </div>
       <div className="flex flex-col md:flex-row gap-4">
         <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} className="max-w-full h-auto rounded bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700">

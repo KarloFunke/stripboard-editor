@@ -5,6 +5,7 @@ import type { LabStep } from "@/components/stripboard/autoLayout5";
 import { LAB } from "./lab";
 import BoardView from "./BoardView";
 import { useInView } from "./useInView";
+import { trackDemo } from "../trackDemo";
 
 // ── Section 8: a whole run on the example, start to finish ──
 // The real anneal loop of the layouter on the example circuit: a random
@@ -78,10 +79,10 @@ export default function MiniRun({ seed = 1, steps: initialSteps = 10000, caption
   return (
     <figure ref={fig} className="my-6 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800/40 p-3 sm:p-4">
       <div className="flex flex-wrap items-center gap-2 mb-3">
-        <button className={btn} onClick={() => { if (done) setI(0); setRunning((r) => !r); }} disabled={!snaps}>{running ? "Pause" : done ? "Replay" : i === 0 ? "Play" : "Continue"}</button>
-        <button className={btn} onClick={() => { setRunning(false); setI((k) => Math.min((snaps?.length ?? 1) - 1, k + 1)); }} disabled={!snaps || done} title="Advance one recorded step">+1 step</button>
-        <button className={btn} onClick={() => { setRunning(false); setI(0); }} disabled={!snaps || i === 0}>Restart</button>
-        <button className={btn} onClick={() => setSeedN((x) => x + 1)}>New start</button>
+        <button className={btn} onClick={() => { trackDemo("mini-run", "play"); if (done) setI(0); setRunning((r) => !r); }} disabled={!snaps}>{running ? "Pause" : done ? "Replay" : i === 0 ? "Play" : "Continue"}</button>
+        <button className={btn} onClick={() => { trackDemo("mini-run", "step"); setRunning(false); setI((k) => Math.min((snaps?.length ?? 1) - 1, k + 1)); }} disabled={!snaps || done} title="Advance one recorded step">+1 step</button>
+        <button className={btn} onClick={() => { trackDemo("mini-run", "restart"); setRunning(false); setI(0); }} disabled={!snaps || i === 0}>Restart</button>
+        <button className={btn} onClick={() => { trackDemo("mini-run", "new-start"); setSeedN((x) => x + 1); }}>New start</button>
         <select className={sel} value={steps} onChange={(e) => setSteps(Number(e.target.value))}>
           <option value={5000}>5,000 steps</option>
           <option value={10000}>10,000 steps</option>

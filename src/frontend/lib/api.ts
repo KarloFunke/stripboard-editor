@@ -1,4 +1,5 @@
 import type { ComponentDef } from "@/types";
+import { setSignedIn, track } from "@/lib/track";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL!;
 
@@ -186,9 +187,24 @@ export async function getLibraryParts(opts: { usage?: boolean } = {}): Promise<L
   return res.json();
 }
 
+/**
+ * Error text for a failed library write. A full library comes back as a 403
+ * carrying a code, which tells it apart from the 403 of a logged-out user.
+ */
+async function libraryError(res: Response, where: string, fallback: string): Promise<string> {
+  let body: { error?: string; code?: string } = {};
+  try {
+    body = await res.json();
+  } catch {
+    // No JSON body; the fallback stands
+  }
+  if (body.code === "library_full") track("part-limit-hit", { where });
+  return typeof body.error === "string" ? body.error : fallback;
+}
+
 export async function createLibraryPart(part: ComponentDef): Promise<LibraryPart> {
   const res = await apiFetch("/users/me/parts/", { method: "POST", body: JSON.stringify({ part }) });
-  if (!res.ok) throw new Error(await errorText(res, "Failed to save the part"));
+  if (!res.ok) throw new Error(await libraryError(res, "create", "Failed to save the part"));
   return res.json();
 }
 
@@ -218,7 +234,7 @@ export async function deleteLibraryPart(id: string): Promise<void> {
 /** Adds the parts of an exported parts file to the library, all or none. */
 export async function importLibraryParts(parts: ComponentDef[]): Promise<LibraryPart[]> {
   const res = await apiFetch("/users/me/parts/import/", { method: "POST", body: JSON.stringify({ parts }) });
-  if (!res.ok) throw new Error(await errorText(res, "Failed to import the parts"));
+  if (!res.ok) throw new Error(await libraryError(res, "import", "Failed to import the parts"));
   return res.json();
 }
 
@@ -238,7 +254,7 @@ export async function getFoundParts(): Promise<FoundPart[]> {
 /** Makes a found part a library part and links the copies in the projects it came from. */
 export async function adoptFoundPart(key: string): Promise<LibraryPart & { linked_projects: number }> {
   const res = await apiFetch("/users/me/parts/adopt/", { method: "POST", body: JSON.stringify({ key }) });
-  if (!res.ok) throw new Error(await errorText(res, "Failed to add the part"));
+  if (!res.ok) throw new Error(await libraryError(res, "adopt", "Failed to add the part"));
   return res.json();
 }
 
@@ -266,7 +282,8 @@ export interface User {
 
 // Broadcast a login/logout so components holding their own auth state (e.g. the
 // header, the feedback conversation) can re-check without a full reload.
-function notifyAuthChanged() {
+function notifyAuthChanged(signedIn: boolean) {
+  setSignedIn(signedIn);
   if (typeof window !== "undefined") {
     window.dispatchEvent(new Event("auth-changed"));
   }
@@ -294,7 +311,7 @@ export async function register(username: string, password: string, email?: strin
   }
   csrfToken = null;
   const user = await res.json();
-  notifyAuthChanged();
+  notifyAuthChanged(true);
   return user;
 }
 
@@ -311,14 +328,14 @@ export async function login(username: string, password: string): Promise<User> {
   }
   csrfToken = null;
   const user = await res.json();
-  notifyAuthChanged();
+  notifyAuthChanged(true);
   return user;
 }
 
 export async function logout(): Promise<void> {
   await apiFetch("/auth/logout/", { method: "POST" });
   csrfToken = null;
-  notifyAuthChanged();
+  notifyAuthChanged(false);
 }
 
 export async function deleteAccount(): Promise<void> {
@@ -381,7 +398,7 @@ export async function confirmPasswordReset(uid: string, token: string, newPasswo
   }
   csrfToken = null;
   const user = await res.json();
-  notifyAuthChanged();
+  notifyAuthChanged(true);
   return user;
 }
 
@@ -389,6 +406,7 @@ export async function getMe(): Promise<User | null> {
   const res = await apiFetch("/auth/me/");
   if (!res.ok) return null;
   const data = await res.json();
+  setSignedIn(Boolean(data.user));
   return data.user;
 }
 
@@ -404,7 +422,9 @@ export interface HeaderState {
 export async function getHeaderState(): Promise<HeaderState> {
   const res = await apiFetch("/header/");
   if (!res.ok) return { user: null, feedbackUnread: false, inboxUnread: 0 };
-  return res.json();
+  const state: HeaderState = await res.json();
+  setSignedIn(Boolean(state.user));
+  return state;
 }
 
 // ── Feedback ──────────────────────────────────────────

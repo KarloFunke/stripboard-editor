@@ -4,7 +4,7 @@ from django.db.models import F, Max, Q
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 from django.utils.html import format_html
-from .models import Project, PowChallenge, Feedback, FeedbackReply, LayoutRating
+from .models import Project, PowChallenge, Feedback, FeedbackReply, LayoutRating, UserPart
 
 
 @admin.register(Project)
@@ -41,6 +41,38 @@ class LayoutRatingAdmin(admin.ModelAdmin):
     @admin.display(description="Snapshot (gzipped bytes)")
     def snapshot_size(self, obj):
         return len(obj.snapshot_gz) if obj.snapshot_gz else 0
+
+
+@admin.register(UserPart)
+class UserPartAdmin(admin.ModelAdmin):
+    list_display = ["part_name", "owner", "body", "pins", "rev", "created_at", "updated_at"]
+    list_filter = ["created_at"]
+    search_fields = ["owner__username", "part__name"]
+    readonly_fields = ["id", "created_at", "updated_at"]
+    raw_id_fields = ["owner"]
+
+    def _part(self, obj):
+        return obj.part if isinstance(obj.part, dict) else {}
+
+    @admin.display(description="Name")
+    def part_name(self, obj):
+        return self._part(obj).get("name") or "-"
+
+    @admin.display(description="Body")
+    def body(self, obj):
+        """A part made from a body keeps the spec it was built from; a part
+        drawn cell by cell has none."""
+        spec = self._part(obj).get("spec")
+        if not isinstance(spec, dict):
+            return "grid"
+        footprint = spec.get("footprint")
+        kind = footprint.get("kind") if isinstance(footprint, dict) else None
+        return kind or "body"
+
+    @admin.display(description="Pins")
+    def pins(self, obj):
+        pins = self._part(obj).get("pins")
+        return len(pins) if isinstance(pins, list) else "-"
 
 
 @admin.register(PowChallenge)

@@ -265,7 +265,7 @@ def user_parts(request):
 
 def _library_full():
     return Response(
-        {"error": f"Your library is full ({MAX_PARTS_PER_USER} parts). Delete a part to make room."},
+        {"error": f"Your library is full ({MAX_PARTS_PER_USER} parts). Delete a part to make room.", "code": "library_full"},
         status=status.HTTP_403_FORBIDDEN,
     )
 

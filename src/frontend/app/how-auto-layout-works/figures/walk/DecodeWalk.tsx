@@ -58,6 +58,7 @@ export default function DecodeStage({ stage, caption }: { stage: 1 | 2 | 3 | 4 |
   if (!frames.length) return null;
   return (
     <Player
+      demo="decode-walk"
       frames={frames}
       caption={caption}
       render={(f) =>

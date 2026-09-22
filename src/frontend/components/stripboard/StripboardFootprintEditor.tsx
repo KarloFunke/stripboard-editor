@@ -6,6 +6,7 @@ import { PinDef, BodyCell } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { resolvePackage } from "./packageBodies";
 import { rigidBody } from "./partGeometry";
+import { track } from "@/lib/track";
 
 type CellState = "body" | { pinId: string; pinName: string };
 
@@ -125,6 +126,7 @@ export default function StripboardFootprintEditor({ componentId, onClose }: Prop
 
   const handleSave = () => {
     if (!allPinsPlaced) return;
+    track("footprint-edit-save");
 
     const pins: PinDef[] = [];
     const bodyCells: BodyCell[] = [];
