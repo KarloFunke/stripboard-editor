@@ -10,6 +10,7 @@
     "test:solver": "tsc -p tests/solver/tsconfig.json && node tests/solver/run.js",
     "test:schematic": "tsc -p tests/schematic/tsconfig.json && node tests/schematic/run.js",
     "test:board": "tsc -p tests/board/tsconfig.json && node tests/board/run.js",
+    "check:agent-docs": "node scripts/checkAgentDocs.js",
     "gen:symbol-pins": "tsc -p tests/schematic/tsconfig.json && node scripts/exportSymbolPins.js"
   },
   "dependencies": {

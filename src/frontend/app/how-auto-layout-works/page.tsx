@@ -20,7 +20,10 @@ export const metadata: Metadata = {
   title: "How Auto-layout Works",
   description:
     "How the Stripboard Editor's automatic layouter works, explained for the curious: what simulated annealing is, what a problem needs so it can be annealed, and how a stripboard is described, scored, searched and finished.",
-  alternates: { canonical: "https://stripboard-editor.com/how-auto-layout-works" },
+  alternates: {
+    canonical: "https://stripboard-editor.com/how-auto-layout-works",
+    types: { "text/markdown": "https://stripboard-editor.com/how-auto-layout-works.md" },
+  },
 };
 
 const H2 = ({ id, children }: { id: string; children: ReactNode }) => (

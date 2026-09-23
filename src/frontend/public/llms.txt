@@ -1,63 +1,112 @@
 # Stripboard Editor
 
-> A free online editor for designing circuits on stripboard (also called
-> Veroboard). It pairs a schematic editor with a stripboard layout editor,
-> and includes an automatic layouter that turns a schematic into a complete,
-> buildable board: placement, board size, strip cuts and link wires.
+> A free, browser-based editor for designing circuits on stripboard (also
+> called Veroboard). It pairs a schematic editor with a stripboard layout
+> editor and an automatic layouter that turns a schematic into a complete,
+> buildable board: placement, board size, strip cuts and link wires. Every
+> part is drawn as its real package at true size, so the board on screen is
+> the board you build. No install, and no account needed to use it or to
+> save a project. Runs at https://stripboard-editor.com.
 
-Stripboard is prototyping board made of a grid of holes over parallel
-copper strips, where every hole on a strip is already electrically
-connected. Building a circuit on it means placing components, cutting
-strips to separate nets, and adding link wires to bridge connections a
-strip cannot carry. Stripboard Editor supports doing this by hand or
-handing it to an automatic router.
+Stripboard is prototyping board made of a grid of holes over parallel copper
+strips, where every hole on a strip is already electrically connected.
+Building a circuit on it means placing components, cutting strips to separate
+nets, and adding link wires to bridge connections a strip cannot carry.
+Stripboard Editor supports doing this by hand, by automatic layout, or by any
+mix of the two.
 
-## Core features
+**Schematic editor.** Standard symbol library, wiring and nets. Whatever
+touches is connected: a wire end on a wire, a pin on a wire, two pins on one
+point; wires that merely cross stay separate. A filled dot marks a junction, a
+hollow square a loose wire end. Ground flags, power flags and net labels join
+everything of the same name into one net, so GND and VCC need no wires across
+the sheet. Parts can be excluded from the board (kept in the schematic but
+ignored by the board and its net checks), or mounted off board — pots,
+switches and jacks that live on the enclosure, for which the board gets solder
+pads or a connector instead of the part.
 
-- Schematic editor with a standard symbol library, wiring, and nets.
-- Stripboard editor with live strip colouring that shows nets and conflicts
-  in real time.
-- Automatic layout (simulated annealing over a compact board description,
-  decoded exactly and finished by a real router): places every component,
-  sizes the board, and generates the strip cuts and link wires needed to
-  complete it. On a free board the result has no slanted link wires and
-  no wire crossing a component; the layouter buys blank rows or columns
-  instead. Connectors are kept on the board edge, wires are never stacked
-  on top of each other by default, and cuts are drilled-out holes lined
-  up in shared columns wherever possible.
-- Several layouts are solved in parallel from different starting points
-  (and, on larger circuits, from split-and-join variants) and the best
-  finished board is applied. Given the same circuit and settings the
-  result is deterministic.
-- Per-component-type layout settings: the allowed pin-to-pin span for
-  flexible parts (e.g. how many holes a resistor may stretch across), and
-  the clearance kept around a part's body in free board lines, down to 0
-  for placing parts directly side by side.
-- Layout options: drilled cuts only, no stacked wires, the number of
-  layouts to solve, parallel solvers, and the annealing effort per layout.
-- Board size can be locked (fix rows and/or columns to fit a board you
-  already own) and individual components can be locked in place before
-  running the router, which will then design the rest of the layout
-  around them.
-- Manual board editing alongside the router: place cuts and link wires by
-  hand, run wires in parallel on the same strip column, and insert or
-  delete a board row or column at any position.
-- Editable component footprints, and a custom component editor for parts
-  outside the built-in library.
-- Printable 1:1 build template: a component-side placement sheet, a
-  mirrored copper-side cut sheet, and a bill of materials (BOM).
-- KiCad-compatible netlist export, so a circuit prototyped here can move
-  into a PCB tool. Most built-in parts map to real KiCad symbols and
-  footprints.
-- No account required to use or save a project; accounts add a project
-  dashboard and shareable edit/view-only links.
+**Stripboard editor.** Live strip colouring shows nets and conflicts in real
+time: a strip takes the colour of the net on it, and a red strip carries two
+nets and needs a cut. Select, wire and cut tools; cuts are drilled-out holes or
+knife cuts between two holes, they work under parts, and ICs bring the cuts
+between their own pins along when placed. Wires and cuts can be selected,
+dragged and deleted, and wires can run in parallel on the same strip column.
+Rows and columns can be inserted or deleted at any position. Footprints are
+editable: the grid and pin positions of ICs and connectors can be matched to a
+physical part.
 
-## Pages
+**True-size packages.** Every part is drawn as its real package at true size,
+and each part lets you pick the package you actually have — a 1/4 W or 1/2 W
+resistor, TO-92 or TO-220. The package sets the body, how far apart the pins
+may sit, and how the part is drawn on screen, in the layouter and in the print.
 
-- [Quick guide](https://stripboard-editor.com/guide): keyboard shortcuts,
-  workflow, and an overview of every feature above.
-- [How auto-layout works](https://stripboard-editor.com/guide/auto-layout):
-  a plain-language explanation of the annealed layouter, what it
-  guarantees, and what you can configure.
-- [What's new](https://stripboard-editor.com/updates): changelog and
-  planned work.
+**Automatic layout.** Simulated annealing over a compact, coordinate-free
+description of the board (a sequence pair plus rotations, lead spans, strip
+groups and reserved blank lines), decoded exactly and finished by the editor's
+real router. It places every component, sizes the board, and generates the
+strip cuts and link wires. On a free board the result has no slanted link wires
+and no wire crossing a component — the layouter buys blank rows or columns
+instead. Connectors are kept on a board edge, and cuts are drilled-out holes
+lined up in shared columns wherever possible. Several layouts are solved in
+parallel from different random starts, one per processor core, and compared on
+completeness first, then on a rating of area, wires and cuts. The same circuit,
+settings and machine give the same board again, unless "new layouts every run"
+is enabled. Settings: drilled cuts only, no stacked wires, allow standing
+parts, extra room between parts, layouts to solve, time per layout, and new
+layouts every run. Board dimensions can be locked to a board you already own,
+and individual components can be locked in place for the layouter to design
+around; both come out somewhat larger, or may keep a few slanted wires.
+
+**Parts.** Built-ins: resistor, capacitor, polarized capacitor, LED, diode,
+zener diode, inductor, fuse, transformer, potentiometer (a trimmer is one of
+its packages), toggle and momentary switches, NPN and PNP transistors, N- and
+P-channel MOSFETs, 555 timer, connectors from 1 to 20 pins, three ESP32 dev
+boards and the Arduino Nano. Plus 94 named ICs, searchable and grouped into
+logic, op amps and comparators, regulators and references, drivers and sensors,
+optocouplers, microcontrollers and modules, audio and timers; op amps, voltage
+regulators and optocouplers are picked as real part numbers from this list
+rather than as generic symbols. Their pin numbers, pin names and descriptions
+come from the KiCad symbol library by the KiCad Library Team, licensed
+CC-BY-SA 4.0. A custom component editor covers parts outside the library, and a
+per-user parts library keeps custom parts in an account, usable in every
+project, shareable as a file, with edits carried into every project that uses
+the part.
+
+**Output.** A printable 1:1 build template: a component-side placement sheet to
+lay on the board and push leads through, a mirrored copper-side cut sheet
+marking every cut, and a bill of materials with a wiring table for off-board
+parts. A calibration ruler confirms the print came out at true scale. Colour or
+black and white, with an optional QR code back to the project. KiCad-compatible
+netlist export carries components, values, pin numbers and nets, so a prototype
+can become a PCB; most built-in parts map to stock KiCad symbols and
+footprints, and the rest ship as a small footprint library in the same zip.
+Netlist import is not supported yet but planned. The whole project also exports as JSON and can
+be imported again.
+
+**Saving and sharing.** No account is required; the first save returns a unique
+link to bookmark, and unsaved work is kept in the browser and can be restored.
+An account collects projects in a dashboard and adds an edit link and a
+view-only link, and anyone viewing a shared project can fork it into their own
+editable copy. Projects can carry a description and notes.
+
+Every page below is also served as clean markdown at the same URL with .md
+appended, which is what the links point to. The whole set concatenated into
+one document is at https://stripboard-editor.com/llms-full.txt (about 50 kB).
+
+Scraping, quoting and citing these pages is welcome.
+
+## Docs
+
+- [Quick guide](https://stripboard-editor.com/guide.md): workflow, both editors, placing and wiring by hand, auto-layout settings, printing, exporting, saving and sharing, and every keyboard shortcut. HTML version at https://stripboard-editor.com/guide
+- [How auto-layout works](https://stripboard-editor.com/how-auto-layout-works.md): full explanation of the layouter — what simulated annealing is, the four properties a problem needs for it, what makes a stripboard layout good, the coordinate-free board description and its moves, decoding, scoring, the run schedule, the finishing router, and related work. Every interactive figure on the page is described in the text. HTML version at https://stripboard-editor.com/how-auto-layout-works has the playable versions
+
+## Site
+
+- [Stripboard Editor](https://stripboard-editor.com/index.md): what the editor does, the four-step workflow, the feature list, and how a printed template becomes a soldered board. The editor itself is at https://stripboard-editor.com
+- [What's new](https://stripboard-editor.com/updates.md): dated changelog, newest first, and what is planned next. HTML version at https://stripboard-editor.com/updates
+
+## Optional
+
+- [Everything in one file](https://stripboard-editor.com/llms-full.txt): all of the above concatenated, for agents that would rather make one fetch than five
+- [Privacy policy](https://stripboard-editor.com/privacy.md): what data is collected, where it is stored and how it is used. HTML version at https://stripboard-editor.com/privacy
+- [Karl Funke](https://karl-funke.com): the author of Stripboard Editor

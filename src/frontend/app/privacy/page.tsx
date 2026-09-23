@@ -6,7 +6,10 @@ import SiteFooter from "@/components/SiteFooter";
 export const metadata: Metadata = {
   title: "Privacy Policy",
   description: "Privacy policy for the Stripboard Editor. What data is collected and how it is used.",
-  alternates: { canonical: "https://stripboard-editor.com/privacy" },
+  alternates: {
+    canonical: "https://stripboard-editor.com/privacy",
+    types: { "text/markdown": "https://stripboard-editor.com/privacy.md" },
+  },
 };
 
 export default function PrivacyPage() {

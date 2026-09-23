@@ -9,7 +9,10 @@ export const metadata: Metadata = {
   title: "Guide",
   description:
     "A quick guide to the Stripboard Editor covering keyboard shortcuts, workflow, the automatic layouter, KiCad netlist export, and key concepts.",
-  alternates: { canonical: "https://stripboard-editor.com/guide" },
+  alternates: {
+    canonical: "https://stripboard-editor.com/guide",
+    types: { "text/markdown": "https://stripboard-editor.com/guide.md" },
+  },
 };
 
 const K = ({ children }: { children: ReactNode }) => (
