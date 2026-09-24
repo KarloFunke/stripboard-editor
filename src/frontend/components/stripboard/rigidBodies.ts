@@ -214,9 +214,11 @@ export function rigidShape(spec: RigidSpec, geom: RigidGeom): RigidShape {
         : { x: -bodyHalf, y: lenSpan.lo - 0.7, w: bodyHalf * 2, h: len };
       const pieces: Piece[] = [...legs(geom, bodyHalf, alongX), rect(body.x, body.y, body.w, body.h, spec.fill, 0.3)];
       const one = geom.pins.find((p) => p.id === "1") ?? geom.pins[0];
+      const along = alongX ? one.x : one.y;
+      const end = along - lenSpan.lo <= lenSpan.hi - along ? lenSpan.lo + 0.3 : lenSpan.hi - 0.3;
       const dimple = alongX
-        ? { cx: lenSpan.lo + 0.3, cy: one.y > 0 ? bodyHalf * 0.45 : -bodyHalf * 0.45 }
-        : { cx: one.x > 0 ? bodyHalf * 0.45 : -bodyHalf * 0.45, cy: lenSpan.lo + 0.3 };
+        ? { cx: end, cy: one.y > 0 ? bodyHalf * 0.45 : -bodyHalf * 0.45 }
+        : { cx: one.x > 0 ? bodyHalf * 0.45 : -bodyHalf * 0.45, cy: end };
       pieces.push({ t: "circle", cx: dimple.cx, cy: dimple.cy, rad: 0.6, fill: "rgba(255,255,255,0.22)" });
       return { body, pieces, aloft: [] };
     }
@@ -252,8 +254,10 @@ export function rigidShape(spec: RigidSpec, geom: RigidGeom): RigidShape {
       const rad = 2.4;
       const flat = 1.25;
       const chord = Math.sqrt(rad * rad - flat * flat);
-      const p1 = fr.pt(-chord, flat);
-      const p2 = fr.pt(chord, flat);
+      // Pins run 1-2-3 left to right seen from the flat, so the flat is on
+      // the far side of the pin line from a TO-220's tab
+      const p1 = fr.pt(-chord, -flat);
+      const p2 = fr.pt(chord, -flat);
       const pieces: Piece[] = [];
       for (const p of geom.pins) {
         const u = fr.u(p);
@@ -261,10 +265,10 @@ export function rigidShape(spec: RigidSpec, geom: RigidGeom): RigidShape {
       }
       pieces.push({
         t: "body",
-        d: `M ${p1.x} ${p1.y} L ${p2.x} ${p2.y} A ${rad} ${rad} 0 1 ${fr.mirrored ? 1 : 0} ${p1.x} ${p1.y} Z`,
+        d: `M ${p1.x} ${p1.y} L ${p2.x} ${p2.y} A ${rad} ${rad} 0 1 ${fr.mirrored ? 0 : 1} ${p1.x} ${p1.y} Z`,
         fill: spec.fill,
       });
-      return { body: fr.box(-rad, -rad, rad * 2, rad + flat), pieces, aloft: [] };
+      return { body: fr.box(-rad, -flat, rad * 2, rad + flat), pieces, aloft: [] };
     }
 
     case "to220": {
@@ -325,11 +329,14 @@ export function rigidShape(spec: RigidSpec, geom: RigidGeom): RigidShape {
       const half = fr.half + 1.3;
       const depth = 4.2;
       const body = fr.box(-half, -depth / 2, half * 2, depth);
+      // The actuator is drawn at the pin 1 end whichever way the part is turned
+      const one = geom.pins.find((p) => p.id === "1") ?? geom.pins[0];
+      const u0 = fr.u(one) < 0 ? -half * 0.5 : -half * 0.05;
       return {
         body,
         pieces: [
           rect(body.x, body.y, body.w, body.h, spec.fill, 0.3),
-          fr.rect(-half * 0.5, -depth / 2 + 0.7, half * 0.55, depth - 1.4, "#d8dcde", 0.2),
+          fr.rect(u0, -depth / 2 + 0.7, half * 0.55, depth - 1.4, "#d8dcde", 0.2),
         ],
         aloft: [],
       };

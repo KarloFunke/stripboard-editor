@@ -76,7 +76,7 @@ console.log("\nrigid bodies");
 {
   const npn = defOf("def-npn");
   const a = rigidBody(npn, { row: 0, col: 0 }, 0);
-  ok(a.minCol < -0.3 && a.minCol > -0.5 && a.maxCol === 0, "a TO-92 bulges under half a pitch on its round side, none on the flat");
+  ok(a.maxCol > 0.3 && a.maxCol < 0.5 && a.minCol === 0, "a TO-92 bulges under half a pitch on its round side, none on the flat");
   ok(bodyRectsClash(a, rigidBody(npn, { row: 0, col: 1 }, 0)), "two TO-92 in neighbouring columns collide");
   ok(!bodyRectsClash(a, rigidBody(npn, { row: 0, col: 2 }, 0)), "with a free column between they do not");
   const dip = defOf("def-ic-dip8");

@@ -151,5 +151,58 @@ for (const rotation of [0, 90, 180, 270]) {
   ok(d(pins[2]) < d(pins[0]), `3296 trimmer at ${rotation}: the screw stays at the pin 3 end`);
 }
 
+const dip = byId("def-ic-dip8");
+for (const rotation of [0, 90, 180, 270]) {
+  const shape = shapeAt(dip, undefined, rotation);
+  const pins = getRotatedPinPositions(dip, { row: 10, col: 10 }, rotation);
+  const b = getComponentBounds(dip, { row: 10, col: 10 }, rotation);
+  const mm = (p) => ({ x: (p.col - (b.minCol + b.maxCol) / 2) * 2.54, y: (p.row - (b.minRow + b.maxRow) / 2) * 2.54 });
+  const dimple = shape.pieces.find((p) => p.t === "circle");
+  const d = (p) => Math.hypot(mm(p).x - dimple.cx, mm(p).y - dimple.cy);
+  const one = pins.find((p) => p.pinId === "1");
+  ok(pins.every((p) => p === one || d(one) < d(p)), `DIP-8 at ${rotation}: the pin-1 dimple is nearest pin 1`);
+}
+
+// Every rigid package, turned back: the drawing at each rotation must be the
+// 0 degree drawing rotated, or some feature is pinned to a side of the screen
+// instead of to a pin (the DIP dimple and the slide actuator used to be).
+{
+  const unrot = ({ x, y }, r) => { for (let i = 0; i < (4 - r / 90) % 4; i++) [x, y] = [-y, x]; return { x, y }; };
+  const f = (n) => (Math.abs(n) < 1e-6 ? 0 : n).toFixed(3);
+  const p2 = (p) => `${f(p.x)},${f(p.y)}`;
+  const key = (p, r) => {
+    switch (p.t) {
+      case "rect": {
+        const a = unrot({ x: p.x, y: p.y }, r), b = unrot({ x: p.x + p.w, y: p.y + p.h }, r);
+        return `rect ${f(Math.min(a.x, b.x))},${f(Math.min(a.y, b.y))} ${f(Math.max(a.x, b.x))},${f(Math.max(a.y, b.y))} ${p.fill}`;
+      }
+      case "circle": return `circle ${p2(unrot({ x: p.cx, y: p.cy }, r))} ${f(p.rad)} ${p.fill}`;
+      case "line": return `line ${[p2(unrot({ x: p.x1, y: p.y1 }, r)), p2(unrot({ x: p.x2, y: p.y2 }, r))].sort().join(" ")} ${p.stroke}`;
+      default: {
+        // "M x y L x y A r r 0 large sweep x y Z": the same arc drawn from the
+        // other end has the opposite sweep, so normalise the direction
+        const n = p.d.match(/-?\d*\.?\d+/g).map(Number);
+        let a = p2(unrot({ x: n[0], y: n[1] }, r)), b = p2(unrot({ x: n[2], y: n[3] }, r)), sweep = n[8];
+        if (b < a) { [a, b] = [b, a]; sweep = 1 - sweep; }
+        return `${p.t} ${a} ${b} ${f(n[4])} ${sweep} ${p.fill}`;
+      }
+    }
+  };
+  const inconsistent = [];
+  let combos = 0;
+  for (const def of DEFAULT_COMPONENTS) {
+    for (const option of packageOptions(def)) {
+      const d = { ...def, ...(footprintFor(def, option.id) ?? {}) };
+      if (resolvePackage(d, "10k", option.id)?.kind !== "rigid") continue;
+      combos++;
+      const at = (r) => { const s = shapeAt(d, option.id, r); return [...s.pieces, ...s.aloft, { t: "rect", ...s.body, fill: "body" }].map((p) => key(p, r)).sort().join("|"); };
+      const base = at(0);
+      for (const r of [90, 180, 270]) if (at(r) !== base) inconsistent.push(`${def.id}/${option.id} at ${r}`);
+    }
+  }
+  ok(inconsistent.length === 0, `${combos} rigid packages draw the same part at every rotation`);
+  for (const p of inconsistent) console.log(`       ${p}`);
+}
+
 console.log(failed === 0 ? "\nall passed" : `\n${failed} checks FAILED`);
 process.exit(failed === 0 ? 0 : 1);

@@ -8,6 +8,13 @@ export interface Update {
 
 export const UPDATES: Update[] = [
   {
+    date: "2026-09-24",
+    items: [
+      "Bug fixed so correctly with the part. The pin 1 notch on an IC and the slider on a switch stayed put at some angles.",
+      "The flat side of a TO-92 transistor was drawn on the wrong side of its pins since 2026-09-21 update, so those parts now face the other way. Sorry for that inconvenience.",
+    ],
+  },
+  {
     date: "2026-09-22",
     items: [
       "Your own part library. Keep custom parts in your account and use them in every project, share them as a file, and carry a change into every project that uses the part.",
