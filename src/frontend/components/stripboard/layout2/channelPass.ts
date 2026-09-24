@@ -1,6 +1,7 @@
 import { Component, ComponentDef } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
-import { getComponentBounds } from "../boardLayout";
+import { getComponentBounds, getFlexiblePinPositions } from "../boardLayout";
+import { flexWireObstacle, rigidBody } from "../partGeometry";
 import { FootprintRect, WireObstacles, spanLimits, wireExtraLength, wireStackDepth } from "../flexGeometry";
 import { Candidate, Chooser } from "./chooser";
 import { insertLine } from "./edgePadding";
@@ -92,11 +93,14 @@ export function insertWireChannels(
         if (!c.boardPos || c.boardExcluded) continue;
         const def = resolveComponentDef(c, componentDefs);
         if (!def) continue;
-        if (def.flexible) obstacles.bodies.push({ p1: c.boardPos, p2: c.flexibleEndPos ?? c.boardPos });
-        else {
-          const r = getComponentBounds(def, c.boardPos, c.rotation);
-          obstacles.rects.push(r);
-          if (icChannels && def.pins.length >= IC_MIN_PINS) icRects.push(r);
+        // a wire over a part is judged by the true bodies, as the chooser and
+        // the finish score judge it
+        if (def.flexible) {
+          const [p1, p2] = getFlexiblePinPositions(c, def);
+          if (p1 && p2) obstacles.bodies.push(flexWireObstacle(def, p1, p2));
+        } else {
+          obstacles.rects.push(rigidBody(def, c.boardPos, c.rotation));
+          if (icChannels && def.pins.length >= IC_MIN_PINS) icRects.push(getComponentBounds(def, c.boardPos, c.rotation));
         }
       }
       const offenders = cur.plan.wires.filter(

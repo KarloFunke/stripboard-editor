@@ -6,6 +6,8 @@ import { computeAutoLayout5 } from "./autoLayout5";
 import { computeAutoLayout5Split } from "./autoLayout5Split";
 import { wireMessScore } from "./layout2/tidyScore";
 import { wireStackDepth } from "./flexGeometry";
+import { priceResult } from "./layout2/boardPrice";
+import { expandOffBoard } from "./offBoard";
 
 export interface AutoLayoutRequest {
   board: Board;
@@ -89,6 +91,9 @@ ctx.onmessage = (e) => {
       ...(v5MsPerMove !== undefined ? { msPerMoveHint: v5MsPerMove } : {}),
       ...(drilledCutsOnly ? { drilledCutsOnly: true } : {}),
       ...(noWireStacking ? { noWireStacking: true } : {}),
+      // every new best of the walk's second half is finished exactly too, and
+      // the cheapest board wins: a few seconds a seed, never a worse board
+      exactBest: true,
     };
     const result = v5Split !== undefined
       ? computeAutoLayout5Split(board, components, defs, nets, netAssignments, onProgress, { variant: v5Split, ...(v5SeedBase !== undefined ? { seedBase: v5SeedBase } : {}), ...v5Opts })
@@ -106,7 +111,7 @@ ctx.onmessage = (e) => {
     ctx.postMessage({
       type: "done",
       result,
-      score: rateResult(result, board, components, defs, drilledCutsOnly),
+      score: priceResult(result, board, expandOffBoard(components, defs, netAssignments).components, defs, drilledCutsOnly),
       crossings: wireMessScore(result, components, defs).crossings + offAxis + stacked,
       ...(msPerMove !== undefined ? { msPerMove } : {}),
     });

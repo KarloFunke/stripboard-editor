@@ -238,7 +238,7 @@ function finish(suiteName) {
 module.exports = {
   computeAutoFinish, deriveCompletion, computeAutoPlace, computeAutoLayout, computeAutoLayout2,
   computeStripSegments, computeConnectivity, checkNetCompleteness,
-  flexGeometry, boardLayout, DEFAULT_COMPONENTS,
+  flexGeometry, boardLayout, partGeometry, DEFAULT_COMPONENTS,
   TP_DEF, R_DEF, C_DEF, DIP8_DEF, HDR4_DEF, CONN1_DEF, DEFS,
   testPin, flex, rigid, net, assign, emptyBoard,
   applyLayout, applyFinish, verify, checkGeometry,

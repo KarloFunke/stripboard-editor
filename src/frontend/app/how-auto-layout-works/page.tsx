@@ -512,21 +512,65 @@ export default function AutoLayoutGuidePage() {
             the layouter&apos;s own loop, run on the example for a few thousand steps and replayed. Press play and watch a board
             appear.
           </P>
-          <MiniRun seed={1} steps={10000} caption="A full run on the example. Early on the board is a mess and the annealer does not care; as the price of mess rises the wires straighten, and as the temperature falls the board packs. Finished runs show the best board found, scored at the full price." />
+          <MiniRun seed={7} steps={25000} caption="A full run on the example. Early on the board is a mess and the annealer does not care; as the price of mess rises the wires straighten, and as the temperature falls the board packs. Finished runs show the best board found, scored at the full price." />
 
           {/* 9 */}
           <H2 id="finish">9. Finishing the board</H2>
           <P>
-            The annealer returns a description. Its decoded board is already complete in principle, but the decoder is a fast
-            approximation of the editor&apos;s final router, so the best few descriptions of a run are handed to that router for the
-            final cleanup.
+            The annealer returns a description, and its decoded board is already complete in principle. But the decoder&apos;s wire routing is a
+            fast approximation, built to be run hundreds of thousands of times, and two of the editor&apos;s rules are not in it
+            at all: no link wire may lie on top of another (if asked for it), and none may run over the body of a part.
+            So the best description of a run is finished
+            properly before you ever see it in the editor.
           </P>
           <P>
-            It enforces a few additional things: on an unlocked board, every link wire runs straight along a column or a
-            spare strip, no wire runs over a component, and no wire crosses another. Here is the finish at work, on a run of
-            the example like the one in section 8.
+            There are two approaches. We try both and keep whichever produced the better result:
           </P>
-          <FinishWalk caption="The finishing pass, stage by stage. Watch the board buy a column to straighten a wire and give it back once the router has found a tighter arrangement." />
+          <UL>
+            <li><strong>Start over.</strong> Keep only where the parts stand, throw the decoder&apos;s cuts and wires away, and hand them to a much slower and more thorough router that works them out again from the strips up. It may pick quite different wires, and it buys a blank row or column wherever one is needed to keep them straight.</li>
+            <li><strong>Repair.</strong> Keep the decoder&apos;s board exactly as the annealer scored it, and touch only what the rules reject. A wire lying on another or crossing a part moves to a different column of the same two strips, or is given a blank column of its own. Which two strips a wire joins never changes, and no cut is worked out again.</li>
+          </UL>
+          <H3>Why the search cannot use them</H3>
+          <P>
+            A fair question at this point: if these two abide by the real rules and do a better job in general, then why 
+            does the search not use them during the annealing process?
+            Because both are hundreds of times slower, and the search needs hundreds of thousands of steps on big boards. Here is
+            one decode, one repair and one full route timed on four boards of the corpus:
+          </P>
+          <div className="my-4 overflow-x-auto">
+            <table className="w-full text-xs border-collapse">
+              <thead>
+                <tr className="text-left text-neutral-500 dark:text-neutral-400">
+                  <th className="py-1 pr-4 font-normal">Parts</th>
+                  <th className="py-1 pr-4 font-normal">One decode</th>
+                  <th className="py-1 pr-4 font-normal">One repair</th>
+                  <th className="py-1 font-normal">One full route</th>
+                </tr>
+              </thead>
+              <tbody className="text-neutral-700 dark:text-neutral-300">
+                {([["13", "0.047 ms", "4.5 ms", "6 ms"], ["22", "0.065 ms", "10 ms", "31 ms"], ["48", "0.143 ms", "26 ms", "83 ms"], ["55", "0.165 ms", "25 ms", "116 ms"]] as const).map((r) => (
+                  <tr key={r[0]} className="border-t border-neutral-200 dark:border-neutral-700">
+                    <td className="py-1 pr-4">{r[0]}</td><td className="py-1 pr-4">{r[1]}</td><td className="py-1 pr-4">{r[2]}</td><td className="py-1">{r[3]}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <P>
+            On the largest of those the decoder scores about six thousand descriptions a second. Routing each one properly
+            instead would manage nine per second, so the default minute the layouter is given would need to become about twelve hours. 
+            Repairing is much
+            cheaper than routing, but still around 150 times slower than a decode, which is a run of two and a half hours.
+            That is the whole reason the decoder is allowed to be approximate.
+          </P>
+          <P>
+            Here are both finishes, working on the description the run of section 8 ended with. One part does move before
+            either of them starts: the finish first adds blank lines around the board for the wires to use, and a connector
+            that belongs on an edge is pinned to the new edge rather than carried along with everything else. That is why the
+            connector sits two columns further right in the first frame while every other part is exactly where the annealer
+            left it.
+          </P>
+          <FinishWalk/>
           <P>
             Under a locked row or column count the board cannot grow, so this stage does what it can within the limit. 
             Locked components are treated the same way: nothing may shift.
@@ -544,8 +588,7 @@ export default function AutoLayoutGuidePage() {
             The Layouts to solve setting says how many. The runs are spread over the processor cores of your machine,
             one run per core in use. The finished
             boards are compared on completeness first (for the very rare cases where a run wasn&apos;t able to complete a board), 
-            then on a rating of area, wires
-            and cuts. Every run uses a fixed random seed, so the same circuit with the same settings on the same machine
+            then on the score. Every run uses a fixed random seed, so the same circuit with the same settings on the same machine
             gives the same board again; a setting starts every run from fresh random arrangements instead, for when you
             want to see more alternatives.
           </P>

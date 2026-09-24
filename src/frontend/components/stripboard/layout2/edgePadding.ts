@@ -3,17 +3,21 @@ import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { getComponentBounds } from "../boardLayout";
 
 // ── Blank lines that keep connectors on the rim ──
-// A connector the anneal put on a board edge must stay there. When a blank
-// line goes in outside it (routing room at the rim, a wire channel), the
-// connector does not move with the rest: on the left and top it keeps its
-// place while everything else shifts inward, on the right and bottom it
-// moves out with the edge. Its own rows or columns then have the blank hole
-// just inside it, so it still reaches every strip. A connector counts as on
-// the rim of a side when no part lies beyond it on that side (wires may)
-// and it is one line deep there: a deeper one (a header lying across the
-// strips) has outer pins only the margin can reach, so it shifts with the
-// rest and gets that margin. `pin` false shifts everything, the fallback
-// for a board that does not route with the connectors kept.
+// A connector the anneal put on a left or right board edge must stay there.
+// When a blank column goes in outside it (routing room at the rim, a wire
+// channel), the connector does not move with the rest: on the left it keeps
+// its place while everything else shifts inward, on the right it moves out
+// with the edge. Its row is unchanged, so it still shares its strip with
+// every pin it did. A connector counts as on the rim of a side when no part
+// lies beyond it on that side (wires may) and it is one line deep there: a
+// deeper one (a header lying across the strips) has outer pins only the
+// margin can reach, so it shifts with the rest and gets that margin.
+// A blank row never pins: a strip is a row, so a connector kept on the rim
+// row alone would be cut off from every pin that shared its strip and cost a
+// wire and a row to rejoin. It shifts with the rest, the blank row outside
+// it is the bus row the anneal's own grid assumed there, and the harvest
+// takes that row back when no wire uses it. `pin` false shifts everything,
+// the fallback for a board that does not route with the connectors kept.
 
 function boundsOf(c: Component, componentDefs: ComponentDef[], isCol: boolean): { lo: number; hi: number; conn: boolean } | null {
   if (!c.boardPos || c.boardExcluded) return null;
@@ -35,7 +39,7 @@ export function insertLine(comps: Component[], componentDefs: ComponentDef[], is
   const bs = comps.map((c) => boundsOf(c, componentDefs, isCol));
   const keep = new Set<number>();
   const push = new Set<number>();
-  if (pin) {
+  if (pin && isCol) {
     bs.forEach((b, i) => {
       if (!b || !b.conn || b.hi > b.lo) return;
       if (at <= b.lo && !bs.some((o) => o && o.lo < b.lo)) keep.add(i);

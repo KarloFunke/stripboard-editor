@@ -425,7 +425,7 @@ For a board of forty components the decoder takes about a tenth of a millisecond
 
 ## 7. The score
 
-The score of a decoded board is a weighted sum. The weights were tuned by running the layouter over many boards and adjusting until further adjustment stopped helping. The order of magnitude between terms matters more than the exact numbers.
+The score of a decoded board is a weighted sum. The weights were tuned by running the layouter over many boards and adjusting until further adjustment stopped helping. The order of magnitude between terms matters more than the exact numbers. The same score runs the finish: a line the finish adds or takes away is kept only when it lowers the score.
 
 - **Area**, about a third of a point per cell.
 - **Shape.** Rows beyond the width are charged extra, and a ribbon more than twice as wide as tall is charged too.
@@ -446,9 +446,29 @@ The temperature falls geometrically from 150 to 0.15 over the run, and the price
 
 ## 9. Finishing the board
 
-The annealer returns a description. Its decoded board is complete in principle, but the decoder is a fast approximation of the editor's final router, so the best few descriptions of a run are handed to that router for the final cleanup. It enforces that, on an unlocked board, every link wire runs straight along a column or a spare strip, no wire runs over a component, and no wire crosses another.
+The annealer returns a description, and its decoded board is already complete in principle. But the decoder's wire routing is a fast approximation, built to be run hundreds of thousands of times, and two of the editor's rules are not in it at all: no link wire may lie on top of another (where that is asked for), and none may run over the body of a part. So the best description of a run is finished properly before you ever see it in the editor.
 
-*Figure (playable): the finishing pass stage by stage, including the board buying a column to straighten a wire and giving it back once the router has found a tighter arrangement.*
+There are two approaches. Both are tried, and whichever produced the better result is kept.
+
+- **Start over.** Keep only where the parts stand, throw the decoder's cuts and wires away, and hand them to a much slower and more thorough router that works them out again from the strips up. It may pick quite different wires, and it buys a blank row or column wherever one is needed to keep them straight.
+- **Repair.** Keep the decoder's board exactly as the annealer scored it, and touch only what the rules reject. A wire lying on another or crossing a part moves to a different column of the same two strips, or is given a blank column of its own. Which two strips a wire joins never changes, and no cut is worked out again.
+
+### Why the search cannot use them
+
+If these two abide by the real rules and do a better job in general, why does the search not use them during the annealing process? Because both are hundreds of times slower, and the search needs hundreds of thousands of steps on big boards. One decode, one repair and one full route, timed on four boards of the corpus:
+
+| Parts | One decode | One repair | One full route |
+| --- | --- | --- | --- |
+| 13 | 0.047 ms | 4.5 ms | 6 ms |
+| 22 | 0.065 ms | 10 ms | 31 ms |
+| 48 | 0.143 ms | 26 ms | 83 ms |
+| 55 | 0.165 ms | 25 ms | 116 ms |
+
+On the largest of those the decoder scores about six thousand descriptions a second. Routing each one properly would manage nine per second, so the default minute the layouter is given would need to become about twelve hours. Repairing is much cheaper than routing, but still around 150 times slower than a decode, which is a run of two and a half hours. That is the whole reason the decoder is allowed to be approximate.
+
+Before either finish starts, the board gains blank lines around it for the wires to use, and a connector that belongs on an edge is pinned to that new edge rather than carried along with everything else. Every other part stays exactly where the annealer left it.
+
+*Figure (playable): both finishes of the description the section 8 run ended with, each stage by stage, with the price each came to and which board ships.*
 
 Under a locked row or column count the board cannot grow, so this stage does what it can within the limit; locked components are treated the same way, and nothing may shift.
 
@@ -458,7 +478,7 @@ A run ends where its channel took it, and a different random start means a diffe
 
 *Figure (chart): six runs on the river-valley landscape of section 2, each ball resting where one run froze, at the bottom of whichever channel it happened to find. They end at quite different depths, and the deepest is the board you would be given.*
 
-The "Layouts to solve" setting says how many; runs are spread over the processor cores of the machine, one run per core in use. Finished boards are compared on completeness first (for the rare cases where a run could not complete a board), then on a rating of area, wires and cuts. Every run uses a fixed random seed, so the same circuit with the same settings on the same machine gives the same board again. A setting starts every run from fresh random arrangements instead, for when more alternatives are wanted.
+The "Layouts to solve" setting says how many; runs are spread over the processor cores of the machine, one run per core in use. Finished boards are compared on completeness first (for the rare cases where a run could not complete a board), then on the same score, so the board that wins is the one the annealer would have picked too. Every run uses a fixed random seed, so the same circuit with the same settings on the same machine gives the same board again. A setting starts every run from fresh random arrangements instead, for when more alternatives are wanted.
 
 ## 11. What it cannot do
 

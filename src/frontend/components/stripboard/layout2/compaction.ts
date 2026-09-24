@@ -36,7 +36,7 @@ export function compactPlacements(
   // lines that must stay, e.g. those carrying wires or cuts of a routing the
   // caller wants to keep intact (indices as of the input board)
   keep?: { rows: Set<number>; cols: Set<number> }
-): { comps: Component[]; rows: number; cols: number; removals: number } {
+): { comps: Component[]; rows: number; cols: number; removals: number; rowMap: Int32Array; colMap: Int32Array } {
   const keepRows = keep ? [...keep.rows] : [], keepCols = keep ? [...keep.cols] : [];
   type P = { row: number; col: number };
   const pos: (P | null)[] = comps.map((c) => (c.boardPos ? { ...c.boardPos } : null));
@@ -291,12 +291,16 @@ export function compactPlacements(
     return true;
   };
 
+  // input line -> output line, -1 for a removed one
+  const curRows = Array.from({ length: rows }, (_, i) => i), curCols = Array.from({ length: cols }, (_, i) => i);
+  const rowMap = new Int32Array(rows).fill(-1), colMap = new Int32Array(cols).fill(-1);
   let removals = 0;
   let changed = true;
   while (changed && removals < maxRemovals) {
     changed = false;
     for (let c = cols - 1; c >= 0 && removals < maxRemovals; c--) {
       if (tryRemove(c, true)) {
+        curCols.splice(c, 1);
         cols--;
         removals++;
         changed = true;
@@ -304,6 +308,7 @@ export function compactPlacements(
     }
     for (let r = rows - 1; r >= 0 && removals < maxRemovals; r--) {
       if (tryRemove(r, false)) {
+        curRows.splice(r, 1);
         rows--;
         removals++;
         changed = true;
@@ -323,5 +328,7 @@ export function compactPlacements(
     rows,
     cols,
     removals,
+    rowMap: (curRows.forEach((o, i) => { rowMap[o] = i; }), rowMap),
+    colMap: (curCols.forEach((o, i) => { colMap[o] = i; }), colMap),
   };
 }

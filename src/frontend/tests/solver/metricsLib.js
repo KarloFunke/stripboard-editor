@@ -2,6 +2,7 @@
 const {
   computeStripSegments, computeConnectivity, checkNetCompleteness,
   flexGeometry, boardLayout,
+  partGeometry,
 } = require("./helpers.js");
 
 // ── Metrics ────────────────────────────────────────────
@@ -65,9 +66,9 @@ function metrics(board, components, defs, nets, assignments) {
     if (!def) continue;
     if (def.flexible) {
       const [p1, p2] = boardLayout.getFlexiblePinPositions(comp, def);
-      if (p1 && p2) obstacles.bodies.push({ p1, p2 });
+      if (p1 && p2) obstacles.bodies.push(partGeometry.flexWireObstacle(def, p1, p2));
     } else {
-      obstacles.rects.push(boardLayout.getComponentBounds(def, comp.boardPos, comp.rotation));
+      obstacles.rects.push(partGeometry.rigidBody(def, comp.boardPos, comp.rotation));
     }
   }
   let wireLen = 0, offAxisWires = 0, crossings = 0;
@@ -80,7 +81,7 @@ function metrics(board, components, defs, nets, assignments) {
       if (flexGeometry.segmentIntersectsRect(w.from, w.to, rect)) crossings++;
     }
     for (const b of obstacles.bodies) {
-      if (flexGeometry.segmentsIntersect(w.from, w.to, b.p1, b.p2)) crossings++;
+      if (flexGeometry.wireCrossesBody(w.from, w.to, b)) crossings++;
     }
   }
 

@@ -44,19 +44,19 @@ export const GENOME: LabGenome = {
   xgap: [0, 1, 0, 2, 0, 1],
 };
 
-// What the run of section 8 settles on: seed 1, 10,000 steps, default lab.
+// What the run of section 8 settles on: seed 7, 25,000 steps, default lab.
 // Section 9 starts from it rather than annealing the same thing again. Every
 // run there is deterministic, so this is a recording, not a guess; re-record
-// it (LAB.run(1, 10000, ...) and take bestG) if the engine's scoring changes.
+// it (LAB.run(7, 25000, ...) and take bestG) if the engine's scoring changes.
 export const GENOME_RUN: LabGenome = {
-  gp: [1, 5, 4, 3, 0, 2],
-  gn: [1, 5, 4, 3, 0, 2],
+  gp: [5, 1, 4, 3, 0, 2],
+  gn: [5, 4, 1, 3, 0, 2],
   rot: [0, 0, 2],
   hv: [0, 0, 0],
-  br: [0, 1, 0],
-  grp: [[58, 59, 59], [75, 76, 66, 66], [83, 85, 77, 82], [42, 42, 42], [58, 58], [63, 63]],
-  gap: [1, 0, 0, 2, 0, 0],
-  xgap: [0, 0, 2, 1, 0, 0],
+  br: [1, 0, 0],
+  grp: [[198, 196, 196], [243, 241, 245, 247], [219, 217, 219, 216], [191, 191, 191], [160, 160], [196, 196]],
+  gap: [0, 1, 0, 1, 1, 0],
+  xgap: [0, 0, 0, 0, 0, 0],
 };
 
 export const pinLabel = (pi: number, name: string) => `${PARTS[pi].id}.${name}`;

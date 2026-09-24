@@ -19,6 +19,8 @@ import { trimResult } from "./layout2/trimResult";
 import { wireMessScore } from "./layout2/tidyScore";
 import { rateResult } from "./autoLayout2";
 import { pinKey } from "./keys";
+import { FinishOptions, Skeleton, finishRepair, finishSkeleton } from "./layout2/finish";
+import { ENTRY_SIDE, PricedConn, PricedGroup, PricedShaft, W_AREA, W_BCUT, W_BCUT_DRILL, W_CUT, W_WIRE, W_WLEN, priceBreakdown } from "./layout2/boardPrice";
 
 // ── The v5 "skeleton + exact decoder" layouter (beta) ──
 //
@@ -71,6 +73,14 @@ export interface AutoLayout5Options {
   noWireStacking?: boolean;
   // Harness-only: log each seed's decoded best (never set by the UI)
   debugSeeds?: boolean;
+  // Harness-only: every finalist's skeleton, with the decoder's wiring, before
+  // it goes to the finish (stored and replayed by the finish-only runner)
+  onSkeleton?: (seed: number, skeleton: Skeleton) => void;
+  // Every new best the walk finds in its second half also goes through the
+  // repair finish, and the cheapest such board competes with the finish of
+  // the final best. The walk is unchanged; the pick among its bests is exact.
+  // Off: only the final best is finished.
+  exactBest?: boolean;
   // Harness-only landscape instrumentation (never set by the UI): trace is
   // called once per 1% of the anneal with window statistics, probe once per
   // seed after the anneal with the engine closures
@@ -129,8 +139,13 @@ export interface LabApi {
   mutate: (g: LabGenome, rng: () => number) => LabGenome | null;
   decode: (g: LabGenome, frames?: boolean) => { d: LabDecoded | null; frames: LabFrame[]; g: LabGenome };
   run: (seed: number, moves: number, every: number, cb: (step: LabStep) => void) => void;
-  // the finishing pass on one description, stage by stage
-  finish: (g: LabGenome) => LabFrame[];
+  // both finishes of one description, each stage by stage, with the price
+  // each one came to; the editor ships whichever board is cheaper
+  finishBoth: (g: LabGenome) => {
+    start: LabBoard;
+    router: { frames: LabFrame[]; price: number };
+    repair: { frames: LabFrame[]; price: number; ok: boolean } | null;
+  };
   W_MESS: number;
   RAMP_START: number;
   T_START: number;
@@ -171,21 +186,11 @@ export interface MoveLogRec {
 // move kinds as numbered by mutate
 export const MOVE_KINDS = ["throw", "pull", "swapP", "swapN", "swapBoth", "rot", "hv", "br", "grpMerge", "gap", "xgap", "grpSplit"];
 
-const W_AREA = 0.35;
-const W_WIRE = 4;       // per link wire
-const W_WLEN = 0.4;     // per row of wire length
-const W_CUT = 0.05;     // cuts are nearly free
-const W_BCUT = 2;       // between-holes cuts stay visibly priced
-const W_BCUT_DRILL = 24; // a knife cut under drilled-cuts-only: worth several wires, so a rotation that avoids one pays
 const W_MESS = 400;     // final price per off-axis or crossing wire
-const W_TALL = 2;       // rows of cells each row beyond the board width costs
 const RAMP_START = 25;  // their price while the skeleton forms
 const T_START = 150;    // anneal start temperature (see solveSeed)
-const W_LOCKOVER = 150; // per line over a locked dimension
-const W_SIBLING = 0.5;  // per hole the pads of one off-board part sit further apart than they must
 const ROTS: Rot[] = [0, 90, 180, 270];
 // the way a part's front face looks at each rotation (front() in rigidBodies)
-const ENTRY_SIDE: Record<Rot, "left" | "right" | "top" | "bottom"> = { 0: "right", 90: "bottom", 180: "left", 270: "top" };
 
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
@@ -274,6 +279,23 @@ interface Decoded {
   // the genome's branch bits, part of what identifies the board
   br: number[];
   dbg?: Record<string, number | string[]>;
+}
+
+/** The finish alone, on a stored skeleton of this circuit (harness replay). */
+export function finishFromSkeleton(
+  board: Board,
+  allComponents: Component[],
+  componentDefs: ComponentDef[],
+  nets: Net[],
+  allAssignments: NetAssignment[],
+  skeleton: Skeleton,
+  options?: FinishOptions
+): AutoLayoutResult {
+  const { components, netAssignments } = expandOffBoard(allComponents, componentDefs, allAssignments);
+  const repaired = options?.repair === "never" ? null : finishRepair(board, components, componentDefs, nets, netAssignments, skeleton, options);
+  if (repaired && (options?.repair === "only" || (options?.repair === "fallback" && repaired.ok))) return repaired.final;
+  const routed = finishSkeleton(board, components, componentDefs, nets, netAssignments, skeleton, options);
+  return repaired && repaired.ok && repaired.score < routed.score && !options?.repair ? repaired.final : routed.final;
 }
 
 export function computeAutoLayout5(
@@ -454,8 +476,6 @@ export function computeAutoLayout5(
 
   // ── lab recorder (explainer figures only; off in every real run) ──
   let labMode: 0 | 1 | 2 = 0; // 0 off, 1 final board only, 2 every frame
-  let labFin = false;         // record the finishing pass stage by stage
-  let labFinFrames: LabFrame[] = [];
   let labFrames: LabFrame[] = [];
   let labBoardOut: LabBoard | null = null;
   const pushF = (f: LabFrame) => { if (labMode === 2) labFrames.push(f); };
@@ -1431,75 +1451,33 @@ export function computeAutoLayout5(
       }
     }
 
-    const lockOver =
-      (lockedColsCap !== undefined ? Math.max(0, W - lockedColsCap) : 0) +
-      (lockedRowsCap !== undefined ? Math.max(0, H - lockedRowsCap) : 0);
-    // shape: humans build wide boards (corpus median rows/cols 0.75, the
-    // solver's 1.06), so every row beyond the width is priced like a full
-    // row of cells; a wide board pays only beyond the 2:1 ribbon (v2's
-    // rule). A user-locked dimension is the user's own shape choice and
-    // exempts the board
-    const aspectOver = lockedColsCap !== undefined || lockedRowsCap !== undefined ? 0
-      : W_TALL * Math.max(0, H - W) * W + Math.max(0, W - 2 * H) * H;
-    // a locked dimension is a physical board already cut: charge its FULL
-    // extent (narrower/shorter content saves nothing), so the anneal trades
-    // the locked dimension for the free one
-    const physW = lockedColsCap !== undefined ? Math.max(W, lockedColsCap) : W;
-    const physH = lockedRowsCap !== undefined ? Math.max(H, lockedRowsCap) : H;
-    // connectors belong on a board edge, any of the four (on edge 0, 1 away
-    // 50%, 2 away 75%, then 100% of the full price; the small slope keeps a
-    // gradient on the plateau); a locked connector is the user's placement
-    let connEdge = 0;
+    // every term the price reads off a skeleton, then the price itself
+    // (layout2/boardPrice.ts, the one objective the finish shares)
+    const conns: PricedConn[] = [];
     for (let pi = 0; pi < nP; pi++) {
       const p = parts[pi];
       if (!p.isConn || p.locked) continue;
       const h = geo[pi].mode === "V" ? yI[vBot.get(pi)!] - yI[pi] + 1 : geo[pi].h;
-      const w = geo[pi].w;
-      const FAR = 50;
-      const dl = connSides.left ? xI[pi] : FAR;
-      const dr = connSides.right ? physW - (xI[pi] + w) : FAR;
-      const dt = connSides.top ? yI[pi] : FAR;
-      const db = connSides.bottom ? physH - (yI[pi] + h) : FAR;
-      const d = Math.min(dl, dr, dt, db);
-      // a multi-pin connector should run along its nearest edge, not point
-      // into the board, or its external wires come in across the parts. The
-      // orientation is priced at any distance, so that a step inward is no
-      // way out of it: only a rotation is
-      const along = ((dl === d || dr === d) && h >= w) || ((dt === d || db === d) && w >= h);
-      const CONN_FULL = 30;
-      // a screw terminal that opens toward the parts is as hard to wire as one
-      // in the middle of the board, so looking the wrong way costs the same
-      const entry = geo[pi].sh?.entry;
-      const facesOut = !entry || { left: dl, right: dr, top: dt, bottom: db }[entry] === d;
-      connEdge += (d <= 0 ? 0 : d === 1 ? 0.5 * CONN_FULL : d === 2 ? 0.75 * CONN_FULL : CONN_FULL) + 0.2 * d + (along ? 0 : 0.75 * CONN_FULL) + (facesOut ? 0 : CONN_FULL);
+      conns.push({ x: xI[pi], y: yI[pi], w: geo[pi].w, h, entry: geo[pi].sh?.entry });
     }
-    // a shaft goes through the panel, so it belongs out over the board's
-    // edge: whatever share of it lies over the board instead is priced like
-    // a connector kept off the edge
-    let shaftIn = 0;
+    const shafts: PricedShaft[] = [];
     for (const pi of rigidIdx) {
       const reach = geo[pi].sh?.reach;
       if (!reach || parts[pi].locked) continue;
-      const r0 = yI[pi] + reach.minRow - 0.5, r1 = yI[pi] + reach.maxRow + 0.5;
-      const c0 = xI[pi] + reach.minCol - 0.5, c1 = xI[pi] + reach.maxCol + 0.5;
-      const inside =
-        Math.max(0, Math.min(r1, physH - 0.5) - Math.max(r0, -0.5)) * Math.max(0, Math.min(c1, physW - 0.5) - Math.max(c0, -0.5));
-      shaftIn += 30 * (inside / ((r1 - r0) * (c1 - c0)));
+      shafts.push({ r0: yI[pi] + reach.minRow - 0.5, r1: yI[pi] + reach.maxRow + 0.5, c0: xI[pi] + reach.minCol - 0.5, c1: xI[pi] + reach.maxCol + 0.5 });
     }
-    // the pads of one off-board part are wired as a bundle, so they are worth
-    // keeping together; a small price, well under what an edge place is worth
-    let sibling = 0;
-    for (const group of siblingGroups) {
+    const groups: PricedGroup[] = siblingGroups.map((group) => {
       let r0 = Infinity, r1 = -Infinity, c0 = Infinity, c1 = -Infinity;
       for (const pi of group) {
         r0 = Math.min(r0, yI[pi]); r1 = Math.max(r1, yI[pi]);
         c0 = Math.min(c0, xI[pi]); c1 = Math.max(c1, xI[pi]);
       }
-      sibling += W_SIBLING * Math.max(0, r1 - r0 + (c1 - c0) - (group.length - 1));
-    }
+      return { r0, r1, c0, c1, n: group.length };
+    });
+    const priced = priceBreakdown({ H, W, lockedRowsCap, lockedColsCap, wires, wireLen, cuts, bCuts, conns, shafts, groups }, wBCut, connSides);
+    const { connEdge, lockOver } = priced;
     const eBase =
-      W_AREA * (physH * physW + aspectOver) + W_WIRE * wires + W_WLEN * wireLen +
-      W_CUT * cuts + wBCut * bCuts + W_LOCKOVER * lockOver + connEdge + shaftIn + sibling +
+      priced.price +
       overlapBad * 500 + geoBad * 450 + ringBad * 120 + spanBad * 60 + starved * 20 + starvedHard * 450;
     const hardPen = overlapBad * 500 + geoBad * 450 + starvedHard * 450;
     if (labMode) {
@@ -1632,8 +1610,9 @@ export function computeAutoLayout5(
   }
 
   // ── SA with penalty ramp ──
-  function solveSeed(seed: number, seedPos: number): { E: number; g: Genome; d: Decoded } | null {
+  function solveSeed(seed: number, seedPos: number): { E: number; g: Genome; d: Decoded; exact: { final: AutoLayoutResult; score: number } | null; exactN: number } | null {
     const rng = mulberry32((seed + 1) * 0x9e3779b9);
+    let exact: { final: AutoLayoutResult; score: number } | null = null, exactN = 0;
     const rampStart = options?.schedule?.rampStart ?? RAMP_START;
     const rampEnd = movesN * (options?.schedule?.rampEndFrac ?? 1);
     const wOf = (it: number) => Math.min(W_MESS, rampStart * Math.pow(W_MESS / rampStart, it / rampEnd));
@@ -1762,16 +1741,25 @@ export function computeAutoLayout5(
         if (ml) logMove(it, 3, e2, w, isBest);
         g = g2;
         cur = e2;
-        if (isBest) best = { E: eFin, g: cloneG(g2), d: e2 };
+        if (isBest) {
+          best = { E: eFin, g: cloneG(g2), d: e2 };
+          if (exactOn && (timed ? f : it / movesN) >= 0.5) {
+            exactN++;
+            const r = finishRepair(board, components, componentDefs, nets, netAssignments, skeletonOf(g2, e2, true), finishOpts);
+            if (r && r.ok && (!exact || r.score < exact.score)) exact = { final: r.final, score: r.score };
+          }
+        }
       } else if (ml) logMove(it, 2, e2, w, false);
     }
     if (options?.timeBudgetMs !== undefined) options.onBudget?.({ moves: it, cap: capMoves, msPerMove: (performance.now() - tStart) / Math.max(1, it) });
     if (options?.probe) options.probe({ seed, best, decode, mutate, initGenome, cloneG, price: (d: Decoded) => priceFin(d), t0, W_MESS } as unknown as LandscapeProbe);
-    return best;
+    return best ? { ...best, exact, exactN } : null;
   }
 
   // ── finalize through the real completion pipeline ──
   const hasLocked = parts.some((p) => p.locked);
+  const finishOpts = { drilledCutsOnly: options?.drilledCutsOnly ?? false, noWireStacking: options?.noWireStacking ?? false };
+  const exactOn = !!options?.exactBest && !options?.lab;
   // A routed board (components, cuts, wires) in the shape the explainer
   // draws. Only used by the lab hook.
   const labFinBoard = (virtual: Component[], rows: number, cols: number, cuts: Cut[], wires: { from: BoardPosition; to: BoardPosition }[]): LabBoard => {
@@ -1824,269 +1812,61 @@ export function computeAutoLayout5(
     };
   };
 
-  function finalize(bestG: Genome, d: Decoded) {
-    // decoded coordinates first; the routing room around the skeleton is
-    // added below (padAroundEdgeConnectors), none under locked parts or a
-    // locked dimension
-    const dRow = 0, dCol = 0;
-    const padRows = hasLocked || lockedRowsCap !== undefined ? 0 : 1;
-    const padCols = hasLocked || lockedColsCap !== undefined ? 0 : 1;
-    const comps0: Component[] = components.map((c) => ({ ...c, boardPos: null, flexibleEndPos: undefined, rotation: 0 as Rot }));
-    const byId = new Map(comps0.map((c) => [c.id, c]));
+  // What the anneal hands to the finish: the decoded placement of every
+  // part and what the decoder measured. With `wiring` (harness only: the
+  // lab decode is not hardened for every board) the record also carries the
+  // decoder's own cuts and wires.
+  function skeletonOf(bestG: Genome, d: Decoded, wiring: boolean): Skeleton {
+    const placed: Skeleton["placed"] = [];
     for (let pi = 0; pi < nP; pi++) {
       const p = parts[pi];
-      const c = byId.get(p.comp.id)!;
       if (p.kind === "rigid") {
         const sh = d.geo[pi].sh!;
-        c.boardPos = { row: d.yI[pi] - sh.dRow + dRow, col: d.xI[pi] - sh.dCol + dCol };
-        c.rotation = rotOfPart(bestG, pi);
-        if (p.locked) {
-          c.boardPos = p.comp.boardPos;
-          c.rotation = p.comp.rotation;
-          c.locked = true;
-        }
+        placed.push(p.locked
+          ? { id: p.comp.id, boardPos: p.comp.boardPos!, rotation: p.comp.rotation, locked: true }
+          : { id: p.comp.id, boardPos: { row: d.yI[pi] - sh.dRow, col: d.xI[pi] - sh.dCol }, rotation: rotOfPart(bestG, pi) });
       } else if (d.geo[pi].mode === "H") {
         const brBit = flexBit(bestG.br, pi);
-        const x1 = d.xI[pi] + dCol, x2 = d.xI[pi] + (p as FlexPart).dc0 + dCol;
-        c.boardPos = { row: d.yI[pi] + dRow, col: brBit === 0 ? x1 : x2 };
-        c.flexibleEndPos = { row: d.yI[pi] + dRow, col: brBit === 0 ? x2 : x1 };
+        const x1 = d.xI[pi], x2 = d.xI[pi] + (p as FlexPart).dc0;
+        placed.push({ id: p.comp.id, boardPos: { row: d.yI[pi], col: brBit === 0 ? x1 : x2 }, rotation: 0, flexibleEndPos: { row: d.yI[pi], col: brBit === 0 ? x2 : x1 } });
       } else {
         const brBit = flexBit(bestG.br, pi);
-        const t = d.yI[pi] + dRow, b = d.yI[d.vBot.get(pi)!] + dRow;
-        c.boardPos = { row: brBit === 0 ? t : b, col: d.xI[pi] + dCol };
-        c.flexibleEndPos = { row: brBit === 0 ? b : t, col: d.xI[pi] + dCol };
+        const t = d.yI[pi], b = d.yI[d.vBot.get(pi)!];
+        placed.push({ id: p.comp.id, boardPos: { row: brBit === 0 ? t : b, col: d.xI[pi] }, rotation: 0, flexibleEndPos: { row: brBit === 0 ? b : t, col: d.xI[pi] } });
       }
     }
-    const padLines = { top: padRows, bottom: padRows, left: padCols, right: 2 * padCols };
-    const padded = padAroundEdgeConnectors(comps0, componentDefs, d.H, d.W, padLines);
-    const comps = padded.comps;
-    const H = lockedRowsCap !== undefined ? Math.max(padded.rows, lockedRowsCap) : padded.rows;
-    const W = lockedColsCap !== undefined ? Math.max(padded.cols, lockedColsCap) : padded.cols;
-    const routeBoard: Board = { ...board, rows: H, cols: W, cuts: [], wires: [] };
-    const movedIds = new Set(parts.map((p) => p.comp.id));
-    const chooser = new Chooser(routeBoard, componentDefs, nets, netAssignments, false, {}, options?.drilledCutsOnly ?? false, true, options?.noWireStacking ?? false);
-    chooser.route(comps, H, W, movedIds);
-    // rim connectors kept on the rim first; a board that does not route that
-    // way (a pin left without a free hole) gets the plain shift instead
-    if (chooser.chosen!.bad > 0) {
-      chooser.route(padAroundEdgeConnectors(comps0, componentDefs, d.H, d.W, padLines, false).comps, H, W, movedIds);
+    let wiringOut: LabBoard | undefined;
+    if (wiring) {
+      labMode = 1;
+      labBoardOut = null;
+      try {
+        decode(bestG);
+        wiringOut = labBoardOut ?? undefined;
+      } finally {
+        labMode = 0;
+        labBoardOut = null;
+      }
     }
-    chooser.freezePool();
-    const pushFin = (msg: string) => {
-      const c = chooser.chosen;
-      if (!c) return;
-      labFinFrames.push({ stage: 7, msg, board: labFinBoard(c.virtual, c.rows, c.cols, c.plan.cuts, c.plan.wires) });
+    const dg = (d.dbg ?? {}) as Record<string, number>;
+    return {
+      rows: d.H, cols: d.W, placed, skippedIds: skipped.map((c) => c.id),
+      metrics: { eBase: d.eBase, mess: d.slants + d.crossings, wires: dg.wires, wireLen: dg.wireLen, cuts: dg.cuts, bCuts: dg.bCuts },
+      ...(wiringOut ? { wiring: wiringOut } : {}),
     };
-    if (labFin) {
-      const c = chooser.chosen!;
-      const full = labFinBoard(c.virtual, c.rows, c.cols, c.plan.cuts, c.plan.wires);
-      const nWires = full.wires.length;
-      const knives = c.plan.cuts.filter((k) => k.kind !== "hole").length;
-      labFinFrames.push({ stage: 7, msg: `The editor's own router starts over from the same components. First it buys routing room: a blank line on each side and two on the right; a connector on the rim keeps its place there and everything else moves inward. Then the cuts: ${full.cuts.length}${knives === 0 ? ", every one of them a drilled-out spare hole" : `, ${knives} of them cut with a knife between two holes`}.`, board: { ...full, wires: [] } });
-      full.wires.forEach((w, k) => {
-        const name = w.net >= 0 ? nets[w.net]?.name ?? "A net" : "A net";
-        const how = w.c1 === w.c2
-          ? `straight down column ${w.c1 + 1}, from row ${Math.min(w.r1, w.r2) + 1} to row ${Math.max(w.r1, w.r2) + 1}`
-          : w.r1 === w.r2 ? `along row ${w.r1 + 1}, from column ${Math.min(w.c1, w.c2) + 1} to column ${Math.max(w.c1, w.c2) + 1}` : `slanted, from row ${w.r1 + 1} column ${w.c1 + 1} to row ${w.r2 + 1} column ${w.c2 + 1}`;
-        labFinFrames.push({ stage: 7, msg: `${name}: wire ${k + 1} of ${nWires}, ${how}.${k === 0 ? " Each wire is the shortest straight link between two free holes of its net that lies on no other wire and crosses no component." : ""}`, board: { ...full, wires: full.wires.slice(0, k + 1), hlNet: w.net >= 0 ? w.net : undefined } });
-      });
-      labFinFrames.push({ stage: 7, msg: `Every net is joined and no wire lies on another. ${c.mess === 0 ? "Nothing is messy" : `${c.mess} wire${c.mess === 1 ? " is" : "s are"} still slanted, crossing or stacked`}.`, board: full });
-    }
-    const netOfPin = new Map(netAssignments.map((a) => [pinKey(a.componentId, a.pinId), a.netId]));
-    const c0 = chooser.chosen!;
-    const anyLock = lockedColsCap !== undefined || lockedRowsCap !== undefined;
-    if (c0.bad === 0 && !anyLock) {
-      // under a locked dimension the board is a physical given: the harvest
-      // would only drag edge-flush parts inward for no gain
-      const full = compactPlacements(c0.virtual, componentDefs, netOfPin, c0.rows, c0.cols);
-      if (full.removals > 0) chooser.route(full.comps, full.rows, full.cols, c0.movedIds);
-      if (labFin && chooser.chosen !== c0) pushFin(`Lines that carry nothing are squeezed out and the board is routed again: ${full.removals} line${full.removals === 1 ? "" : "s"} gone.`);
-    }
-    // hard zero-mess rule: buy bus rows and channel columns until every
-    // wire is vertical and crosses nothing; a locked dimension cannot grow
-    // and locked parts must not shift, so under those the mess may remain
-    const cCh = chooser.chosen!;
-    if (chooser.chosen!.bad === 0 && !hasLocked) {
-      insertWireChannels(chooser, componentDefs, {
-        ...(lockedRowsCap !== undefined ? { maxRows: lockedRowsCap } : {}),
-        ...(lockedColsCap !== undefined ? { maxCols: lockedColsCap } : {}),
-      }, false, true);
-    }
-    if (labFin && chooser.chosen !== cCh) pushFin("Wherever a wire would still have to slant, cross something or lie on another wire, the finish buys a blank row or column at the best place it can find and routes again, as often as it takes. That is what a straight, crossing-free board costs in area.");
-    const cSl = chooser.chosen!;
-    if (chooser.chosen!.bad === 0) repairSlantWires(chooser, routeBoard, componentDefs, netAssignments, new Set());
-    if (labFin && chooser.chosen !== cSl) pushFin("A last look at each wire that is not yet straight: the router tries to give it a column of its own by shifting what stands in the way.");
-    // a line that carries nothing, or nothing but wires, is blank board the
-    // user would buy: a channel the router did not use in the end, a wire
-    // that would fit a column next to a part just as well, a connector
-    // column pushed out by such a wire. Try to free each such line on its
-    // own; the router finds the wires another line, and the chooser keeps a
-    // try only if the board still routes as cleanly and rates better
-    const cFree = chooser.chosen!;
-    if (!anyLock && !hasLocked) {
-      for (let round = 0; round < 24; round++) {
-        const c1 = chooser.chosen!;
-        if (c1.bad !== 0 || c1.mess !== 0) break;
-        const partRows = new Set<number>(), partCols = new Set<number>();
-        for (const c of c1.virtual) {
-          if (!c.boardPos || c.boardExcluded) continue;
-          const def = resolveComponentDef(c, componentDefs);
-          if (!def) continue;
-          let r1: number, r2: number, k1: number, k2: number;
-          if (def.flexible) {
-            const e = c.flexibleEndPos ?? c.boardPos;
-            r1 = Math.min(c.boardPos.row, e.row); r2 = Math.max(c.boardPos.row, e.row);
-            k1 = Math.min(c.boardPos.col, e.col); k2 = Math.max(c.boardPos.col, e.col);
-          } else {
-            const b = getComponentBounds(def, c.boardPos, c.rotation);
-            r1 = b.minRow; r2 = b.maxRow; k1 = b.minCol; k2 = b.maxCol;
-          }
-          for (let r = r1; r <= r2; r++) partRows.add(r);
-          for (let k = k1; k <= k2; k++) partCols.add(k);
-        }
-        for (const cut of c1.plan.cuts) {
-          partRows.add(cut.row);
-          partCols.add(cut.col);
-          if (cut.kind !== "hole") partCols.add(cut.col + 1);
-        }
-        const tries: [number, boolean][] = [];
-        for (let k = c1.cols - 1; k >= 0; k--) if (!partCols.has(k)) tries.push([k, true]);
-        for (let r = c1.rows - 1; r >= 0; r--) if (!partRows.has(r)) tries.push([r, false]);
-        let freed = false;
-        for (const [line, isCol] of tries) {
-          // every other line stays; only this one may go
-          const keep = { rows: new Set<number>(), cols: new Set<number>() };
-          for (let k = 0; k < c1.cols; k++) if (!isCol || k !== line) keep.cols.add(k);
-          for (let r = 0; r < c1.rows; r++) if (isCol || r !== line) keep.rows.add(r);
-          const again = compactPlacements(c1.virtual, componentDefs, netOfPin, c1.rows, c1.cols, 1, undefined, keep);
-          if (again.removals === 0) continue;
-          chooser.route(again.comps, again.rows, again.cols, c1.movedIds);
-          if (chooser.chosen !== c1) { freed = true; break; }
-        }
-        if (!freed) break;
-      }
-    }
-    if (labFin && chooser.chosen !== cFree) pushFin("A line that carries nothing but a wire is board you would have to buy. Each one is offered back to the router on its own, and kept out whenever the wires find another way.");
-    const ch = chooser.chosen!;
-    const unplaceIds = [
-      ...skipped.map((c) => c.id),
-      ...components.filter((c) => !c.boardExcluded && !movedIds.has(c.id) && !skipped.some((s) => s.id === c.id)).map((c) => c.id),
-    ];
-    const issues: string[] = [];
-    for (const c of skipped) issues.push(`${c.label ?? c.id} could not be planned`);
-    if (ch.plan.unresolvedConflicts > 0) issues.push(`${ch.plan.unresolvedConflicts} strip conflicts remain`);
-    if (lockedColsCap !== undefined && ch.cols > lockedColsCap) issues.push(`does not fit the locked ${lockedColsCap} columns (needs ${ch.cols})`);
-    if (lockedRowsCap !== undefined && ch.rows > lockedRowsCap) issues.push(`does not fit the locked ${lockedRowsCap} rows (needs ${ch.rows})`);
-    const stacked = options?.noWireStacking
-      ? ch.plan.wires.filter((w, i) => wireStackDepth(w.from, w.to, ch.plan.wires.slice(0, i)) > 0).length
-      : 0;
-    if (ch.mess - stacked > 0) issues.push(`${ch.mess - stacked} wire${ch.mess - stacked === 1 ? "" : "s"} could not be made straight and crossing-free`);
-    if (stacked > 0) issues.push(`${stacked} wire${stacked === 1 ? "" : "s"} still run on top of another wire`);
-    const result: AutoLayoutResult = {
-      placements: ch.virtual
-        .filter((c) => movedIds.has(c.id) && c.boardPos)
-        .map((c) => {
-          const def = resolveComponentDef(c, componentDefs)!;
-          return def.flexible
-            ? { componentId: c.id, boardPos: c.boardPos!, flexibleEndPos: c.flexibleEndPos }
-            : { componentId: c.id, boardPos: c.boardPos!, rotation: c.rotation };
-        }),
-      cuts: ch.plan.cuts,
-      wires: ch.plan.wires,
-      issues,
-      quality: ch.plan.unresolvedConflicts * 100 + ch.plan.starvedNetIds.length + skipped.length * 2,
-      starvedNetIds: ch.plan.starvedNetIds,
-      boardSize: { rows: ch.rows, cols: ch.cols },
-      unplaceIds,
-    };
-    let final: AutoLayoutResult;
-    if (anyLock) {
-      // locked dimensions come back EXACTLY as locked (the physical board);
-      // only the free dimension is trimmed, and nothing is shifted
-      let maxR = 0, maxC = 0, minR = Infinity, minC = Infinity;
-      const see = (r: number, c: number) => {
-        maxR = Math.max(maxR, r);
-        maxC = Math.max(maxC, c);
-        minR = Math.min(minR, r);
-        minC = Math.min(minC, c);
-      };
-      for (const c of ch.virtual) {
-        if (!c.boardPos || c.boardExcluded) continue;
-        const def = resolveComponentDef(c, componentDefs);
-        if (!def) continue;
-        if (def.flexible) {
-          const e = c.flexibleEndPos ?? c.boardPos;
-          see(c.boardPos.row, c.boardPos.col);
-          see(e.row, e.col);
-        } else {
-          const b = getComponentBounds(def, c.boardPos, c.rotation);
-          see(b.minRow, b.minCol);
-          see(b.maxRow, b.maxCol);
-        }
-      }
-      for (const cut of ch.plan.cuts) see(cut.row, cut.col);
-      for (const w of ch.plan.wires) {
-        see(w.from.row, w.from.col);
-        see(w.to.row, w.to.col);
-      }
-      if (!isFinite(minR)) { minR = 0; minC = 0; }
-      // shift leading emptiness out of the FREE dimension only: the locked
-      // dimension's frame is the physical board (shifting columns under a
-      // locked width would drag edge-flush connectors off the rim), and
-      // locked parts pin everything absolutely
-      const shiftR = !hasLocked && lockedRowsCap === undefined ? minR : 0;
-      const shiftC = !hasLocked && lockedColsCap === undefined ? minC : 0;
-      if (shiftR > 0 || shiftC > 0) {
-        const mv = (p: BoardPosition): BoardPosition => ({ row: p.row - shiftR, col: p.col - shiftC });
-        result.placements = result.placements.map((pl) => ({
-          ...pl, boardPos: mv(pl.boardPos),
-          ...(pl.flexibleEndPos ? { flexibleEndPos: mv(pl.flexibleEndPos) } : {}),
-        }));
-        result.cuts = result.cuts.map((cut) => ({ ...cut, row: cut.row - shiftR, col: cut.col - shiftC }));
-        result.wires = result.wires.map((w) => ({ from: mv(w.from), to: mv(w.to) }));
-      }
-      const rows = lockedRowsCap !== undefined ? Math.max(lockedRowsCap, maxR + 1) : maxR - shiftR + 1;
-      const cols = lockedColsCap !== undefined ? Math.max(lockedColsCap, maxC + 1) : maxC - shiftC + 1;
-      final = { ...result, boardSize: { rows, cols } };
-    } else {
-      const trimmed = trimResult(result, routeBoard, ch.virtual, componentDefs, hasLocked);
-      final = { ...result, ...trimmed };
-    }
-    // purely visual: line the cuts up on shared columns (v2 does the same)
-    if (final.quality === 0) {
-      final = alignCuts(final, routeBoard, components, componentDefs);
-      if (options?.drilledCutsOnly && final.boardSize) {
-        // alignment may have slid a stuck knife cut next to a drillable hole
-        const byPl = new Map(final.placements.map((p) => [p.componentId, p]));
-        const virtual = components.map((c) => {
-          const p = byPl.get(c.id);
-          return p ? { ...c, boardPos: p.boardPos, rotation: p.rotation ?? c.rotation, flexibleEndPos: p.flexibleEndPos } : c;
-        });
-        const vBoard: Board = { ...board, rows: final.boardSize.rows, cols: final.boardSize.cols, cuts: [], wires: [] };
-        final = { ...final, cuts: drillRemainingCuts(vBoard, virtual, componentDefs, netAssignments, final.cuts, final.wires) };
-      }
-    }
-    if (labFin && final.boardSize) {
-      const byPl2 = new Map(final.placements.map((pl) => [pl.componentId, pl]));
-      const virt = components.map((c) => {
-        const pl = byPl2.get(c.id);
-        return pl ? { ...c, boardPos: pl.boardPos, rotation: pl.rotation ?? c.rotation, flexibleEndPos: pl.flexibleEndPos } : c;
-      });
-      const knives = final.cuts.filter((k) => k.kind !== "hole").length;
-      labFinFrames.push({
-        stage: 7,
-        msg: `The board is trimmed to what it uses, and every cut that can be is turned into a drilled hole rather than a knife stroke between two holes, then lined up with the others in one column where possible. ${final.boardSize.rows} by ${final.boardSize.cols}, ${final.wires.length} link wire${final.wires.length === 1 ? "" : "s"}, ${final.cuts.length} cut${final.cuts.length === 1 ? "" : "s"}${knives ? `, ${knives} of them with a knife` : ", none of them with a knife"}. This is the board you get.`,
-        board: labFinBoard(virt, final.boardSize.rows, final.boardSize.cols, final.cuts, final.wires),
-      });
-    }
-    const rate = rateResult(result, routeBoard, ch.virtual, componentDefs, options?.drilledCutsOnly ?? false);
-    const offAxis = final.wires.filter((w) => w.from.col !== w.to.col).length;
-    const crossings = wireMessScore(final, comps, componentDefs).crossings;
-    const overCap =
-      (lockedColsCap !== undefined ? Math.max(0, (final.boardSize?.cols ?? 0) - lockedColsCap) : 0) +
-      (lockedRowsCap !== undefined ? Math.max(0, (final.boardSize?.rows ?? 0) - lockedRowsCap) : 0);
-    const score = (final.quality + overCap * 40) * 1e9 + (offAxis + crossings) * 1e4 + rate;
-    return { final, score };
+  }
+
+  function finalize(bestG: Genome, d: Decoded, seed?: number) {
+    // Two finishes are offered and the cheaper board wins, by the same price
+    // the anneal scored the skeleton with: the repair, which keeps the
+    // decoder's own cuts and wires and fixes only what the editor's rules
+    // reject, and the router, which starts over. The repair is the cheaper
+    // board on most skeletons but not on all, and it cannot win with a board
+    // that is not valid, clean and geometrically sound.
+    const sk = skeletonOf(bestG, d, true);
+    if (seed !== undefined) options?.onSkeleton?.(seed, sk);
+    const repaired = finishRepair(board, components, componentDefs, nets, netAssignments, sk, finishOpts);
+    const routed = finishSkeleton(board, components, componentDefs, nets, netAssignments, sk, finishOpts);
+    return repaired && repaired.ok && repaired.score < routed.score ? { final: repaired.final, score: repaired.score } : routed;
   }
 
   // ── lab: hand everything to the explainer and stop ──
@@ -2104,7 +1884,7 @@ export function computeAutoLayout5(
       const ld: LabDecoded | null = d && board ? { eBase: d.eBase, hard: d.hardPen, mess: d.slants + d.crossings, H: d.H, W: d.W, board, wires: dg.wires, wireLen: dg.wireLen, cuts: dg.cuts, bCuts: dg.bCuts, starved: dg.starvedHard, relays: dg.relays, connEdge: dg.connEdge } : null;
       return { d: ld, frames, g };
     };
-    const labFinish: LabApi["finish"] = (g) => {
+    const labFinishBoth: LabApi["finishBoth"] = (g) => {
       const g2 = cloneG(g as Genome);
       labMode = 1;
       labFrames = [];
@@ -2114,17 +1894,20 @@ export function computeAutoLayout5(
       labMode = 0;
       labFrames = [];
       labBoardOut = null;
-      if (!d || !start) return [];
-      labFin = true;
-      labFinFrames = [{ stage: 7, msg: "What the annealer hands over: the board its decoder scored. It is complete, but the decoder is a fast approximation, so nothing about its cuts and wires is final.", board: start }];
-      try {
-        finalize(g2, d);
-      } finally {
-        labFin = false;
-      }
-      const out = labFinFrames;
-      labFinFrames = [];
-      return out;
+      const empty = { start: start!, router: { frames: [], price: 0 }, repair: null };
+      if (!d || !start) return empty;
+      const sk = skeletonOf(g2, d, true);
+      const routerFrames: LabFrame[] = [];
+      const routed = finishSkeleton(board, components, componentDefs, nets, netAssignments, sk, finishOpts, { frames: routerFrames, board: labFinBoard });
+      const repairFrames: LabFrame[] = [];
+      const repaired = finishRepair(board, components, componentDefs, nets, netAssignments, sk, finishOpts, { frames: repairFrames, board: labFinBoard });
+      // each finish's own score, which on a valid, mess-free board is exactly
+      // the price the anneal would have put on it
+      return {
+        start,
+        router: { frames: routerFrames, price: routed.score },
+        repair: repaired ? { frames: repairFrames, price: repaired.score, ok: repaired.ok } : null,
+      };
     };
     const labRun: LabApi["run"] = (seed, movesN2, every, cb) => {
       const rng = mulberry32((seed + 1) * 0x9e3779b9);
@@ -2168,20 +1951,21 @@ export function computeAutoLayout5(
       mutate: (g, rng) => mutate(g, rng, false),
       decode: (g, frames = true) => labDecode(g, frames ? 2 : 1),
       run: labRun,
-      finish: labFinish,
+      finishBoth: labFinishBoth,
       W_MESS, RAMP_START, T_START,
     });
     return emptyResult([]);
   }
 
   // ── run the portfolio ──
-  const seedBests: { E: number; g: Genome; d: Decoded }[] = [];
+  const seedBests: { E: number; g: Genome; d: Decoded; seed: number; exact: { final: AutoLayoutResult; score: number } | null; exactN: number }[] = [];
   const seedList = options?.seedIndex !== undefined ? [options.seedIndex] : [...Array(seedsN).keys()].map((k) => k + (options?.seedBase ?? 0));
   for (const [pos, seed] of seedList.entries()) {
     const r = solveSeed(seed, pos);
-    if (r) seedBests.push(r);
+    if (r) seedBests.push({ ...r, seed });
     if (r && options?.debugSeeds) {
       console.log(`[v5 seed ${seed}] E ${r.E.toFixed(1)} decoded ${r.d.H}x${r.d.W}`, JSON.stringify(r.d.dbg));
+      if (r.exactN) console.log(`[v5 seed ${seed}] exact ${r.exactN} bests finished${r.exact ? `, cheapest ${r.exact.score.toFixed(1)}` : ""}`);
     }
   }
   if (seedBests.length === 0) return emptyResult(["auto-layout found no feasible arrangement"]);
@@ -2190,9 +1974,11 @@ export function computeAutoLayout5(
   const finalists = seedBests.slice(0, 4);
   finalists.forEach((r, i) => {
     report("place", i / finalists.length);
-    const f = finalize(r.g, r.d);
+    const f = finalize(r.g, r.d, r.seed);
     if (!bestFin || f.score < bestFin.score) bestFin = f;
   });
+  // the exact bests of every seed, finalist or not
+  for (const r of seedBests) if (r.exact && (!bestFin || r.exact.score < bestFin.score)) bestFin = r.exact;
   report("place", 1);
   return bestFin!.final;
 }

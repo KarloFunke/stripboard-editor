@@ -43,6 +43,8 @@ const humanOnly = args.includes("--human-only");
 // Keep projects whose human never finished placing. Their netlist is still a
 // valid solver input; only the human-side comparison is meaningless.
 const includeUnfinished = args.includes("--include-unfinished");
+// Smallest circuit worth solving: below two wired parts there is nothing to arrange.
+const minParts = Number(argVal("minparts") ?? 1);
 
 // The flag is written only when a solved layout is applied, and cleared
 // only by resetProject, which discards the layout too, so its absence on a
@@ -196,7 +198,7 @@ for (const row of rows) {
   const removedParts = data.components.filter((c) => !withNets.has(c.id)).length;
   data.components = data.components.filter((c) => withNets.has(c.id));
   const comps = data.components;
-  if (comps.length === 0) {
+  if (comps.length < minParts) {
     empty++;
     continue;
   }

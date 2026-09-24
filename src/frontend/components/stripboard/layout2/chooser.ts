@@ -1,10 +1,12 @@
 import { Board, BoardPosition, Component, ComponentDef, Net, NetAssignment } from "@/types";
 import { CompletionPlan, deriveCompletion } from "../autoFinish";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
-import { getComponentBounds } from "../boardLayout";
-import { FootprintRect, segmentIntersectsRect, segmentsIntersect, wireStackDepth } from "../flexGeometry";
+import { getFlexiblePinPositions } from "../boardLayout";
+import { WireObstacles, segmentIntersectsRect, wireCrossesBody, wireStackDepth } from "../flexGeometry";
+import { flexWireObstacle, rigidBody } from "../partGeometry";
 import { AREA_WEIGHT, avoidableBetweenCuts } from "./tidyScore";
 import { DimLimits } from "./tileModel";
+import { BoardPricer } from "./boardPrice";
 
 // A routed board candidate: virtual component set, board size, and the
 // completion plan (cuts + wires) the router derived for it.
@@ -61,28 +63,35 @@ export class Chooser {
     private strict = false,
     // No wire may run on top of another: stacked wires count as mess
     // (strict ranking) and the router prices them as a last resort
-    private noWireStacking = false
+    private noWireStacking = false,
+    // The one objective (v5): candidates rank by the same price the anneal
+    // scored its skeletons with, so the finish keeps only what the anneal
+    // would have kept. Without it, the ladder's own cost below.
+    private pricer?: BoardPricer
   ) {}
 
   get forbidsStacking(): boolean {
     return this.noWireStacking;
   }
 
+  // a wire over a part: the package's true body and a flexible part's real
+  // body, the same geometry the finish score and the repair finish judge by
   private messOf(virtual: Component[], plan: CompletionPlan): number {
-    const rects: FootprintRect[] = [];
-    const bodies: { p1: BoardPosition; p2: BoardPosition }[] = [];
+    const obstacles: WireObstacles = { rects: [], bodies: [] };
     for (const c of virtual) {
       if (!c.boardPos || c.boardExcluded) continue;
       const def = resolveComponentDef(c, this.componentDefs);
       if (!def) continue;
-      if (def.flexible) bodies.push({ p1: c.boardPos, p2: c.flexibleEndPos ?? c.boardPos });
-      else rects.push(getComponentBounds(def, c.boardPos, c.rotation));
+      if (def.flexible) {
+        const [p1, p2] = getFlexiblePinPositions(c, def);
+        if (p1 && p2) obstacles.bodies.push(flexWireObstacle(def, p1, p2));
+      } else obstacles.rects.push(rigidBody(def, c.boardPos, c.rotation));
     }
     let mess = 0;
     plan.wires.forEach((w, i) => {
       if (w.from.col !== w.to.col) mess++;
-      for (const r of rects) if (segmentIntersectsRect(w.from, w.to, r)) mess++;
-      for (const b of bodies) if (segmentsIntersect(w.from, w.to, b.p1, b.p2)) mess++;
+      for (const r of obstacles.rects) if (segmentIntersectsRect(w.from, w.to, r)) mess++;
+      for (const b of obstacles.bodies) if (wireCrossesBody(w.from, w.to, b)) mess++;
       if (this.noWireStacking && wireStackDepth(w.from, w.to, plan.wires.slice(0, i)) > 0) mess++;
     });
     return mess;
@@ -111,6 +120,7 @@ export class Chooser {
   }
 
   private cost(c: Candidate): number {
+    if (this.pricer) return this.pricer.price(c.virtual, c.rows, c.cols, c.plan.cuts, c.plan.wires);
     const betweenCuts = this.drilledCutsOnly
       ? avoidableBetweenCuts(c.plan.cuts, c.virtual, this.componentDefs)
       : 0;

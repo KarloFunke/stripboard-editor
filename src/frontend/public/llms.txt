@@ -49,7 +49,7 @@ and no wire crossing a component — the layouter buys blank rows or columns
 instead. Connectors are kept on a board edge, and cuts are drilled-out holes
 lined up in shared columns wherever possible. Several layouts are solved in
 parallel from different random starts, one per processor core, and compared on
-completeness first, then on a rating of area, wires and cuts. The same circuit,
+completeness first, then on the annealer's own score. The same circuit,
 settings and machine give the same board again, unless "new layouts every run"
 is enabled. Settings: drilled cuts only, no stacked wires, allow standing
 parts, extra room between parts, layouts to solve, time per layout, and new
