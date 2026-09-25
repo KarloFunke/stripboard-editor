@@ -35,7 +35,7 @@ export const ALL_SIDES: ConnSides = { top: true, bottom: true, left: true, right
 
 // an unlocked connector: its cells and, for a side-entry package, the edge
 // its wires come in from
-export interface PricedConn { x: number; y: number; w: number; h: number; entry?: Side }
+export interface PricedConn { x: number; y: number; w: number; h: number; entry?: Side; sides?: ConnSides }
 // room a package holds over the board, in hole-centre terms
 export interface PricedShaft { r0: number; r1: number; c0: number; c1: number }
 // the pads of one off-board part: their spread and how many they are
@@ -89,10 +89,11 @@ export function priceBreakdown(t: BoardTerms, wBCut: number, sides: ConnSides = 
   let connEdge = 0;
   for (const c of t.conns) {
     const FAR = 50;
-    const dl = sides.left ? c.x : FAR;
-    const dr = sides.right ? physW - (c.x + c.w) : FAR;
-    const dt = sides.top ? c.y : FAR;
-    const db = sides.bottom ? physH - (c.y + c.h) : FAR;
+    const sd = c.sides ?? sides;
+    const dl = sd.left ? c.x : FAR;
+    const dr = sd.right ? physW - (c.x + c.w) : FAR;
+    const dt = sd.top ? c.y : FAR;
+    const db = sd.bottom ? physH - (c.y + c.h) : FAR;
     const d = Math.min(dl, dr, dt, db);
     // a multi-pin connector should run along its nearest edge, not point
     // into the board, or its external wires come in across the parts. The

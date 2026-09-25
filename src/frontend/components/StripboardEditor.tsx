@@ -6,6 +6,7 @@ import { useStripSegments } from "@/hooks/useStripSegments";
 import type { AutoLayoutRequest, AutoLayoutWorkerMessage } from "./stripboard/autoLayoutWorker";
 import { defaultPermWorkers, LAYOUT_VERSION, type AutoLayoutResult } from "./stripboard/layoutTypes";
 import { SPLIT_MIN_PARTS, SPLIT_VARIANTS } from "./stripboard/autoLayout5Split";
+import { STACK_MIN_PINS, STACK_PIN_CAP } from "./stripboard/autoLayout5Stack";
 import ComponentTray from "./stripboard/ComponentTray";
 import StripboardCanvas from "./stripboard/StripboardCanvas";
 import StripboardFootprintEditor from "./stripboard/StripboardFootprintEditor";
@@ -149,9 +150,16 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
       // A clean run speaks for itself on the board; only problems get a popup.
       if (result.issues.length > 0) showAutoMsg("Auto-layout finished with issues", result.issues);
     };
+    // a big free board is stacked: every worker runs the stacked solve on
+    // its own seed instead of a joint one
+    const placeableIds = new Set(components.filter((c) => !c.boardExcluded).map((c) => c.id));
+    const nPins = netAssignments.filter((a) => placeableIds.has(a.componentId)).length;
+    const useStack = engine === "v5" && !onlyIds && nPins >= STACK_MIN_PINS &&
+      !board.lockedRows && !board.lockedCols && !components.some((c) => c.locked && c.boardPos && !c.boardExcluded);
     const request: AutoLayoutRequest = {
       ...inputs,
       engine,
+      ...(useStack ? { v5Stack: STACK_PIN_CAP } : {}),
       options: onlyIds ? { onlyIds } : undefined,
       tidyGrowth: tidyWires === false ? undefined : Infinity,
       ...(engine === "v5" && v5Moves ? { v5Moves } : {}),

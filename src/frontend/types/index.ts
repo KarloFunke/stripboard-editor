@@ -86,6 +86,9 @@ export interface ComponentDef {
   // Resistors and diodes may stand on one lead when that packs tighter. Not
   // part of a stored def: stamped on at solve time from the project's setting.
   allowStanding?: boolean;
+  // A part whose strips must stay horizontal (a solved cluster used as one
+  // part) may only turn by a half. Never stored: a solve-time hook.
+  halfTurnOnly?: boolean;
   // The value and package of the one component this def was resolved for,
   // which decide the size of its real body. Never stored: set by
   // resolveComponentDef.

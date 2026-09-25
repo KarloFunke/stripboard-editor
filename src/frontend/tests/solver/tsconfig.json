@@ -22,6 +22,8 @@
     "../../components/stripboard/autoLayout3.ts",
     "../../components/stripboard/autoLayout5.ts",
     "../../components/stripboard/autoLayout5Split.ts",
+    "../../components/stripboard/autoLayout5Stack.ts",
+    "../../components/stripboard/autoLayout5Macro.ts",
     "../../components/stripboard/netCompleteness.ts",
     "../../data/defaultComponents.ts"
   ]

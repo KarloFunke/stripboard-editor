@@ -293,6 +293,7 @@ export function finishSkeleton(
   }
   // purely visual: line the cuts up on shared columns (v2 does the same)
   if (final.quality === 0) {
+    final = dropIdleCuts(final, routeBoard, components, componentDefs, netAssignments);
     final = alignCuts(final, routeBoard, components, componentDefs);
     if (options?.drilledCutsOnly && final.boardSize) {
       // alignment may have slid a stuck knife cut next to a drillable hole
@@ -343,6 +344,50 @@ export function finishSkeleton(
 // upgrade. What the editor's rules still find is reported back so the
 // caller can route again.
 type Wire = { from: BoardPosition; to: BoardPosition };
+
+// ── Idle cuts: a cut that isolates nothing is taken out again ──
+// A strip segment with no pin and no wire end is dead copper. A cut beside
+// it separates that copper from a live neighbour for no reason, so it goes.
+// One at a time, with the segments read again after each, so that the two
+// cuts around a dead piece never both go and join the live segments on
+// either side through it.
+export function dropIdleCuts(
+  result: AutoLayoutResult,
+  board: Board,
+  components: Component[],
+  componentDefs: ComponentDef[],
+  netAssignments: NetAssignment[]
+): AutoLayoutResult {
+  if (!result.boardSize) return result;
+  const byPl = new Map(result.placements.map((p) => [p.componentId, p]));
+  const virtual = components.map((c) => {
+    const p = byPl.get(c.id);
+    return p ? { ...c, boardPos: p.boardPos, rotation: p.rotation ?? c.rotation, flexibleEndPos: p.flexibleEndPos } : c;
+  });
+  const ends = new Set<string>();
+  for (const w of result.wires) { ends.add(holeKey(w.from.row, w.from.col)); ends.add(holeKey(w.to.row, w.to.col)); }
+  let cuts = result.cuts;
+  for (;;) {
+    const segBoard: Board = { ...board, rows: result.boardSize.rows, cols: result.boardSize.cols, cuts, wires: [] };
+    const segments = computeStripSegments(segBoard, virtual, componentDefs, netAssignments);
+    const dead = (s: (typeof segments)[number]) => {
+      if (s.netIds.length > 0) return false;
+      for (let c = s.startCol; c <= s.endCol; c++) if (ends.has(holeKey(s.row, c))) return false;
+      return true;
+    };
+    let drop = -1;
+    for (let i = 0; i < cuts.length && drop < 0; i++) {
+      const k = cuts[i];
+      const leftEnd = k.kind === "hole" ? k.col - 1 : k.col;
+      const sL = segments.find((s) => s.row === k.row && s.endCol === leftEnd);
+      const sR = segments.find((s) => s.row === k.row && s.startCol === k.col + 1);
+      if ((sL && dead(sL)) || (sR && dead(sR))) drop = i;
+    }
+    if (drop < 0) break;
+    cuts = cuts.filter((_, i) => i !== drop);
+  }
+  return cuts === result.cuts ? result : { ...result, cuts };
+}
 
 export function finishRepair(
   board: Board,
@@ -675,6 +720,7 @@ export function finishRepair(
   // the passes that move no part and route no wire
   let final: AutoLayoutResult = anyLock ? result : { ...result, ...trimResult(result, routeBoard, virtual, componentDefs, hasLocked) };
   if (final.quality === 0) {
+    final = dropIdleCuts(final, routeBoard, components, componentDefs, netAssignments);
     final = alignCuts(final, routeBoard, components, componentDefs);
     if (options?.drilledCutsOnly && final.boardSize) {
       const byPl = new Map(final.placements.map((p) => [p.componentId, p]));

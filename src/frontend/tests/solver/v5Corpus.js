@@ -8,6 +8,7 @@
 //        [--time <ms>] (wall-time budget per seed; implies no --moves)
 //        [--drilled 1] (drilled cuts only)
 //        [--nostack 1] (no wire stacking)
+//        [--protect 1] (strip groups never dissolved by the decoder, see v5Solve)
 //        [--exact 1] (exact pick among the walk's bests, see v5Solve)
 //        [--dump <dir>] (store every seed's skeleton, see v5Solve)
 //        [--skipdumped 1] (resume: leave out the seeds whose skeleton is already in --dump)
@@ -15,6 +16,10 @@
 //        [--repair 1|2] (with --skeletons: the decoder's board, routed again when not clean (1) or as is (2))
 //        [--hintfrom <results json>] (per project, the median decode speed of that run's seeds becomes
 //                                    --hint, so a --time budget repeats that run's move counts exactly)
+//        [--stack <pins>] (the stacked solve, leaves under this pin cap; give it --time, the budget is the whole stack's)
+//        [--stackfree 1] (with --stack: leaves at their own width)
+//        [--macro <pins>] (the macro solve, clusters under this pin cap; --moves is per leaf)
+//        [--topmoves <n>] (with --macro: the top-level anneal's move count)
 //        [--perproject 1] (one project at a time, its seeds in parallel: the UI's shape, so each
 //                          project's wall time is what a user waits)
 // Results: <dir>/results/v5-<tag>.json
@@ -52,12 +57,20 @@ const cappedMoves = (e) => Math.min(moveCap, Math.max(40000, 16000 * (e.assignme
 const drilled = argVal("drilled") === "1";
 const noStack = argVal("nostack") === "1";
 const exactBest = argVal("exact") === "1";
+const protect = argVal("protect") === "1";
 const perProject = argVal("perproject") === "1";
 const dumpDir = argVal("dump");
 const skipDumped = argVal("skipdumped") === "1" && !!dumpDir;
 const skeletonDir = argVal("skeletons");
 const hintFrom = argVal("hintfrom");
 const repairMode = argVal("repair");
+const stackCap = argVal("stack");
+const stackFree = argVal("stackfree") === "1";
+const macroCap = argVal("macro");
+const topMoves = argVal("topmoves");
+const levels = argVal("levels");
+const upperParts = argVal("upperparts");
+const portCap = argVal("portcap");
 const hintOf = new Map();
 if (hintFrom) {
   for (const r of JSON.parse(fs.readFileSync(hintFrom, "utf8")).results) {
@@ -108,6 +121,14 @@ const runJob = (job) =>
       ...(drilled ? ["--drilled", "1"] : []),
       ...(noStack ? ["--nostack", "1"] : []),
       ...(exactBest ? ["--exact", "1"] : []),
+      ...(protect ? ["--protect", "1"] : []),
+      ...(stackCap ? ["--stack", stackCap] : []),
+      ...(stackCap && stackFree ? ["--stackfree", "1"] : []),
+      ...(macroCap ? ["--macro", macroCap] : []),
+      ...(macroCap && topMoves ? ["--topmoves", topMoves] : []),
+      ...(macroCap && levels ? ["--levels", levels] : []),
+      ...(macroCap && upperParts ? ["--upperparts", upperParts] : []),
+      ...(macroCap && portCap ? ["--portcap", portCap] : []),
     ];
     const child = spawn("node", a, { stdio: ["ignore", "pipe", "inherit"] });
     let out = "";

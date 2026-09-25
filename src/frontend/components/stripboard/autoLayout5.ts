@@ -20,7 +20,7 @@ import { wireMessScore } from "./layout2/tidyScore";
 import { rateResult } from "./autoLayout2";
 import { pinKey } from "./keys";
 import { FinishOptions, Skeleton, finishRepair, finishSkeleton } from "./layout2/finish";
-import { ENTRY_SIDE, PricedConn, PricedGroup, PricedShaft, W_AREA, W_BCUT, W_BCUT_DRILL, W_CUT, W_WIRE, W_WLEN, priceBreakdown } from "./layout2/boardPrice";
+import { ConnSides, ENTRY_SIDE, PricedConn, PricedGroup, PricedShaft, W_AREA, W_BCUT, W_BCUT_DRILL, W_CUT, W_WIRE, W_WLEN, priceBreakdown } from "./layout2/boardPrice";
 
 // ── The v5 "skeleton + exact decoder" layouter (beta) ──
 //
@@ -66,6 +66,9 @@ export interface AutoLayout5Options {
   // Board edges a connector may count as "on the edge" (default all four);
   // a split half excludes its seam side, which ends up in the interior
   connSides?: { top: boolean; bottom: boolean; left: boolean; right: boolean };
+  // the same per part, for a solve where some connectors belong to one edge
+  // and others to another (the stacked solve's ports and real connectors)
+  connSidesOf?: (componentId: string) => ConnSides | undefined;
   // Only sever strips by drilling holes: knife cuts the drill upgrade
   // cannot absorb are priced in the skeleton and the finish
   drilledCutsOnly?: boolean;
@@ -81,6 +84,12 @@ export interface AutoLayout5Options {
   // the final best. The walk is unchanged; the pick among its bests is exact.
   // Off: only the final best is finished.
   exactBest?: boolean;
+  // Experiment: a strip group is not dissolved by the decoder. A proposal
+  // whose orders contradict a tie is refused instead (true: always, a number:
+  // with that probability, else the tie splits as before), so ties change
+  // mostly through the group moves. The first decode of a seed still splits,
+  // since the initial genome asks every net to share one strip.
+  protectTies?: boolean | number;
   // Harness-only landscape instrumentation (never set by the UI): trace is
   // called once per 1% of the anneal with window statistics, probe once per
   // seed after the anneal with the engine closures
@@ -526,6 +535,9 @@ export function computeAutoLayout5(
   // puts every part on the same hole in the same shape is that board, and
   // its measurement is returned as is (about a third of all proposals, the
   // label and gap moves that do not bite)
+  let strictTies = 0;
+  let strictRand: () => number = () => 0;
+  const refuseSplit = () => strictTies > 0 && (strictTies >= 1 || strictRand() < strictTies);
   function decode(g: Genome, ref?: Decoded): Decoded | null {
     const posP = new Int32Array(nP), posN = new Int32Array(nP);
     g.gp.forEach((p, i) => (posP[p] = i));
@@ -704,6 +716,7 @@ export function computeAutoLayout5(
           const [rv, dv] = find(v);
           if (ru === rv) {
             if (du + ou !== dv + ov) {
+              if (refuseSplit()) return null;
               g.grp[n][k] = Math.max(...g.grp[n]) + 1;
               if (labMode === 2) pushF({ stage: 2, msg: nodePart(u) === nodePart(v)
                 ? `Two ${nets[n].name} pins of ${labelOf(nodePart(u))} sit on different rows of the part, yet they are asked to share a strip. That cannot hold, so one of them is split into a strip group of its own; it will get a link wire later instead.`
@@ -754,7 +767,7 @@ export function computeAutoLayout5(
         nR++;
       }
       if (conflict) {
-        if (conflict === "hard") return null;
+        if (conflict === "hard" || refuseSplit()) return null;
         g.grp[conflict.net][conflict.k] = Math.max(...g.grp[conflict.net]) + 1;
         if (labMode === 2) pushF({ stage: 2, msg: `The decoder splits the ${nets[conflict.net].name} pin of ${labelOf(netPins[conflict.net][conflict.k].pi)} into a strip group of its own and starts over. That pin will get a link wire later instead.`, lanes: labLanes(labY0, labArrows("idle", nE), [], [netPins[conflict.net][conflict.k].pi]) });
         continue;
@@ -832,6 +845,7 @@ export function computeAutoLayout5(
         const mm = members.get(cur);
         if (mm && mm.length) {
           const m = mm[mm.length - 1];
+          if (refuseSplit()) return null;
           g.grp[m.net][m.k] = Math.max(...g.grp[m.net]) + 1;
           if (labMode === 2) pushF({ stage: 2, msg: `No rows can satisfy all of them at once. The decoder splits the ${nets[m.net].name} pin of ${labelOf(netPins[m.net][m.k].pi)} into a strip group of its own and starts over.`, lanes: labLanes(labY0, labArrows("idle", nE), [], [netPins[m.net][m.k].pi]) });
           fixed = true;
@@ -1458,7 +1472,8 @@ export function computeAutoLayout5(
       const p = parts[pi];
       if (!p.isConn || p.locked) continue;
       const h = geo[pi].mode === "V" ? yI[vBot.get(pi)!] - yI[pi] + 1 : geo[pi].h;
-      conns.push({ x: xI[pi], y: yI[pi], w: geo[pi].w, h, entry: geo[pi].sh?.entry });
+      const sidesOf = options?.connSidesOf?.(p.comp.id);
+      conns.push({ x: xI[pi], y: yI[pi], w: geo[pi].w, h, entry: geo[pi].sh?.entry, ...(sidesOf ? { sides: sidesOf } : {}) });
     }
     const shafts: PricedShaft[] = [];
     for (const pi of rigidIdx) {
@@ -1551,7 +1566,7 @@ export function computeAutoLayout5(
     if (nP < 2) {
       if (tag) tag.kind = 5;
       if (rigidIdx.length > 0 && !parts[rigidIdx[0]].locked) {
-        gg.rot[0] = (gg.rot[0] + 1 + ri(3)) % 4;
+        gg.rot[0] = (gg.rot[0] + (parts[rigidIdx[0]].def.halfTurnOnly ? 2 : 1 + ri(3))) % 4;
         return gg;
       }
       return null;
@@ -1566,7 +1581,7 @@ export function computeAutoLayout5(
       if (tag) tag.kind = 5;
       if (lean && !rotK.length) return null;
       const k = lean ? rotK[ri(rotK.length)] : ri(rigidIdx.length);
-      gg.rot[k] = (gg.rot[k] + 1 + ri(3)) % 4;
+      gg.rot[k] = (gg.rot[k] + (parts[rigidIdx[k]].def.halfTurnOnly ? 2 : 1 + ri(3))) % 4;
     } else if (r < 0.68 && flexIdx.length > 0) {
       if (tag) tag.kind = 6;
       const k = ri(flexIdx.length);
@@ -1621,6 +1636,8 @@ export function computeAutoLayout5(
     let hardScale = 1;
     const price = (d: Decoded, w: number) => d.eBase + w * (d.slants + d.crossings) + (hardScale - 1) * d.hardPen;
     const priceFin = (d: Decoded) => d.eBase + W_MESS * (d.slants + d.crossings);
+    strictTies = 0;
+    strictRand = mulberry32((seed + 1) * 0x85ebca6b);
     let g = initGenome(rng);
     let cur = decode(g);
     if (options?.debugSeeds && cur) console.log('FP0 gp=' + g.gp.slice(0, 8).join(',') + ' eBase=' + cur.eBase.toFixed(2) + ' HxW=' + cur.H + 'x' + cur.W + ' ySum=' + cur.yI.reduce((a, b) => a + b, 0) + ' xSum=' + cur.xI.reduce((a, b) => a + b, 0) + ' grp=' + g.grp.map((a) => a.join('')).join('|') + ' xI=' + Array.from(cur.xI).join(','));
@@ -1630,6 +1647,7 @@ export function computeAutoLayout5(
       cur = decode(g);
     }
     if (!cur) return null;
+    strictTies = options?.protectTies === true ? 1 : Number(options?.protectTies ?? 0);
     if (options?.debugSeeds) console.log("FP gp=" + g.gp.join(",") + " gn=" + g.gn.join(","));
 
     // fixed start temperature: the landscape is plateaus between penalty

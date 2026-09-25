@@ -4,6 +4,7 @@ import { AutoLayoutProgress, AutoLayoutResult } from "./layoutTypes";
 import { computeAutoLayout2, rateResult } from "./autoLayout2";
 import { computeAutoLayout5 } from "./autoLayout5";
 import { computeAutoLayout5Split } from "./autoLayout5Split";
+import { computeAutoLayout5Stack } from "./autoLayout5Stack";
 import { wireMessScore } from "./layout2/tidyScore";
 import { wireStackDepth } from "./flexGeometry";
 import { priceResult } from "./layout2/boardPrice";
@@ -46,6 +47,9 @@ export interface AutoLayoutRequest {
   allowStanding?: boolean;
   // v5 split: first seed of the halves' portfolio (one per board)
   v5SeedBase?: number;
+  // v5: the stacked solve under this pin cap instead of a joint seed (big
+  // boards); permutationIndex is the seed of its leaf anneals
+  v5Stack?: number;
 }
 
 export type AutoLayoutWorkerMessage =
@@ -62,7 +66,7 @@ const ctx = self as unknown as {
 };
 
 ctx.onmessage = (e) => {
-  const { board, components, componentDefs, nets, netAssignments, engine, options, partSpacing, tidyGrowth, drilledCutsOnly, permutationIndex, v5Moves, v5TimeS, v5MsPerMove, v5Split, noWireStacking, allowStanding, v5SeedBase } = e.data;
+  const { board, components, componentDefs, nets, netAssignments, engine, options, partSpacing, tidyGrowth, drilledCutsOnly, permutationIndex, v5Moves, v5TimeS, v5MsPerMove, v5Split, noWireStacking, allowStanding, v5SeedBase, v5Stack } = e.data;
   const onProgress = (progress: AutoLayoutProgress) => {
     ctx.postMessage({ type: "progress", progress });
   };
@@ -94,8 +98,23 @@ ctx.onmessage = (e) => {
       // every new best of the walk's second half is finished exactly too, and
       // the cheapest board wins: a few seconds a seed, never a worse board
       exactBest: true,
+      // a proposal whose orders contradict a strip-sharing tie is refused
+      // instead of the tie being dissolved: -13 % on big boards, -3 % on the
+      // corpus, faster on small ones (2026-09-25)
+      protectTies: true,
     };
-    const result = v5Split !== undefined
+    const result = v5Stack !== undefined
+      ? computeAutoLayout5Stack(board, components, defs, nets, netAssignments, onProgress, {
+          pinCap: v5Stack,
+          ...(permutationIndex !== undefined ? { seedBase: permutationIndex } : {}),
+          ...(v5Moves !== undefined ? { moves: v5Moves } : {}),
+          ...(v5TimeS !== undefined ? { timeBudgetMs: v5TimeS * 1000 } : {}),
+          ...(drilledCutsOnly ? { drilledCutsOnly: true } : {}),
+          ...(noWireStacking ? { noWireStacking: true } : {}),
+          exactBest: true,
+          protectTies: true,
+        })
+      : v5Split !== undefined
       ? computeAutoLayout5Split(board, components, defs, nets, netAssignments, onProgress, { variant: v5Split, ...(v5SeedBase !== undefined ? { seedBase: v5SeedBase } : {}), ...v5Opts })
       : computeAutoLayout5(board, components, defs, nets, netAssignments, onProgress, {
           ...(permutationIndex !== undefined ? { seedIndex: permutationIndex } : {}),
