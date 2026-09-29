@@ -22,6 +22,16 @@ const flexGeometry = require(path.join(OUT, "components/stripboard/flexGeometry.
 const boardLayout = require(path.join(OUT, "components/stripboard/boardLayout.js"));
 const partGeometry = require(path.join(OUT, "components/stripboard/partGeometry.js"));
 const { DEFAULT_COMPONENTS } = require(path.join(OUT, "data/defaultComponents.js"));
+const { resolveComponentDef } = require(path.join(OUT, "utils/resolveComponentDef.js"));
+// the wire router every completion routes with (v5wasm/route.c); builds
+// before 2026-09-26 route in TypeScript
+try {
+  require(path.join(OUT, "components/stripboard/v5wasm/routeWasm.js")).setRouteWasm(
+    new WebAssembly.Module(require("fs").readFileSync(path.join(__dirname, "../../components/stripboard/v5wasm/v5route.wasm")))
+  );
+} catch (err) {
+  if (err.code !== "MODULE_NOT_FOUND") throw err;
+}
 
 // ── Component definitions used across tests ────────────
 
@@ -238,7 +248,7 @@ function finish(suiteName) {
 module.exports = {
   computeAutoFinish, deriveCompletion, computeAutoPlace, computeAutoLayout, computeAutoLayout2,
   computeStripSegments, computeConnectivity, checkNetCompleteness,
-  flexGeometry, boardLayout, partGeometry, DEFAULT_COMPONENTS,
+  flexGeometry, boardLayout, partGeometry, DEFAULT_COMPONENTS, resolveComponentDef,
   TP_DEF, R_DEF, C_DEF, DIP8_DEF, HDR4_DEF, CONN1_DEF, DEFS,
   testPin, flex, rigid, net, assign, emptyBoard,
   applyLayout, applyFinish, verify, checkGeometry,

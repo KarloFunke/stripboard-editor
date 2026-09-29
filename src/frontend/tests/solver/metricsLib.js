@@ -2,18 +2,16 @@
 const {
   computeStripSegments, computeConnectivity, checkNetCompleteness,
   flexGeometry, boardLayout,
-  partGeometry,
+  partGeometry, resolveComponentDef,
 } = require("./helpers.js");
 
 // ── Metrics ────────────────────────────────────────────
 
+// the editor's own resolution: the override's footprint, and the value and
+// package that size the real body (without them a part is measured at its
+// default package, which miscounted crossings until 2026-09-28)
 function resolveDef(comp, defs) {
-  const def = defs.find((d) => d.id === comp.defId);
-  if (!def) return undefined;
-  // mirror utils/resolveComponentDef: an override replaces the footprint
-  // fields wholesale (no bodyCells in the override = no body)
-  const o = comp.footprintOverride;
-  return o ? { ...def, width: o.width, height: o.height, pins: o.pins, bodyCells: o.bodyCells } : def;
+  return resolveComponentDef(comp, defs);
 }
 
 function metrics(board, components, defs, nets, assignments) {

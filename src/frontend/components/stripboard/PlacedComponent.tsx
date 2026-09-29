@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { Component } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
@@ -10,6 +10,14 @@ import { PartBody, partDrawing } from "./partDrawing";
 
 const PIN_HIT_RADIUS = HOLE_SPACING * 0.35;
 const CLASH_STROKE = "#dc2626";
+// the selection bar's lock (24-unit box), drawn after a locked part's label: an
+// emoji there depends on the system's fonts and did not show everywhere
+const LOCK_SHAPE = (
+  <>
+    <rect x="4" y="11" width="16" height="10" rx="2" />
+    <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+  </>
+);
 
 // Exported flag to suppress canvas click handlers after label drag
 export let suppressNextCanvasClick = false;
@@ -34,6 +42,13 @@ export default function PlacedComponent({ component, isSelected, clashing = fals
   const toolActive = useProjectStore((s) => s.boardTool !== "select");
   const pushSnapshot = useProjectStore((s) => s.pushSnapshot);
   const snapshotPushed = useRef(false);
+  // the label's drawn width, so the lock sits right after it
+  const labelRef = useRef<SVGTSpanElement>(null);
+  const [labelW, setLabelW] = useState(0);
+  const locked = !!component.locked;
+  useLayoutEffect(() => {
+    if (locked && labelRef.current) setLabelW(labelRef.current.getComputedTextLength());
+  }, [locked, component.label]);
 
   const handleLabelMouseDown = (e: React.MouseEvent, defaultX: number, defaultY: number) => {
     // the right button pans the board, from anywhere
@@ -166,8 +181,8 @@ export default function PlacedComponent({ component, isSelected, clashing = fals
         style={{ cursor: "grab" }}
         onMouseDown={(e) => handleLabelMouseDown(e, label.x, label.y)}
       >
-        <tspan x={lx}>
-          {component.locked ? `${component.label} \u{1F512}` : component.label}
+        <tspan ref={labelRef} x={lx}>
+          {component.label}
         </tspan>
         {showValues && allowsValue && component.value && (
           <tspan x={lx} dy="1.15em" fontWeight={400} fillOpacity={0.7}>
@@ -175,6 +190,15 @@ export default function PlacedComponent({ component, isSelected, clashing = fals
           </tspan>
         )}
       </text>
+      {locked && (
+        <g
+          transform={`translate(${lx + labelW / 2 + 1} ${ly - (label.onBody ? 5 : 9)}) scale(${10 / 24})`}
+          fill="none" strokeLinecap="round" strokeLinejoin="round" pointerEvents="none"
+        >
+          {label.onBody && <g stroke={onBody.stroke} strokeWidth={6}>{LOCK_SHAPE}</g>}
+          <g stroke={label.onBody ? onBody.fill : "var(--component-text)"} strokeWidth={2.6}>{LOCK_SHAPE}</g>
+        </g>
+      )}
     </g>
   );
 }

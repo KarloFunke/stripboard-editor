@@ -3,7 +3,6 @@ import {
   NetAssignment,
   Component,
   ComponentDef,
-  Wire,
 } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { getComponentPinPositions } from "./boardLayout";

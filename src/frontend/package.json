@@ -7,6 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "build:wasm": "clang --target=wasm32 -O3 -ffp-contract=off -mbulk-memory -msimd128 -nostdlib -Wall -Wl,--no-entry -o components/stripboard/v5wasm/v5decode.wasm components/stripboard/v5wasm/decode.c && clang --target=wasm32 -O3 -ffp-contract=off -mbulk-memory -nostdlib -Wall -Wl,--no-entry -o components/stripboard/v5wasm/v5route.wasm components/stripboard/v5wasm/route.c",
+    "build:native": "mkdir -p tests/solver/native/build && clang -O3 -fPIC -shared -o tests/solver/native/build/libv5decode.so components/stripboard/v5wasm/decode.c -lm && clang -O3 -fPIC -shared -o tests/solver/native/build/libv5route.so components/stripboard/v5wasm/route.c -lm && clang -O2 -fPIC -shared -I/usr/include/node -o tests/solver/native/build/v5native.node tests/solver/native/addon.c -ldl",
     "test:solver": "tsc -p tests/solver/tsconfig.json && node tests/solver/run.js",
     "test:schematic": "tsc -p tests/schematic/tsconfig.json && node tests/schematic/run.js",
     "test:board": "tsc -p tests/board/tsconfig.json && node tests/board/run.js",

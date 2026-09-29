@@ -9,6 +9,8 @@
 //        [--drilled 1] (drilled cuts only)
 //        [--nostack 1] (no wire stacking)
 //        [--protect 1] (strip groups never dissolved by the decoder, see v5Solve)
+//        [--wasm <file>] [--routewasm <file>] (other builds of the WebAssembly modules, see v5Solve)
+//        [--effort <x>] (moves = pin-count formula times x, see v5Solve)
 //        [--exact 1] (exact pick among the walk's bests, see v5Solve)
 //        [--dump <dir>] (store every seed's skeleton, see v5Solve)
 //        [--skipdumped 1] (resume: leave out the seeds whose skeleton is already in --dump)
@@ -18,11 +20,20 @@
 //                                    --hint, so a --time budget repeats that run's move counts exactly)
 //        [--stack <pins>] (the stacked solve, leaves under this pin cap; give it --time, the budget is the whole stack's)
 //        [--stackfree 1] (with --stack: leaves at their own width)
+//        [--stackmin <pins>] (with --stack: stack only from this many placeable pins, as the editor does)
+//        [--mix <json>] (another move mix, see v5Solve)
+//        [--native 1] (decoder and router as native code, see v5Solve)
+//        [--savedir <dir>] (every seed's solved board as <dir>/<id>_s<seed>.json, see v5Solve --save)
 //        [--macro <pins>] (the macro solve, clusters under this pin cap; --moves is per leaf)
 //        [--topmoves <n>] (with --macro: the top-level anneal's move count)
 //        [--perproject 1] (one project at a time, its seeds in parallel: the UI's shape, so each
 //                          project's wall time is what a user waits)
-// Results: <dir>/results/v5-<tag>.json
+//        [--stop <key>] (an editor effort stop, 0.5 = Normal: every project's seeds and effort from
+//                        effortPlan, and the stacked solve from STACK_MIN_PINS placeable pins, as the
+//                        editor runs it; replaces --seeds, --effort, --stack and --stackmin)
+// Results: <dir>/results/v5-<tag>.json, and as the run goes one line per seed and per
+// finished project in <dir>/results/v5-<tag>.jsonl; --resume 1 keeps that file's seeds
+// (a project cut off halfway runs again whole, so its wall time stays the UI's)
 const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
@@ -43,7 +54,6 @@ const movesBase = Number(argVal("moves") ?? 60000);
 const workers = Number(argVal("workers") ?? 14);
 const outDir = argVal("out");
 const moveLogDir = argVal("movelog");
-const cutAware = argVal("cutaware") === "1";
 const sched = argVal("sched");
 const movesMul = Number(argVal("movesmul") ?? 1);
 const seedsMax = Number(argVal("seedsmax") ?? 99);
@@ -58,6 +68,9 @@ const drilled = argVal("drilled") === "1";
 const noStack = argVal("nostack") === "1";
 const exactBest = argVal("exact") === "1";
 const protect = argVal("protect") === "1";
+const wasm = argVal("wasm");
+const routeWasm = argVal("routewasm");
+const effort = argVal("effort");
 const perProject = argVal("perproject") === "1";
 const dumpDir = argVal("dump");
 const skipDumped = argVal("skipdumped") === "1" && !!dumpDir;
@@ -66,6 +79,12 @@ const hintFrom = argVal("hintfrom");
 const repairMode = argVal("repair");
 const stackCap = argVal("stack");
 const stackFree = argVal("stackfree") === "1";
+const stackMin = argVal("stackmin");
+const saveDir = argVal("savedir");
+const moveMix = argVal("mix");
+const native = argVal("native") === "1";
+const stop = argVal("stop");
+if (saveDir) fs.mkdirSync(saveDir, { recursive: true });
 const macroCap = argVal("macro");
 const topMoves = argVal("topmoves");
 const levels = argVal("levels");
@@ -86,17 +105,63 @@ const entries = index.filter(
 );
 
 const projSeeds = (parts) => Math.min(seedsMax, Math.max(seedsBase, parts >= 40 ? 12 : parts >= 25 ? 10 : 0));
+// --stop: what the editor runs for each project, from the compiled layouter
+const planOf = (() => {
+  if (stop === undefined) return () => null;
+  const OUT = path.resolve(outDir ?? path.join(__dirname, "out"));
+  const Module = require("module");
+  const origResolve = Module._resolveFilename;
+  Module._resolveFilename = function (request, ...rest) {
+    if (request.startsWith("@/")) request = path.join(OUT, request.slice(2));
+    return origResolve.call(this, request, ...rest);
+  };
+  const { effortPlan } = require(path.join(OUT, "components/stripboard/layoutTypes.js"));
+  const { STACK_MIN_PINS, STACK_PIN_CAP } = require(path.join(OUT, "components/stripboard/autoLayout5Stack.js"));
+  const plans = new Map();
+  return (e) => {
+    if (!plans.has(e.id)) {
+      const data = JSON.parse(fs.readFileSync(path.join(dataDir, "projects", `${e.id}.json`), "utf8"));
+      const placeable = new Set(data.components.filter((c) => !c.boardExcluded).map((c) => c.id));
+      const pins = data.netAssignments.filter((a) => placeable.has(a.componentId)).length;
+      const stacked = pins >= STACK_MIN_PINS;
+      plans.set(e.id, { ...effortPlan(Number(stop), pins, stacked), stack: stacked ? STACK_PIN_CAP : undefined });
+    }
+    return plans.get(e.id);
+  };
+})();
+const seedsOf = (e) => planOf(e)?.seeds ?? projSeeds(e.parts);
 const projMoves = (parts) => Math.round(movesMul * Math.min(160000, Math.max(parts <= 8 ? Math.min(movesBase, 40000) : movesBase, 3200 * parts)));
+const linesFile = path.join(dataDir, "results", `v5-${name}.jsonl`);
+const perProjectRes = new Map();
+const wallOf = new Map();
+if (argVal("resume") === "1" && fs.existsSync(linesFile)) {
+  const byId = new Map(entries.map((e) => [e.id, e]));
+  const kept = [];
+  for (const l of fs.readFileSync(linesFile, "utf8").split("\n")) {
+    if (!l) continue;
+    const r = JSON.parse(l);
+    if (r.wallMs !== undefined) wallOf.set(r.id, r.wallMs);
+    else if (byId.has(r.id)) kept.push(r);
+  }
+  for (const r of kept) {
+    if (perProject && !wallOf.has(r.id)) continue;
+    if (!perProjectRes.has(r.id)) perProjectRes.set(r.id, { entry: byId.get(r.id), seeds: [] });
+    perProjectRes.get(r.id).seeds.push(r);
+  }
+  fs.writeFileSync(linesFile, [...perProjectRes.values()].flatMap(({ seeds }) => seeds).concat([...wallOf].filter(([id]) => perProjectRes.has(id)).map(([id, wallMs]) => ({ id, wallMs }))).map((r) => JSON.stringify(r) + "\n").join(""));
+} else {
+  fs.mkdirSync(path.dirname(linesFile), { recursive: true });
+  fs.writeFileSync(linesFile, "");
+}
+const doneSeed = (id, seed) => perProjectRes.get(id)?.seeds.some((r) => r.seed === seed);
 const jobQueue = [];
-for (const e of entries) for (let s = 0; s < projSeeds(e.parts); s++) if ((!skeletonDir || fs.existsSync(skeletonOf(e.id, s))) && !(skipDumped && fs.existsSync(path.join(dumpDir, `${e.id}_s${s}.json`)))) jobQueue.push({ entry: e, seed: s });
+for (const e of entries) for (let s = 0; s < seedsOf(e); s++) if ((!skeletonDir || fs.existsSync(skeletonOf(e.id, s))) && !(skipDumped && fs.existsSync(path.join(dumpDir, `${e.id}_s${s}.json`))) && !doneSeed(e.id, s)) jobQueue.push({ entry: e, seed: s });
 jobQueue.sort((a, b) => b.entry.parts - a.entry.parts || a.entry.id - b.entry.id || a.seed - b.seed);
 
 const scoreOf = (r) =>
   (r.conflicts * 100 + r.incomplete * 10 + r.geo + (r.quality > 0 ? 1 : 0)) * 1e9 +
   (r.offAxis + r.crossings + (r.stacked ?? 0)) * 1e4 + (r.price ?? r.rate);
 
-const perProjectRes = new Map();
-const wallOf = new Map();
 let running = 0;
 let done = 0;
 const t0 = Date.now();
@@ -111,7 +176,6 @@ const runJob = (job) =>
         : ["--moves", String(projMoves(job.entry.parts))]),
       ...(outDir ? ["--out", outDir] : []),
       ...(moveLogDir ? ["--movelog", moveLogDir] : []),
-      ...(cutAware ? ["--cutaware", "1"] : []),
       ...(sched ? ["--sched", sched] : []),
       ...(timeMs && !skeletonDir ? ["--time", timeMs] : []),
       ...(hintOf.has(job.entry.id) && !skeletonDir ? ["--hint", String(hintOf.get(job.entry.id))] : []),
@@ -122,8 +186,15 @@ const runJob = (job) =>
       ...(noStack ? ["--nostack", "1"] : []),
       ...(exactBest ? ["--exact", "1"] : []),
       ...(protect ? ["--protect", "1"] : []),
-      ...(stackCap ? ["--stack", stackCap] : []),
+      ...(wasm ? ["--wasm", wasm] : []),
+      ...(routeWasm ? ["--routewasm", routeWasm] : []),
+      ...(planOf(job.entry) ? ["--effort", String(planOf(job.entry).effort)] : effort ? ["--effort", effort] : []),
+      ...(planOf(job.entry) ? (planOf(job.entry).stack ? ["--stack", String(planOf(job.entry).stack)] : []) : stackCap ? ["--stack", stackCap] : []),
       ...(stackCap && stackFree ? ["--stackfree", "1"] : []),
+      ...(!planOf(job.entry) && stackCap && stackMin ? ["--stackmin", stackMin] : []),
+      ...(moveMix ? ["--mix", moveMix] : []),
+      ...(native ? ["--native", "1"] : []),
+      ...(saveDir ? ["--save", path.join(saveDir, `${job.entry.id}_s${job.seed}.json`)] : []),
       ...(macroCap ? ["--macro", macroCap] : []),
       ...(macroCap && topMoves ? ["--topmoves", topMoves] : []),
       ...(macroCap && levels ? ["--levels", levels] : []),
@@ -153,6 +224,7 @@ const pump = async () => {
     done++;
     if (!perProjectRes.has(job.entry.id)) perProjectRes.set(job.entry.id, { entry: job.entry, seeds: [] });
     perProjectRes.get(job.entry.id).seeds.push(r);
+    fs.appendFileSync(linesFile, JSON.stringify(r) + "\n");
     if (r.error) console.log(`id ${job.entry.id} seed ${job.seed}: ERROR ${r.error}`);
     else console.log(
       `[${done}] id ${job.entry.id} (${job.entry.parts}p) seed ${job.seed}: ${r.rows}x${r.cols}=${r.area} q${r.quality}` +
@@ -171,6 +243,7 @@ const runAll = async () => {
     const t = Date.now();
     await runQueue();
     wallOf.set(id, Date.now() - t);
+    fs.appendFileSync(linesFile, JSON.stringify({ id, wallMs: wallOf.get(id) }) + "\n");
   }
 };
 runAll().then(() => {

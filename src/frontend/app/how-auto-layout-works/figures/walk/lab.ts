@@ -3,61 +3,65 @@
 // loop on the example circuit, a 555 blinker, so every figure below shows
 // the actual v5 code at work rather than a model of it.
 
-import { computeAutoLayout5, type LabApi, type LabGenome } from "@/components/stripboard/autoLayout5";
+import { useEffect, useState } from "react";
+import { computeAutoLayout5, type LabApi, type LabBoard, type LabFrame, type LabGenome } from "@/components/stripboard/autoLayout5";
+import { loadDecoderWasm } from "@/components/stripboard/v5wasm/loadWasm";
 import { DEFAULT_COMPONENTS } from "@/data/defaultComponents";
 import type { Board, Component, Net, NetAssignment } from "@/types";
 import proj from "./example555.json";
+import walkGenome from "./walkGenome.json";
+import moveSteps from "./moveSteps.json";
+import recorded from "./recorded.json";
 
 const comps = (proj.components as unknown as Component[]).map((c) => ({ ...c, boardPos: null, rotation: 0 as const }));
 const board = { ...(proj.board as unknown as Board), cuts: [], wires: [], lockedRows: false, lockedCols: false } as Board;
+const labOf = (wasm?: WebAssembly.Module): LabApi => {
+  let api: LabApi | null = null;
+  computeAutoLayout5(board, comps, DEFAULT_COMPONENTS, proj.nets as unknown as Net[], proj.netAssignments as unknown as NetAssignment[], undefined, { lab: (a) => { api = a; }, ...(wasm ? { wasm } : {}) });
+  if (!api) throw new Error("lab hook not called");
+  return api;
+};
 
-export const LAB: LabApi = (() => {
-  let api: LabApi | null = null;
-  computeAutoLayout5(board, comps, DEFAULT_COMPONENTS, proj.nets as unknown as Net[], proj.netAssignments as unknown as NetAssignment[], undefined, { lab: (a) => { api = a; } });
-  if (!api) throw new Error("lab hook not called");
-  return api;
-})();
-// Section 9 shows the finish under the assumptions it describes: cuts drilled
-// out rather than knifed between two holes, and no wire lying on another.
-// Those change what the decoder prefers, so they get a lab of their own.
-export const LAB_FINISH: LabApi = (() => {
-  let api: LabApi | null = null;
-  computeAutoLayout5(board, comps, DEFAULT_COMPONENTS, proj.nets as unknown as Net[], proj.netAssignments as unknown as NetAssignment[], undefined,
-    { lab: (a) => { api = a; }, drilledCutsOnly: true, noWireStacking: true });
-  if (!api) throw new Error("lab hook not called");
-  return api;
-})();
+// The parts, nets and genome helpers, ready at once. Decoding, moves and
+// runs need the decoder in WebAssembly: those come from useLiveLab.
+export const LAB: LabApi = labOf();
+
+let live: Promise<LabApi> | undefined;
+/** The lab with the decoder loaded, or null while it loads. */
+export function useLiveLab(): LabApi | null {
+  const [lab, setLab] = useState<LabApi | null>(null);
+  useEffect(() => {
+    let on = true;
+    (live ??= loadDecoderWasm().then(labOf)).then((l) => { if (on) setLab(l); });
+    return () => { on = false; };
+  }, []);
+  return lab;
+}
 
 export const PARTS = LAB.parts;
 export const NETS = LAB.nets;
 
 // the description every decode figure starts from: found by search so that
 // one strip group cannot hold and one net needs a bus-row relay
-export const GENOME: LabGenome = {
-  gp: [1, 4, 5, 0, 2, 3],
-  gn: [4, 0, 1, 5, 2, 3],
-  rot: [0, 0, 0],
-  hv: [0, 0, 0],
-  br: [1, 0, 0],
-  grp: [[118, 120, 119], [95, 94, 97, 94], [132, 133, 134, 127], [89, 89, 89], [75, 76], [72, 73]],
-  gap: [2, 0, 1, 2, 0, 0],
-  xgap: [0, 1, 0, 2, 0, 1],
+export const GENOME = walkGenome as LabGenome;
+
+// Section 5: one proposal of each move kind on GENOME, in the order the
+// section lists the moves. Each is the first proposal of its kind the move
+// generator made (rng state 42) that decodes and changes the score; recorded
+// 2026-09-29, when exactly one of them (the strip group merge) scored better.
+// Recheck that when the decoder or its scoring changes.
+export const MOVE_STEPS = moveSteps as LabGenome[];
+
+// What the engine did with the example, recorded by
+// tests/solver/recordExplainer.js (re-run it whenever the decoder, its
+// scoring or the finish change): the decode of GENOME frame by frame, and
+// both finishes, with drilled cuts and no stacked wires, of the description
+// the section 8 run (seed 7, 25,000 steps) settles on.
+export const DECODE_WALK = recorded.decodeWalk as unknown as LabFrame[];
+export const FINISH_WALK = recorded.finishWalk as unknown as {
+  start: LabBoard;
+  router: { frames: LabFrame[]; price: number };
+  repair: { frames: LabFrame[]; price: number; ok: boolean } | null;
 };
 
-// What the run of section 8 settles on: seed 7, 25,000 steps, default lab.
-// Section 9 starts from it rather than annealing the same thing again. Every
-// run there is deterministic, so this is a recording, not a guess; re-record
-// it (LAB.run(7, 25000, ...) and take bestG) if the engine's scoring changes.
-export const GENOME_RUN: LabGenome = {
-  gp: [5, 1, 4, 3, 0, 2],
-  gn: [5, 4, 1, 3, 0, 2],
-  rot: [0, 0, 2],
-  hv: [0, 0, 0],
-  br: [1, 0, 0],
-  grp: [[198, 196, 196], [243, 241, 245, 247], [219, 217, 219, 216], [191, 191, 191], [160, 160], [196, 196]],
-  gap: [0, 1, 0, 1, 1, 0],
-  xgap: [0, 0, 0, 0, 0, 0],
-};
-
-export const pinLabel = (pi: number, name: string) => `${PARTS[pi].id}.${name}`;
 export const netColor = (n: number) => (n >= 0 && n < NETS.length ? NETS[n].color : "#D4A853");

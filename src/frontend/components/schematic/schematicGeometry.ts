@@ -22,11 +22,6 @@ export function getWirePoints(wire: SchematicWire): Pt[] {
   return [wire.start, wire.end];
 }
 
-/** The wire as a segment list, for code that walks segments */
-export function wireSegments(wire: SchematicWire): [Pt, Pt][] {
-  return [[wire.start, wire.end]];
-}
-
 /** p lies on the axis-aligned segment ab, strictly between its ends */
 export function onSegmentInterior(p: Pt, a: Pt, b: Pt): boolean {
   const px = Math.round(p.x), py = Math.round(p.y);

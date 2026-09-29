@@ -97,7 +97,7 @@ export default function StripboardPreview({ data, maxWidth = 280, maxHeight = 16
 
   const {
     placed, componentDefs, nets, netAssignments,
-    minRow, maxRow, minCol, maxCol, rows, cols,
+    minRow, minCol, rows, cols,
     svgW, svgH, hx, hy, visibleWires, visibleCuts, laneOffsets,
   } = preview;
 

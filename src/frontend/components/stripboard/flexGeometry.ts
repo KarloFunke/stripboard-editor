@@ -232,11 +232,10 @@ export const WIRE_STRICT_MESS = 1000;
 // the channel harder to solder and to read. Pricing escalates with the
 // stack depth the new wire lands in: the second wire in a channel is still
 // cheaper than a slant of a few holes, the third only wins over a real
-// detour, and a fourth is out — no channel may carry more than
-// WIRE_STACK_MAX wires. The hard cap softens to WIRE_STACK_RESCUE per extra
+// detour, and a fourth is out — no channel may carry more than three
+// wires. The hard cap softens to WIRE_STACK_RESCUE per extra
 // lane only when a net cannot complete any other way (completeness beats
 // the cap, matching the shared-joint rescue).
-export const WIRE_STACK_MAX = 3;
 export const WIRE_STACK_PRICES = [0, 6, 15];
 export const WIRE_STACK_RESCUE = 1000;
 
@@ -270,88 +269,6 @@ export function wireStackDepth(
   let max = 0;
   for (const e of events) {
     depth += e.d;
-    if (depth > max) max = depth;
-  }
-  return max;
-}
-
-/**
- * The routed wires of one pass, kept by line so a candidate's stack depth
- * only looks at the wires that can lie on its line: a vertical wire at
- * the wires of its column, a horizontal one at those of its row, a
- * slanted one at the slanted wires. Same answer as wireStackDepth over
- * every wire, since collinear overlap needs the same line.
- */
-export class WireStackIndex {
-  private byCol = new Map<number, { from: Pt; to: Pt }[]>();
-  private byRow = new Map<number, { from: Pt; to: Pt }[]>();
-  private slanted: { from: Pt; to: Pt }[] = [];
-
-  constructor(wires: { from: Pt; to: Pt }[]) {
-    for (const w of wires) this.add(w);
-  }
-
-  add(w: { from: Pt; to: Pt }): void {
-    if (w.from.col === w.to.col) {
-      const list = this.byCol.get(w.from.col);
-      if (list) list.push(w); else this.byCol.set(w.from.col, [w]);
-    } else if (w.from.row === w.to.row) {
-      const list = this.byRow.get(w.from.row);
-      if (list) list.push(w); else this.byRow.set(w.from.row, [w]);
-    } else this.slanted.push(w);
-  }
-
-  depth(from: Pt, to: Pt): number {
-    if (from.col === to.col) {
-      if (from.row === to.row) return 0;
-      const wires = this.byCol.get(from.col);
-      return wires ? axisStackDepth(from.row, to.row, wires, true) : 0;
-    }
-    if (from.row === to.row) {
-      const wires = this.byRow.get(from.row);
-      return wires ? axisStackDepth(from.col, to.col, wires, false) : 0;
-    }
-    return this.slanted.length > 0 ? wireStackDepth(from, to, this.slanted) : 0;
-  }
-}
-
-// Scratch for axisStackDepth: the overlap intervals along the candidate
-let stackLo = new Float64Array(64);
-let stackHi = new Float64Array(64);
-
-/**
- * wireStackDepth for a candidate on a hole column (row) against the wires
- * of that same column (row): the same intervals and the same sweep answer,
- * without the sort. Closed intervals, so the sweep's depth right after a
- * start point is the number of intervals holding that point, and the
- * maximum lies at a start point.
- */
-function axisStackDepth(a: number, b: number, wires: { from: Pt; to: Pt }[], vertical: boolean): number {
-  const aMin = Math.min(a, b);
-  const aMax = Math.max(a, b);
-  let n = 0;
-  for (const w of wires) {
-    const p = vertical ? w.from.row : w.from.col;
-    const q = vertical ? w.to.row : w.to.col;
-    const lo = Math.max(aMin, Math.min(p, q));
-    const hi = Math.min(aMax, Math.max(p, q));
-    if (hi - lo <= 1e-9) continue;
-    if (n === stackLo.length) {
-      const lo2 = new Float64Array(n * 2), hi2 = new Float64Array(n * 2);
-      lo2.set(stackLo);
-      hi2.set(stackHi);
-      stackLo = lo2;
-      stackHi = hi2;
-    }
-    stackLo[n] = lo;
-    stackHi[n] = hi;
-    n++;
-  }
-  let max = 0;
-  for (let i = 0; i < n; i++) {
-    const x = stackLo[i];
-    let depth = 0;
-    for (let j = 0; j < n; j++) if (stackLo[j] <= x && x <= stackHi[j]) depth++;
     if (depth > max) max = depth;
   }
   return max;
@@ -426,91 +343,18 @@ export function wireExtraLength(from: Pt, to: Pt, obstacles: WireObstacles): num
 }
 
 /**
- * wireExtraLength with the obstacle scan bounded to the wire's own column
- * span, plus a pair memo. Candidate scoring calls it millions of times per
- * solve and a linear scan of every obstacle per call dominates large
- * solves; almost all evaluated pairs are short. Endpoints must be integer
- * board holes (the memo key packs them; boards stay far below 4096).
+ * The obstacles the wire router (v5wasm/route.c) routes around, and whether
+ * it routes strictly: then any slant or crossing costs WIRE_STRICT_MESS.
+ * extraLength is the router's price of one wire beyond its length.
  */
 export class WireObstacleIndex {
-  private minRow: number[] = [];
-  private maxRow: number[] = [];
-  private rects: (FootprintRect | null)[] = [];
-  private bodies: (WireObstacles["bodies"][number] | null)[] = [];
-  private buckets: number[][] = [];
-  private base = 0;
-  private stamp: Int32Array;
-  private gen = 0;
-  private memo = new Map<number, number>();
-
-  constructor(obstacles: WireObstacles, readonly strict = false) {
-    let lo = Infinity;
-    let hi = -Infinity;
-    const spans: { minC: number; maxC: number }[] = [];
-    for (const rect of obstacles.rects) {
-      this.minRow.push(rect.minRow);
-      this.maxRow.push(rect.maxRow);
-      this.rects.push(rect);
-      this.bodies.push(null);
-      spans.push({ minC: rect.minCol, maxC: rect.maxCol });
-    }
-    for (const body of obstacles.bodies) {
-      // the real body reaches its radius past the line between the leads
-      const pad = body.core?.r ?? 0;
-      this.minRow.push(Math.min(body.p1.row, body.p2.row) - pad);
-      this.maxRow.push(Math.max(body.p1.row, body.p2.row) + pad);
-      this.rects.push(null);
-      this.bodies.push(body);
-      spans.push({ minC: Math.min(body.p1.col, body.p2.col) - pad, maxC: Math.max(body.p1.col, body.p2.col) + pad });
-    }
-    for (const s of spans) {
-      if (s.minC < lo) lo = Math.floor(s.minC);
-      if (s.maxC > hi) hi = Math.ceil(s.maxC);
-    }
-    this.base = lo;
-    if (spans.length > 0) {
-      this.buckets = Array.from({ length: hi - lo + 1 }, () => []);
-      spans.forEach((s, oi) => {
-        for (let c = Math.floor(s.minC); c <= Math.ceil(s.maxC); c++) this.buckets[c - lo].push(oi);
-      });
-    }
-    this.stamp = new Int32Array(spans.length);
-  }
+  constructor(readonly obstacles: WireObstacles, readonly strict = false) {}
 
   extraLength(from: Pt, to: Pt): number {
-    const a = from.row * 4096 + from.col;
-    const b = to.row * 4096 + to.col;
-    const key = a < b ? a * 16777216 + b : b * 16777216 + a;
-    const hit = this.memo.get(key);
-    if (hit !== undefined) return hit;
-    const dr = Math.abs(to.row - from.row);
-    const dc = Math.abs(to.col - from.col);
-    let extra = 0;
-    if (dc > 1e-9) {
-      extra += this.strict ? WIRE_STRICT_MESS : WIRE_OFFAXIS_RATE * Math.max(0, Math.hypot(dr, dc) - WIRE_OFFAXIS_FREE);
-    }
-    const crossExtra = this.strict ? WIRE_STRICT_MESS : WIRE_CROSS_EXTRA;
-    const minR = Math.min(from.row, to.row);
-    const maxR = Math.max(from.row, to.row);
-    const cLo = Math.max(Math.min(from.col, to.col) - this.base, 0);
-    const cHi = Math.min(Math.max(from.col, to.col) - this.base, this.buckets.length - 1);
-    // A slanted wire's span touches several buckets; the stamp keeps each
-    // obstacle counted once, matching wireExtraLength's flat scan exactly.
-    const gen = ++this.gen;
-    for (let c = cLo; c <= cHi; c++) {
-      for (const oi of this.buckets[c]) {
-        if (this.stamp[oi] === gen) continue;
-        this.stamp[oi] = gen;
-        if (this.maxRow[oi] < minR || this.minRow[oi] > maxR) continue;
-        const rect = this.rects[oi];
-        if (rect) {
-          if (segmentIntersectsRect(from, to, rect)) extra += crossExtra;
-        } else {
-          if (wireCrossesBody(from, to, this.bodies[oi]!)) extra += crossExtra;
-        }
-      }
-    }
-    this.memo.set(key, extra);
+    if (!this.strict) return wireExtraLength(from, to, this.obstacles);
+    let extra = from.col !== to.col ? WIRE_STRICT_MESS : 0;
+    for (const rect of this.obstacles.rects) if (segmentIntersectsRect(from, to, rect)) extra += WIRE_STRICT_MESS;
+    for (const body of this.obstacles.bodies) if (wireCrossesBody(from, to, body)) extra += WIRE_STRICT_MESS;
     return extra;
   }
 }

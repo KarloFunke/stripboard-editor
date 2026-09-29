@@ -1,4 +1,4 @@
-import { ComponentDef, Component, Cut, BodyCell } from "@/types";
+import { ComponentDef, Component, Cut } from "@/types";
 
 // Grid constants
 export const HOLE_SPACING = 30;
@@ -30,26 +30,6 @@ export function nearestHole(
   const col = Math.round((svgX - BOARD_PADDING) / HOLE_SPACING);
   const row = Math.round((svgY - BOARD_PADDING) / HOLE_SPACING);
   if (row < 0 || row >= rows || col < 0 || col >= cols) return null;
-  return { row, col };
-}
-
-/** Snap to nearest cut position (midpoint between two adjacent holes on same row) */
-export function nearestCutPosition(
-  svgX: number,
-  svgY: number,
-  rows: number,
-  cols: number
-): Cut | null {
-  const row = Math.round((svgY - BOARD_PADDING) / HOLE_SPACING);
-  const colFloat = (svgX - BOARD_PADDING) / HOLE_SPACING - 0.5;
-  const col = Math.round(colFloat);
-  if (row < 0 || row >= rows || col < 0 || col >= cols - 1) return null;
-
-  const midX = BOARD_PADDING + (col + 0.5) * HOLE_SPACING;
-  const holeY = BOARD_PADDING + row * HOLE_SPACING;
-  const dist = Math.sqrt((svgX - midX) ** 2 + (svgY - holeY) ** 2);
-  if (dist > HOLE_SPACING * 0.25) return null;
-
   return { row, col };
 }
 

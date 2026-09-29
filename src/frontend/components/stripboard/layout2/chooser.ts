@@ -1,4 +1,4 @@
-import { Board, BoardPosition, Component, ComponentDef, Net, NetAssignment } from "@/types";
+import { Board, Component, ComponentDef, Net, NetAssignment } from "@/types";
 import { CompletionPlan, deriveCompletion } from "../autoFinish";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { getFlexiblePinPositions } from "../boardLayout";

@@ -23,7 +23,7 @@ import { bodyCuts, missingBodyCuts, sameCut } from "@/components/stripboard/body
 import { collectBoardPins } from "@/components/stripboard/boardPins";
 import { computeStripSegments } from "@/components/stripboard/stripSegments";
 import { computeConnectivity } from "@/components/stripboard/connectivity";
-import { diffNets, netDiffIsEmpty, type NetDiff } from "@/components/schematic/netInference";
+import { diffNets, type NetDiff } from "@/components/schematic/netInference";
 import { recalculateNets } from "@/components/schematic/netInference";
 import {
   anchorPoints,
@@ -35,9 +35,8 @@ import {
   normalizeWires,
   transformSelection,
 } from "@/components/schematic/schematicGeometry";
-import { pointKey, snapToGrid } from "@/utils/schematicConstants";
+import { snapToGrid } from "@/utils/schematicConstants";
 import { footprintChanged, newCustomId, registerPartSymbol, withPartId } from "@/data/customParts";
-import { computeAutoFinish, AutoFinishResult } from "@/components/stripboard/autoFinish";
 import { footprintFor } from "@/components/stripboard/packageBodies";
 import { AutoLayoutResult, LAYOUT_VERSION } from "@/components/stripboard/layoutTypes";
 
@@ -125,10 +124,6 @@ interface ProjectActions {
   // Component definitions
   addComponentDef: (def: ComponentDef) => void;
   removeComponentDef: (defId: string) => void;
-  updateComponentDef: (
-    defId: string,
-    updates: Partial<Pick<ComponentDef, "width" | "height" | "pins" | "bodyCells">>
-  ) => void;
   // A new version of one custom part in this project
   replaceComponentDef: (def: ComponentDef) => void;
   // Places a library part, copying it into the project unless a linked copy is already here
@@ -138,18 +133,6 @@ interface ProjectActions {
 
   // Components
   addComponent: (defId: string, schematicPos: { x: number; y: number }) => void;
-  // Add a fully specified instance (used by copy/paste); returns the new id.
-  addComponentInstance: (init: {
-    defId: string;
-    value?: string;
-    schematicRotation?: 0 | 90 | 180 | 270;
-    schematicMirrored?: boolean;
-    labelOffset?: { x: number; y: number };
-    pinLabelOffsets?: Record<string, { x: number; y: number }>;
-    footprintOverride?: FootprintOverride;
-    package?: string;
-    schematicPos: { x: number; y: number };
-  }) => string;
   removeComponent: (id: string) => void;
   updateLabelOffset: (id: string, offset: { x: number; y: number }) => void;
   updatePinLabelOffset: (id: string, pinId: string, offset: { x: number; y: number }) => void;
@@ -214,7 +197,6 @@ interface ProjectActions {
   // every contact at once (one undo step); the preview says what changes.
   previewWiringSwitch: () => NetDiff;
   switchWiringToTouch: () => void;
-  removeNet: (id: string) => void;
 
   // Board
   placeCut: (cut: Cut) => void;
@@ -224,18 +206,12 @@ interface ProjectActions {
   setBoardDimLock: (dim: "rows" | "cols", locked: boolean) => void;
   // Free board lines kept between all parts in auto-layout (0 or 1)
   setPartSpacing: (lines: number) => void;
-  // Toggle the tidy-wires second pass (on by default)
-  setTidyWires: (value: boolean) => void;
   // Toggle drilled-cuts-only mode (off by default)
   setDrilledCutsOnly: (value: boolean) => void;
-  setPermBoards: (n: number) => void;
   setPermWorkers: (n: number) => void;
-  // v5 beta anneal budget per seed (0 = back to the size-scaled default)
-  setV5Moves: (n: number) => void;
-  setV5TimeS: (n: number) => void;
-  setV5MsPerMove: (n: number) => void;
+  setV5Effort: (n: number) => void;
+  setV5RunS: (sAtEffort1: number) => void;
   setV5RandomSeeds: (value: boolean) => void;
-  setLayoutEngine: (engine: "v2" | "v5") => void;
   setNoWireStacking: (value: boolean) => void;
   setAllowStanding: (value: boolean) => void;
   // Insert a blank row/column at `at` (0-based): everything at or beyond it
@@ -247,8 +223,6 @@ interface ProjectActions {
   addWire: (from: BoardPosition, to: BoardPosition) => void;
   setWireEnds: (wireId: string, from: BoardPosition, to: BoardPosition) => void;
   removeWire: (wireId: string) => void;
-  // Derive and apply the cuts/wires needed to complete the current placement
-  autoFinishBoard: () => AutoFinishResult;
   // Apply an auto-layout result computed in the worker (placements + regenerated cuts/wires)
   applyAutoLayout: (result: AutoLayoutResult, meta?: { boards: number; orderings: number; drilled: boolean }) => void;
 
@@ -526,7 +500,6 @@ function prepareProjectState(data: Project) {
     spanOverrides: data.spanOverrides,
     clearanceOverrides: data.clearanceOverrides,
     partSpacing: data.partSpacing ?? legacyPartSpacing(data),
-    tidyWires: data.tidyWires,
     drilledCutsOnly: data.drilledCutsOnly,
     // Legacy time budgets map onto the board count once: an explicit 0 was
     // "portfolio off" and stays off (1 board); any other stored time falls
@@ -534,8 +507,8 @@ function prepareProjectState(data: Project) {
     permBoards: data.permBoards ?? (data.permTimeBudget === 0 ? 1 : undefined),
     permWorkers: data.permWorkers,
     v5Moves: data.v5Moves,
-    v5TimeS: data.v5TimeS,
-    v5MsPerMove: data.v5MsPerMove,
+    v5Effort: data.v5Effort,
+    v5RunS: data.v5RunS,
     v5RandomSeeds: data.v5RandomSeeds,
     layoutEngine: data.layoutEngine,
     noWireStacking: data.noWireStacking,
@@ -643,28 +616,6 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set(settleSchematic(get()));
   },
 
-  updateComponentDef: (defId, updates) => {
-    get().pushSnapshot();
-    set((s) => {
-      const newDefs = s.componentDefs.map((d) =>
-        d.id === defId ? { ...d, ...updates } : d
-      );
-      let newAssignments = s.netAssignments;
-      if (updates.pins) {
-        const newPinIds = new Set(updates.pins.map((p) => p.id));
-        const affectedComponentIds = s.components
-          .filter((c) => c.defId === defId)
-          .map((c) => c.id);
-        newAssignments = s.netAssignments.filter(
-          (a) =>
-            !affectedComponentIds.includes(a.componentId) ||
-            newPinIds.has(a.pinId)
-        );
-      }
-      return { componentDefs: newDefs, netAssignments: newAssignments };
-    });
-  },
-
   addComponent: (defId, schematicPos) => {
     get().pushSnapshot();
     const id = generateId();
@@ -687,37 +638,6 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       };
     });
     set(settleSchematic(get()));
-  },
-
-  addComponentInstance: (init) => {
-    const id = generateId();
-    get().pushSnapshot();
-    set((s) => {
-      const def = s.componentDefs.find((d) => d.id === init.defId);
-      const prefix = def?.defaultLabelPrefix ?? "X";
-      return {
-        components: [
-          ...s.components,
-          {
-            id,
-            defId: init.defId,
-            label: nextLabel(s.components, prefix),
-            value: init.value,
-            schematicPos: init.schematicPos,
-            schematicRotation: init.schematicRotation ?? 0,
-            schematicMirrored: init.schematicMirrored,
-            labelOffset: init.labelOffset,
-            pinLabelOffsets: init.pinLabelOffsets,
-            footprintOverride: init.footprintOverride,
-            package: init.package,
-            boardPos: null,
-            rotation: 0,
-          },
-        ],
-      };
-    });
-    set(settleSchematic(get()));
-    return id;
   },
 
   updateLabel: (id, label) => {
@@ -1401,20 +1321,6 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set(settleSchematic(get()));
   },
 
-  removeNet: (id) => {
-    get().pushSnapshot();
-    set((s) => {
-      // Remove the net and all its assignments
-      const newAssignments = s.netAssignments.filter((a) => a.netId !== id);
-      // Also remove schematic wires that connected pins of this net
-      // (We need to recalculate after removing assignments)
-      return {
-        nets: s.nets.filter((n) => n.id !== id),
-        netAssignments: newAssignments,
-      };
-    });
-  },
-
   // ── Board ────────────────────────────────────────────
 
   setBoardSize: (rows, cols) => {
@@ -1432,47 +1338,30 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }));
   },
 
-  setTidyWires: (value) => {
-    set({ tidyWires: value, isDirty: true });
-  },
-
   setDrilledCutsOnly: (value) => {
     set({ drilledCutsOnly: value ? undefined : false, isDirty: true });
-  },
-
-  setPermBoards: (n) => {
-    // 1 is stored explicitly: absent means the shipped default, not off
-    set({ permBoards: Math.max(1, Math.round(n)), isDirty: true });
   },
 
   setPermWorkers: (n) => {
     set({ permWorkers: Math.max(1, Math.round(n)), isDirty: true });
   },
 
-  setV5Moves: (n) => {
-    set({ v5Moves: n > 0 ? Math.round(n) : undefined, isDirty: true });
+  setV5Effort: (n) => {
+    set({ v5Effort: n > 0 ? n : undefined, isDirty: true });
   },
 
-  setV5TimeS: (n) => {
-    set({ v5TimeS: n > 0 ? Math.round(n) : undefined, isDirty: true });
-  },
-
-  // the stored speed only moves when a run measures something clearly
-  // different, so a run's move count stays on the same rung under ordinary
+  // the stored run time only moves when a run measures something clearly
+  // different, so the settings' time estimate does not jitter with ordinary
   // load noise; it is a machine property, so it does not dirty the project
-  setV5MsPerMove: (n) => {
-    if (!(n > 0)) return;
-    const old = get().v5MsPerMove;
-    if (old !== undefined && Math.abs(n / old - 1) < 0.15) return;
-    set({ v5MsPerMove: n });
+  setV5RunS: (s) => {
+    if (!(s > 0)) return;
+    const old = get().v5RunS;
+    if (old?.version === LAYOUT_VERSION && Math.abs(s / old.s - 1) < 0.15) return;
+    set({ v5RunS: { s, version: LAYOUT_VERSION } });
   },
 
   setV5RandomSeeds: (value) => {
     set({ v5RandomSeeds: value ? true : undefined, isDirty: true });
-  },
-
-  setLayoutEngine: (engine) => {
-    set({ layoutEngine: engine === "v5" ? undefined : engine, isDirty: true });
   },
 
   setNoWireStacking: (value) => {
@@ -1699,28 +1588,6 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }));
   },
 
-  autoFinishBoard: () => {
-    const s = get();
-    const view = boardView(s.components, s.componentDefs, s.netAssignments);
-    const result = computeAutoFinish(
-      s.board, view.components, s.componentDefs, s.nets, view.netAssignments, s.drilledCutsOnly !== false
-    );
-    if (result.cuts.length > 0 || result.wires.length > 0) {
-      get().pushSnapshot();
-      set((st) => ({
-        board: {
-          ...st.board,
-          cuts: [...st.board.cuts, ...result.cuts],
-          wires: [
-            ...st.board.wires,
-            ...result.wires.map((w) => ({ id: generateId(), from: w.from, to: w.to })),
-          ],
-        },
-      }));
-    }
-    return result;
-  },
-
   // ── UI State ─────────────────────────────────────────
 
 
@@ -1774,13 +1641,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       autoSave: s.autoSave,
       spanOverrides: s.spanOverrides,
       clearanceOverrides: s.clearanceOverrides,
-      tidyWires: s.tidyWires,
       drilledCutsOnly: s.drilledCutsOnly,
       permBoards: s.permBoards,
       permWorkers: s.permWorkers,
       v5Moves: s.v5Moves,
-      v5TimeS: s.v5TimeS,
-      v5MsPerMove: s.v5MsPerMove,
+      v5Effort: s.v5Effort,
+      v5RunS: s.v5RunS,
       v5RandomSeeds: s.v5RandomSeeds,
       layoutEngine: s.layoutEngine,
       noWireStacking: s.noWireStacking,
@@ -1831,13 +1697,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       autoSave: false,
     spanOverrides: undefined,
     clearanceOverrides: undefined,
-    tidyWires: undefined,
     drilledCutsOnly: undefined,
     permBoards: undefined,
     permWorkers: undefined,
     v5Moves: undefined,
-    v5TimeS: undefined,
-    v5MsPerMove: undefined,
+    v5Effort: undefined,
+    v5RunS: undefined,
     v5RandomSeeds: undefined,
     layoutEngine: undefined,
     noWireStacking: undefined,

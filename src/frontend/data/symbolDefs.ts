@@ -768,5 +768,3 @@ export function getSymbolDef(symbolId: string): SymbolDef | undefined {
   }
   return generated;
 }
-
-export const ALL_STATIC_SYMBOLS = STATIC_SYMBOLS;

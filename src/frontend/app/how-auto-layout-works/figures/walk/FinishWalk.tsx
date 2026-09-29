@@ -1,23 +1,22 @@
 "use client";
 
-import { useMemo, type ReactNode } from "react";
+import { useState } from "react";
 import type { LabBoard, LabFrame } from "@/components/stripboard/autoLayout5";
-import { GENOME_RUN, LAB_FINISH } from "./lab";
+import { FINISH_WALK } from "./lab";
 import BoardView from "./BoardView";
 import Player from "./Player";
+import { trackDemo } from "../trackDemo";
 
 // ── Section 9: both finishes of one description, stage by stage ──
 // The description the section 8 run ends on, handed to each finish set up the
-// way this section describes. The frames are the engine's own; only the anneal
-// that produced the description is a recording, since it always produces the
-// same one.
+// way this section describes; a switch picks which finish to step through.
+// The frames are the engine's own, recorded (lab.ts FINISH_WALK).
 
-const Lead = ({ children }: { children: ReactNode }) => (
-  <h4 className="font-mono text-sm font-semibold text-neutral-900 dark:text-neutral-100 mt-7 mb-2">{children}</h4>
-);
+type Finish = "router" | "repair";
 
-export default function FinishWalk({ caption }: { caption?: string }) {
-  const both = useMemo(() => LAB_FINISH.finishBoth(GENOME_RUN), []);
+export default function FinishWalk() {
+  const both = FINISH_WALK;
+  const [which, setWhich] = useState<Finish>("router");
   const boards: LabBoard[] = [
     both.start,
     ...both.router.frames.map((f) => f.board),
@@ -29,39 +28,34 @@ export default function FinishWalk({ caption }: { caption?: string }) {
   const draw = (f: LabFrame) => (f.board ? <BoardView state={f.board} rows={rows} cols={cols} /> : null);
 
   const repair = both.repair;
-  const repairWins = !!repair && repair.ok && repair.price < both.router.price;
-  const priceOf = (p: number) => Math.round(p);
-  const startFrame: LabFrame[] = [{
-    stage: 7,
-    msg: "What the annealer hands over: the board its decoder scored. It is complete and it is what the whole search was aimed at, but the decoder is a fast approximation, so nothing about its cuts and wires is final.",
-    board: both.start,
-  }];
+  const shown = which === "repair" && repair ? repair : both.router;
+  const frames: LabFrame[] = [
+    {
+      stage: 7,
+      msg: "What the annealer hands over: the board its decoder scored. It is complete and it is what the whole search was aimed at, but the decoder is a fast approximation, so nothing about its cuts and wires is final.",
+      board: both.start,
+    },
+    ...shown.frames,
+  ];
+  const router = Math.round(both.router.price);
+  const verdict = !repair
+    ? `Start over ends at a price of ${router}.`
+    : !repair.ok
+      ? `Start over ends at a price of ${router}. The repair comes to ${Math.round(repair.price)}, but its board is not clean, so it cannot be used.`
+      : `Start over ends at a price of ${router}, the repair at ${Math.round(repair.price)}, so here the ${repair.price < both.router.price ? "repaired" : "rebuilt"} board is the one you get.`;
+  const how = which === "router"
+    ? "Start over: only where the parts stand is kept. Cuts and wires are worked out again from scratch, and blank lines are bought where a wire needs one and handed back once a tighter arrangement turns up."
+    : "Repair: the board is mended instead of rebuilt. Only what the editor's rules reject is touched, and no wire ever changes which two strips it joins.";
 
-  return (
-    <div>
-      <Player demo="finish-start" frames={startFrame} render={draw} />
-      <Lead>Start over: the thorough router</Lead>
-      <Player
-        demo="finish-walk"
-        frames={both.router.frames}
-        render={draw}
-        stepMs={2200}
-        caption={`The board keeps only where the parts stand. Cuts and wires are worked out again from scratch, blank lines are bought where a wire needs one and handed back once the router finds a tighter arrangement. Final price ${priceOf(both.router.price)}.`}
-      />
-      {repair && (
-        <>
-          <Lead>Repair: keep what the annealer found</Lead>
-          <Player
-            demo="finish-repair"
-            frames={repair.frames}
-            render={draw}
-            stepMs={2200}
-            caption={`The same board, mended instead of rebuilt. Only what the editor's rules reject is touched, and no wire ever changes which two strips it joins. Final price ${priceOf(repair.price)}${repair.ok ? "" : ", but this board is not clean, so it cannot be used"}.`}
-          />
-        </>
-      )}
-
-      {caption && <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-snug mb-3">{caption}</p>}
-    </div>
+  const seg = (on: boolean) =>
+    `px-2 py-1 text-xs border ${on ? "border-[var(--copper)] text-[var(--copper)] bg-white dark:bg-neutral-900" : "border-neutral-300 dark:border-neutral-600 text-neutral-800 dark:text-neutral-100 hover:bg-neutral-100 dark:hover:bg-neutral-700"}`;
+  const pick = (w: Finish) => { trackDemo("finish-walk", w); setWhich(w); };
+  const toggle = (
+    <span className="inline-flex">
+      <button className={`${seg(which === "router")} rounded-l`} onClick={() => pick("router")}>Start over</button>
+      {repair && <button className={`${seg(which === "repair")} rounded-r -ml-px`} onClick={() => pick("repair")}>Repair</button>}
+    </span>
   );
+
+  return <Player key={which} demo="finish-walk" frames={frames} render={draw} stepMs={2200} controls={toggle} caption={`${how} ${verdict}`} />;
 }

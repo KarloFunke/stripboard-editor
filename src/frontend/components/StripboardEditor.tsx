@@ -4,9 +4,9 @@ import { useState, useRef, useEffect } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useStripSegments } from "@/hooks/useStripSegments";
 import type { AutoLayoutRequest, AutoLayoutWorkerMessage } from "./stripboard/autoLayoutWorker";
-import { defaultPermWorkers, LAYOUT_VERSION, type AutoLayoutResult } from "./stripboard/layoutTypes";
-import { SPLIT_MIN_PARTS, SPLIT_VARIANTS } from "./stripboard/autoLayout5Split";
-import { STACK_MIN_PINS, STACK_PIN_CAP } from "./stripboard/autoLayout5Stack";
+import { defaultPermWorkers, effortPlan, LAYOUT_VERSION, V5_EFFORT_DEFAULT, type AutoLayoutResult } from "./stripboard/layoutTypes";
+import { RunEta } from "./stripboard/layoutEta";
+import AutoProgressBar from "./stripboard/AutoProgressBar";
 import ComponentTray from "./stripboard/ComponentTray";
 import StripboardCanvas from "./stripboard/StripboardCanvas";
 import StripboardFootprintEditor from "./stripboard/StripboardFootprintEditor";
@@ -33,13 +33,12 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
   const componentDefs = useProjectStore((s) => s.componentDefs);
   const nets = useProjectStore((s) => s.nets);
   const partSpacing = useProjectStore((s) => s.partSpacing);
-  const tidyWires = useProjectStore((s) => s.tidyWires);
   const drilledCutsOnly = useProjectStore((s) => s.drilledCutsOnly);
   const v5Moves = useProjectStore((s) => s.v5Moves);
-  const v5TimeS = useProjectStore((s) => s.v5TimeS);
-  const v5MsPerMove = useProjectStore((s) => s.v5MsPerMove);
+  const v5Effort = useProjectStore((s) => s.v5Effort);
+  const v5RunS = useProjectStore((s) => s.v5RunS);
   const v5RandomSeeds = useProjectStore((s) => s.v5RandomSeeds);
-  const setV5MsPerMove = useProjectStore((s) => s.setV5MsPerMove);
+  const setV5RunS = useProjectStore((s) => s.setV5RunS);
   const noWireStacking = useProjectStore((s) => s.noWireStacking);
   const showOverlaps = useProjectStore((s) => s.showOverlaps);
   const setShowOverlaps = useProjectStore((s) => s.setShowOverlaps);
@@ -56,7 +55,7 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
   const [msgLeaving, setMsgLeaving] = useState(false);
   const autoFinishMsgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [autoProgress, setAutoProgress] = useState<{ label: string; frac: number } | null>(null);
+  const [autoProgress, setAutoProgress] = useState<{ label: string; frac: number; eta?: RunEta } | null>(null);
   const [showLayoutSettings, setShowLayoutSettings] = useState(false);
   const autoWorkersRef = useRef<Worker[]>([]);
   const autoRunIdRef = useRef(0);
@@ -119,12 +118,11 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
     setAutoProgress(null);
   };
 
-  // Full runs use the v5 annealed layouter (v2 stays in the code base but
-  // is not offered). Scoped re-layouts of a selection stay on the v1
-  // optimizer, which can keep everything else fixed. A "board" is one seed
-  // plus, on big free boards, the six bipartition variants; the configured
-  // board count runs that many boards over the worker pool and the best
-  // finished result (quality, then guarded crossings, then score) wins.
+  // Full runs use the v5 annealed layouter. Scoped re-layouts of a
+  // selection stay on the v1 optimizer, which can keep everything else
+  // fixed. A "board" is one seed; the configured board count runs that many
+  // boards over the worker pool and the best finished result (quality, then
+  // guarded crossings, then score) wins.
   const handleAutoLayout = (onlyIds?: string[]) => {
     if (autoWorkersRef.current.length > 0) {
       trackAutoFinish("cancelled");
@@ -135,7 +133,7 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
     const engine = onlyIds ? "v1" : "v5";
     const runId = ++autoRunIdRef.current;
     const drilled = drilledCutsOnly !== false;
-    const inputs = { board, components, componentDefs, nets, netAssignments, partSpacing, tidyWires, drilledCutsOnly: drilled };
+    const inputs = { board, components, componentDefs, nets, netAssignments, partSpacing, drilledCutsOnly: drilled };
 
     // Edits made while solving are kept: the result is applied on top of
     // the current state (parts that no longer exist are simply skipped).
@@ -150,36 +148,28 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
       // A clean run speaks for itself on the board; only problems get a popup.
       if (result.issues.length > 0) showAutoMsg("Auto-layout finished with issues", result.issues);
     };
-    // a big free board is stacked: every worker runs the stacked solve on
-    // its own seed instead of a joint one
     const placeableIds = new Set(components.filter((c) => !c.boardExcluded).map((c) => c.id));
     const nPins = netAssignments.filter((a) => placeableIds.has(a.componentId)).length;
-    const useStack = engine === "v5" && !onlyIds && nPins >= STACK_MIN_PINS &&
-      !board.lockedRows && !board.lockedCols && !components.some((c) => c.locked && c.boardPos && !c.boardExcluded);
+    // the effort decides how many layouts are solved and how long each
+    // searches; the processor threads only decide how many run at once
+    const plan = effortPlan(v5Effort ?? V5_EFFORT_DEFAULT, nPins, false);
     const request: AutoLayoutRequest = {
       ...inputs,
       engine,
-      ...(useStack ? { v5Stack: STACK_PIN_CAP } : {}),
       options: onlyIds ? { onlyIds } : undefined,
-      tidyGrowth: tidyWires === false ? undefined : Infinity,
       ...(engine === "v5" && v5Moves ? { v5Moves } : {}),
-      ...(engine === "v5" ? { v5TimeS: v5TimeS ?? 60 } : {}),
-      ...(engine === "v5" && v5MsPerMove ? { v5MsPerMove } : {}),
+      ...(engine === "v5" ? { v5Effort: plan.effort } : {}),
       ...(engine === "v5" && noWireStacking !== false ? { noWireStacking: true } : {}),
       ...(engine === "v5" && allowStanding ? { allowStanding: true } : {}),
     };
 
-    // v5 spreads its seeds over the same worker pool (worker._idx = seed);
-    // big free boards add the bipartition variants after the seeds
+    // v5 spreads its seeds over the worker pool (worker._idx = seed), in
+    // waves when there are more seeds than workers
     const nPlaceable = components.filter((c) => !c.boardExcluded).length;
-    // split variants are off until they are measured against joint runs
-    // at an equal time budget (2026-09-08)
-    const SPLITS_ENABLED = false;
-    const canSplit = SPLITS_ENABLED && engine === "v5" && !onlyIds && nPlaceable >= SPLIT_MIN_PARTS &&
-      !board.lockedRows && !board.lockedCols && !components.some((c) => c.locked && c.boardPos && !c.boardExcluded);
-    // one layout per solver, all in one wave, so each gets the full time
     const coresAvail = typeof navigator !== "undefined" ? navigator.hardwareConcurrency || 4 : 4;
-    const boards = onlyIds ? 1 : Math.max(1, Math.min(permWorkers ?? defaultPermWorkers(coresAvail), coresAvail));
+    const boards = onlyIds ? 1 : plan.seeds;
+    const nWorkers = Math.max(1, Math.min(permWorkers ?? defaultPermWorkers(coresAvail), coresAvail, boards));
+    const waves = Math.ceil(boards / nWorkers);
     // seeds: the fixed series 0, 1, 2, ... or, on request, a fresh random base per run
     const seedBase = engine === "v5" && v5RandomSeeds ? Math.floor(Math.random() * 1e9) : 0;
 
@@ -196,45 +186,35 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
     track("auto-layout-run", {
       ...autoShapeRef.current,
       boards,
+      threads: nWorkers,
       drilledCuts: drilled ? "on" : "off",
       spacing: partSpacing ?? 1,
-      tidyWires: tidyWires === false ? "off" : "on",
       wireStacking: noWireStacking !== false ? "off" : "on",
       standing: allowStanding ? "on" : "off",
-      timeS: v5TimeS ?? 60,
+      effort: v5Effort ?? V5_EFFORT_DEFAULT,
       randomSeeds: v5RandomSeeds ? "on" : "off",
     });
-    // every worker reports the decode speed it measured; the median is kept
-    // for the next run's move count
-    const speeds: number[] = [];
-    const rememberSpeed = () => {
-      if (!speeds.length) return;
-      const s = speeds.slice().sort((a, b) => a - b);
-      setV5MsPerMove(s[Math.floor(s.length / 2)]);
+    // how long one layout took, per unit of the moves formula: the settings'
+    // estimate (a wave of layouts takes about as long as one)
+    const rememberRunTime = () => {
+      if (engine === "v5" && !onlyIds) setV5RunS((Date.now() - autoStartRef.current) / 1000 / waves / plan.effort);
     };
-    const perBoard = canSplit ? 1 + SPLIT_VARIANTS : 1;
-    const jobs = boards * perBoard;
+    const jobs = boards;
+    // v5 runs show the time left: from this circuit's last run at first,
+    // then from the seeds' own progress (see layoutEta)
+    const lastRunS = v5RunS?.version === LAYOUT_VERSION ? v5RunS.s * plan.effort * waves : undefined;
+    const eta = engine === "v5" ? new RunEta(Date.now(), jobs, lastRunS, 1, nWorkers) : null;
     if (jobs > 1) {
-      const cores = typeof navigator !== "undefined" ? navigator.hardwareConcurrency || 4 : 4;
-      const nWorkers = Math.max(1, Math.min(permWorkers ?? defaultPermWorkers(cores), cores, jobs));
       let nextIdx = 0;
       let inFlight = 0;
       let solved = 0;
       let best: { result: AutoLayoutResult; score: number; crossings: number; index: number } | null = null;
-      // the bar counts finished boards; its length adds the partial
-      // progress of the jobs in flight, so it moves before any board is done
-      const doneOfBoard = new Array<number>(boards).fill(0);
-      const partial = new Map<Worker, number>();
-      const showProgress = () => {
-        let sum = 0;
-        for (const f of partial.values()) sum += f;
-        const boardsDone = doneOfBoard.filter((n) => n >= perBoard).length;
-        setAutoProgress({ label: `Solving layouts (${boardsDone}/${boards})`, frac: Math.min(1, (solved + sum) / jobs) });
-      };
+      // the label counts finished boards; the bar is the run's time
+      const showProgress = () => setAutoProgress({ label: `Solving layouts (${solved}/${boards})`, frac: 0, eta: eta! });
 
       const finalize = () => {
         stopAutoWorkers();
-        rememberSpeed();
+        if (best) rememberRunTime();
         if (best) applyBest(best.result, { boards, orderings: solved, drilled });
         else {
           trackAutoFinish("failed");
@@ -249,11 +229,7 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
         nextIdx += 1;
         worker._idx = idx;
         inFlight += 1;
-        const boardIdx = Math.floor(idx / perBoard);
-        const k = idx % perBoard;
-        worker.postMessage(k === 0
-          ? { ...request, permutationIndex: seedBase + boardIdx }
-          : { ...request, v5Split: k - 1, v5SeedBase: seedBase + boardIdx * 3 });
+        worker.postMessage({ ...request, permutationIndex: seedBase + idx });
         return true;
       };
       const workers = Array.from({ length: nWorkers }, () => {
@@ -261,20 +237,17 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
         worker.onmessage = (e: MessageEvent<AutoLayoutWorkerMessage>) => {
           if (runId !== autoRunIdRef.current) return;
           if (e.data.type === "progress") {
-            const p = e.data.progress;
-            partial.set(worker, Math.min(1, (p.attempt - 1 + p.frac) / p.maxAttempts));
-            showProgress();
+            eta!.report(worker._idx!, e.data.progress, Date.now());
             return;
           }
-          partial.delete(worker);
+          if (e.data.type !== "done") return;
+          eta!.done(worker._idx!, Date.now());
           inFlight -= 1;
           solved += 1;
-          doneOfBoard[Math.floor(worker._idx! / perBoard)]++;
           showProgress();
           const { result } = e.data;
           const score = e.data.score ?? Infinity;
           const crossings = e.data.crossings ?? 0;
-          if (e.data.msPerMove !== undefined) speeds.push(e.data.msPerMove);
           const idx = worker._idx!;
           // Deterministic winner for a given set of finished orderings:
           // quality, then the guarded pick (wire-over-part crossings never
@@ -290,7 +263,7 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
         worker.onerror = (err) => {
           if (runId !== autoRunIdRef.current) return;
           console.error("Auto-layout worker failed", err);
-          partial.delete(worker);
+          if (worker._idx !== undefined) eta!.done(worker._idx, Date.now());
           inFlight -= 1;
           worker.terminate();
           autoWorkersRef.current = autoWorkersRef.current.filter((w) => w !== worker);
@@ -299,17 +272,21 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
         return worker;
       });
       autoWorkersRef.current = workers;
-      setAutoProgress({ label: "Solving layouts", frac: 0 });
+      showProgress();
       for (const w of workers) dispatch(w);
       return;
     }
 
     const worker = new Worker(new URL("./stripboard/autoLayoutWorker.ts", import.meta.url));
     autoWorkersRef.current = [worker];
-    setAutoProgress({ label: "Solving layout", frac: 0 });
+    setAutoProgress({ label: "Solving layout", frac: 0, ...(eta ? { eta } : {}) });
     worker.onmessage = (e: MessageEvent<AutoLayoutWorkerMessage>) => {
       if (runId !== autoRunIdRef.current) return;
       if (e.data.type === "progress") {
+        if (eta) {
+          eta.report(0, e.data.progress, Date.now());
+          return;
+        }
         const p = e.data.progress;
         setAutoProgress({
           label: `${PHASE_LABELS[p.phase]}${p.attempt > 1 ? ` (attempt ${p.attempt}/${p.maxAttempts})` : ""}`,
@@ -317,9 +294,9 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
         });
         return;
       }
+      if (e.data.type !== "done") return;
       stopAutoWorkers();
-      if (e.data.msPerMove !== undefined) speeds.push(e.data.msPerMove);
-      rememberSpeed();
+      rememberRunTime();
       applyBest(e.data.result, { boards: 1, orderings: 1, drilled });
     };
     worker.onerror = (err) => {
@@ -474,19 +451,7 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
                       {showLayoutSettings && <AutoLayoutSettings onClose={() => setShowLayoutSettings(false)} />}
                     </div>
                   </div>
-                  {autoProgress && (
-                    <div className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
-                      <div className="truncate" title={autoProgress.label}>{autoProgress.label}</div>
-                      <div className="mt-1 h-1.5 rounded bg-neutral-200 dark:bg-neutral-700 overflow-hidden">
-                        <div
-                          className="relative h-full overflow-hidden bg-[#113768] dark:bg-[#5b9bd5] transition-[width] duration-200"
-                          style={{ width: `${Math.round(autoProgress.frac * 100)}%` }}
-                        >
-                          <span className="progress-sheen absolute inset-y-0 left-0 w-1/2 bg-gradient-to-r from-transparent via-white/50 to-transparent" />
-                        </div>
-                      </div>
-                    </div>
-                  )}
+                  {autoProgress && <AutoProgressBar label={autoProgress.label} frac={autoProgress.frac} eta={autoProgress.eta} />}
                 </div>
                 <div className="flex-1 min-h-0">
                   <ComponentTray />

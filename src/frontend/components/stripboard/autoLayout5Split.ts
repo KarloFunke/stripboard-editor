@@ -35,6 +35,8 @@ export interface AutoLayout5SplitOptions {
   seedBase?: number;
   drilledCutsOnly?: boolean;
   noWireStacking?: boolean;
+  // the decoder in WebAssembly (autoLayout5 wasm)
+  wasm?: WebAssembly.Module;
 }
 
 // size scales around the footprint estimate, each in both orientations
@@ -170,6 +172,7 @@ export function computeAutoLayout5Split(
         ...(options?.timeBudgetMs !== undefined ? { timeBudgetMs: options.timeBudgetMs } : {}),
         ...(options?.drilledCutsOnly ? { drilledCutsOnly: true } : {}),
         ...(options?.noWireStacking ? { noWireStacking: true } : {}),
+        ...(options?.wasm ? { wasm: options.wasm } : {}),
       });
     return { mine, res };
   });

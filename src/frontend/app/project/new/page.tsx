@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useRouter } from "next/navigation";
 import { useProjectStore } from "@/store/useProjectStore";
 import { createProject, migrateProjectData } from "@/lib/api";
 import { PROJECT_SCHEMA_VERSION, type Project } from "@/types";
@@ -15,7 +14,6 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import ShortcutOverlay from "@/components/ShortcutOverlay";
 
 export default function NewProjectPage() {
-  const router = useRouter();
   const isMobile = useIsMobile();
   const exportProject = useProjectStore((s) => s.exportProject);
   const importProject = useProjectStore((s) => s.importProject);

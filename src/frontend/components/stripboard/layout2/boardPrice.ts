@@ -31,11 +31,10 @@ const CONN_FULL = 30;
 export type Side = "left" | "right" | "top" | "bottom";
 export const ENTRY_SIDE: Record<Rot, Side> = { 0: "right", 90: "bottom", 180: "left", 270: "top" };
 export interface ConnSides { top: boolean; bottom: boolean; left: boolean; right: boolean }
-export const ALL_SIDES: ConnSides = { top: true, bottom: true, left: true, right: true };
 
 // an unlocked connector: its cells and, for a side-entry package, the edge
 // its wires come in from
-export interface PricedConn { x: number; y: number; w: number; h: number; entry?: Side; sides?: ConnSides }
+export interface PricedConn { x: number; y: number; w: number; h: number; entry?: Side }
 // room a package holds over the board, in hole-centre terms
 export interface PricedShaft { r0: number; r1: number; c0: number; c1: number }
 // the pads of one off-board part: their spread and how many they are
@@ -66,7 +65,7 @@ export interface PriceBreakdown {
   sibling: number;
 }
 
-export function priceBreakdown(t: BoardTerms, wBCut: number, sides: ConnSides = ALL_SIDES): PriceBreakdown {
+export function priceBreakdown(t: BoardTerms, wBCut: number): PriceBreakdown {
   const { H, W, lockedRowsCap, lockedColsCap } = t;
   const lockOver =
     (lockedColsCap !== undefined ? Math.max(0, W - lockedColsCap) : 0) +
@@ -88,12 +87,10 @@ export function priceBreakdown(t: BoardTerms, wBCut: number, sides: ConnSides = 
   // gradient on the plateau); a locked connector is the user's placement
   let connEdge = 0;
   for (const c of t.conns) {
-    const FAR = 50;
-    const sd = c.sides ?? sides;
-    const dl = sd.left ? c.x : FAR;
-    const dr = sd.right ? physW - (c.x + c.w) : FAR;
-    const dt = sd.top ? c.y : FAR;
-    const db = sd.bottom ? physH - (c.y + c.h) : FAR;
+    const dl = c.x;
+    const dr = physW - (c.x + c.w);
+    const dt = c.y;
+    const db = physH - (c.y + c.h);
     const d = Math.min(dl, dr, dt, db);
     // a multi-pin connector should run along its nearest edge, not point
     // into the board, or its external wires come in across the parts. The

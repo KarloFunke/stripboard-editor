@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { LabStep } from "@/components/stripboard/autoLayout5";
-import { LAB } from "./lab";
+import { LAB, useLiveLab } from "./lab";
 import BoardView from "./BoardView";
 import { useInView } from "./useInView";
 import { trackDemo } from "../trackDemo";
@@ -20,6 +20,7 @@ const SIZE = { rows: 20, cols: 18 };
 
 export default function MiniRun({ seed = 1, steps: initialSteps = 10000, caption }: { seed?: number; steps?: number; caption?: string }) {
   const [fig, seen] = useInView<HTMLElement>();
+  const lab = useLiveLab();
   const [steps, setSteps] = useState(initialSteps);
   const [speed, setSpeed] = useState(2);
   const [seedN, setSeedN] = useState(seed);
@@ -32,14 +33,14 @@ export default function MiniRun({ seed = 1, steps: initialSteps = 10000, caption
     setSnaps(null);
     setI(0);
     setRunning(false);
-    if (!seen) return;
+    if (!seen || !lab) return;
     const t = setTimeout(() => {
       const out: LabStep[] = [];
-      LAB.run(seedN, steps, every, (s) => out.push({ ...s, g: LAB.cloneG(s.g) }));
+      lab.run(seedN, steps, every, (s) => out.push({ ...s, g: lab.cloneG(s.g) }));
       setSnaps(out);
     }, 20);
     return () => clearTimeout(t);
-  }, [seedN, steps, every, seen]);
+  }, [lab, seedN, steps, every, seen]);
 
   useEffect(() => {
     if (!running || !snaps) return;

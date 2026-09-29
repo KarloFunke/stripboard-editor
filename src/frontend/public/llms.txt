@@ -47,13 +47,14 @@ real router. It places every component, sizes the board, and generates the
 strip cuts and link wires. On a free board the result has no slanted link wires
 and no wire crossing a component — the layouter buys blank rows or columns
 instead. Connectors are kept on a board edge, and cuts are drilled-out holes
-lined up in shared columns wherever possible. Several layouts are solved in
-parallel from different random starts, one per processor core, and compared on
-completeness first, then on the annealer's own score. The same circuit,
-settings and machine give the same board again, unless "new layouts every run"
-is enabled. Settings: drilled cuts only, no stacked wires, allow standing
-parts, extra room between parts, layouts to solve, time per layout, and new
-layouts every run. Board dimensions can be locked to a board you already own,
+lined up in shared columns wherever possible. Several layouts are solved from
+different random starts, in parallel on the processor threads, and compared on
+completeness first, then on the annealer's own score; the effort setting sets
+how many and how long each one searches, scaled to the size of the circuit.
+The same circuit and settings give the same board again, whatever the number of
+threads, unless "new layouts every run" is enabled. Settings: new layouts every
+run, drilled cuts only, no stacked wires, allow standing parts, extra room
+between parts, effort, and processor threads. Board dimensions can be locked to a board you already own,
 and individual components can be locked in place for the layouter to design
 around; both come out somewhat larger, or may keep a few slanted wires.
 

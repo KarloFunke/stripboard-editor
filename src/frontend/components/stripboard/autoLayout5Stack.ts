@@ -3,7 +3,7 @@ import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { getComponentBounds } from "./boardLayout";
 import { spanLimits } from "./flexGeometry";
 import { AutoLayoutProgress, AutoLayoutResult } from "./layoutTypes";
-import { computeAutoLayout5 } from "./autoLayout5";
+import { computeAutoLayout5, type MoveLogRec } from "./autoLayout5";
 import { LEAD_DEF_ID, expandOffBoard } from "./offBoard";
 import { Skeleton, finishSkeleton } from "./layout2/finish";
 
@@ -27,6 +27,8 @@ export interface AutoLayout5StackOptions {
   seeds?: number;
   seedBase?: number;
   moves?: number;
+  // per leaf, from the leaf's own pins (see AutoLayout5Options.effort)
+  effort?: number;
   timeBudgetMs?: number;
   // leaves are solved at their own width instead of one locked width
   freeWidth?: boolean;
@@ -34,20 +36,34 @@ export interface AutoLayout5StackOptions {
   noWireStacking?: boolean;
   exactBest?: boolean;
   protectTies?: boolean | number;
+  wasm?: WebAssembly.Module;
+  // Harness-only: every leaf anneal's proposals, with the leaf's index
+  moveLog?: (rec: MoveLogRec, leaf: number) => void;
   // what the stack was made of, for the harness
   onLeaves?: (info: { leaves: { parts: number; pins: number; ports: number; rows: number; cols: number; wires: number; cuts: number; ms: number }[]; width?: number }) => void;
 }
 
 export const STACK_PORT_PREFIX = "stack-port#";
 
-// The editor stacks a free board from this many pins on (net assignments of
+// The editor stacked a free board from this many pins on (net assignments of
 // its placeable parts), every worker a stack seed under this cap: measured
-// 2026-09-25 at the 60 s default, the stack wins or ties every board above
-// 200 pins and takes a fifth of the joint's time on the largest, while the
-// joint stays better below. A leaf that cannot be laid out loses only its
-// own seed (about one in a hundred); the other workers' boards still count.
+// 2026-09-25 at the 60 s default, the stack won or tied every board above
+// 200 pins and took a fifth of the joint's time on the largest. Not used by
+// the editor since 2026-09-29: with the decoder in WebAssembly the joint
+// search at the same effort came out 35-50 % cheaper on those boards
+// (movelog/joint-vs-stack-2026-09-29), in one to three minutes. Kept for the
+// harness (v5Corpus --stack, --stop) and for reference.
 export const STACK_MIN_PINS = 200;
 export const STACK_PIN_CAP = 100;
+
+// A leaf whose board fails (its finish could not make every wire straight and
+// unstacked: a width-locked leaf cannot add channels) is solved again from
+// other seeds before its stack seed is lost. Measured 2026-09-27 on 1110,
+// where a quarter of the leaf solves failed: 8 of 12 stack seeds lost, none
+// with three tries. Leaves also keep the move mix without pull and tie, which
+// made that board's port-heavy leaves fail even with the retries.
+const LEAF_TRIES = 3;
+const LEAF_RETRY_SEED = 1000;
 
 // board area per unit of summed part footprint the joint solve reaches on
 // big boards (corpus median), and the rows/cols shape aimed for
@@ -209,11 +225,12 @@ export function computeAutoLayout5Stack(
       ? { ...board, rows: 8, cols: 8, cuts: [], wires: [], lockedRows: false, lockedCols: false }
       : { ...board, rows: 8, cols: width, cuts: [], wires: [], lockedRows: false, lockedCols: true };
     const t0 = Date.now();
-    const res = computeAutoLayout5(leafBoard, comps, componentDefs, nets, asg,
+    const solveLeaf = (attempt: number) => computeAutoLayout5(leafBoard, comps, componentDefs, nets, asg,
       onProgress ? (p) => onProgress({ ...p, frac: ((li + p.frac) / leaves.length) * 0.9 }) : undefined,
       {
         seeds,
-        seedBase: options?.seedBase ?? 0,
+        seedBase: (options?.seedBase ?? 0) + attempt * LEAF_RETRY_SEED,
+        pullTie: false,
         // a leaf meets its neighbours above and below, so that is where its
         // ports go: the first leaf has one below, the last one above, the
         // rest both; its real connectors belong on the edges that stay the
@@ -223,12 +240,17 @@ export function computeAutoLayout5Stack(
           ? { top: li > 0, bottom: li < leaves.length - 1, left: false, right: false }
           : { top: li === 0, bottom: li === leaves.length - 1, left: true, right: true },
         ...(options?.moves !== undefined ? { moves: options.moves } : {}),
+        ...(options?.effort !== undefined ? { effort: options.effort } : {}),
         ...(options?.timeBudgetMs !== undefined ? { timeBudgetMs: (options.timeBudgetMs * pinsWithPorts(group)) / pinsAll } : {}),
         ...(options?.drilledCutsOnly ? { drilledCutsOnly: true } : {}),
         ...(options?.noWireStacking ? { noWireStacking: true } : {}),
         ...(options?.exactBest ? { exactBest: true } : {}),
         ...(options?.protectTies !== undefined ? { protectTies: options.protectTies } : {}),
+        ...(options?.wasm ? { wasm: options.wasm } : {}),
+        ...(options?.moveLog ? { moveLog: (r: MoveLogRec) => options.moveLog!(r, li) } : {}),
       });
+    let res = solveLeaf(0);
+    for (let attempt = 1; attempt < LEAF_TRIES && (!res.boardSize || res.quality > 0); attempt++) res = solveLeaf(attempt);
     if (!res.boardSize || res.quality > 0) return fail(`leaf ${li + 1} of ${leaves.length} could not be laid out: ${res.issues.join("; ")}`);
     leafInfo.push({ parts: group.length, pins: pinsWithPorts(group), ports: ports.length, rows: res.boardSize.rows, cols: res.boardSize.cols, wires: res.wires.length, cuts: res.cuts.length, ms: Date.now() - t0 });
     solved.push({ mine, res });

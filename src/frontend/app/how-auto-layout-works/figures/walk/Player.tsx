@@ -1,14 +1,13 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import type { LabFrame } from "@/components/stripboard/autoLayout5";
 import { trackDemo } from "../trackDemo";
 
-// ── Steps through the frames of one decode stage ──
+// ── Steps through a list of frames, each with its message ──
 
 const btn = "px-2 py-1 rounded border border-neutral-300 dark:border-neutral-600 text-xs hover:bg-neutral-100 dark:hover:bg-neutral-700 text-neutral-800 dark:text-neutral-100 disabled:opacity-40";
 
-export default function Player({ demo, frames, render, caption, stepMs = 1100 }: { demo: string; frames: LabFrame[]; render: (f: LabFrame) => ReactNode; caption?: ReactNode; stepMs?: number }) {
+export default function Player<F extends { msg: string }>({ demo, frames, render, caption, controls, stepMs = 1100 }: { demo: string; frames: F[]; render: (f: F) => ReactNode; caption?: ReactNode; controls?: ReactNode; stepMs?: number }) {
   const [i, setI] = useState(0);
   const [playing, setPlaying] = useState(false);
   useEffect(() => {
@@ -26,6 +25,7 @@ export default function Player({ demo, frames, render, caption, stepMs = 1100 }:
         <button className={btn} onClick={() => { trackDemo(demo, "play"); if (i >= frames.length - 1) setI(0); setPlaying((p) => !p); }}>{playing ? "Pause" : i >= frames.length - 1 ? "Replay" : "Play"}</button>
         <button className={btn} onClick={() => { trackDemo(demo, "restart"); setPlaying(false); setI(0); }} disabled={i === 0}>Restart</button>
         <span className="text-xs font-mono text-neutral-500 dark:text-neutral-400">{i + 1} / {frames.length}</span>
+        {controls && <span className="ml-auto">{controls}</span>}
       </div>}
       <div className="flex flex-col gap-3">
         {render(f)}

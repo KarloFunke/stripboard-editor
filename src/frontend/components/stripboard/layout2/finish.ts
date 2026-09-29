@@ -139,7 +139,7 @@ export function finishSkeleton(
     // would only drag edge-flush parts inward for no gain
     const full = compactPlacements(c0.virtual, componentDefs, netOfPin, c0.rows, c0.cols);
     if (full.removals > 0) chooser.route(full.comps, full.rows, full.cols, c0.movedIds);
-    if (lab && chooser.chosen !== c0) pushFin(`Lines that carry nothing are squeezed out and the board is routed again: ${full.removals} line${full.removals === 1 ? "" : "s"} gone.`);
+    if (lab && chooser.chosen !== c0) pushFin(`Lines that carry nothing are squeezed out: ${full.removals} line${full.removals === 1 ? "" : "s"} gone.`);
   }
   // hard zero-mess rule: buy bus rows and channel columns until every
   // wire is vertical and crosses nothing; a locked dimension cannot grow
@@ -364,15 +364,18 @@ export function dropIdleCuts(
     const p = byPl.get(c.id);
     return p ? { ...c, boardPos: p.boardPos, rotation: p.rotation ?? c.rotation, flexibleEndPos: p.flexibleEndPos } : c;
   });
-  const ends = new Set<string>();
-  for (const w of result.wires) { ends.add(holeKey(w.from.row, w.from.col)); ends.add(holeKey(w.to.row, w.to.col)); }
+  // a pin on no net counts too: its cuts are what leave it floating
+  const held = new Set<string>();
+  const sized: Board = { ...board, rows: result.boardSize.rows, cols: result.boardSize.cols, wires: [] };
+  for (const p of collectBoardPins(sized, virtual, componentDefs, netAssignments)) held.add(holeKey(p.row, p.col));
+  for (const w of result.wires) { held.add(holeKey(w.from.row, w.from.col)); held.add(holeKey(w.to.row, w.to.col)); }
   let cuts = result.cuts;
   for (;;) {
-    const segBoard: Board = { ...board, rows: result.boardSize.rows, cols: result.boardSize.cols, cuts, wires: [] };
+    const segBoard: Board = { ...sized, cuts };
     const segments = computeStripSegments(segBoard, virtual, componentDefs, netAssignments);
     const dead = (s: (typeof segments)[number]) => {
       if (s.netIds.length > 0) return false;
-      for (let c = s.startCol; c <= s.endCol; c++) if (ends.has(holeKey(s.row, c))) return false;
+      for (let c = s.startCol; c <= s.endCol; c++) if (held.has(holeKey(s.row, c))) return false;
       return true;
     };
     let drop = -1;

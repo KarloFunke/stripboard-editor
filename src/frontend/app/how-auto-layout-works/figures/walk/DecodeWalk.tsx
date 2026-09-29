@@ -2,13 +2,14 @@
 
 import { useMemo } from "react";
 import type { LabFrame } from "@/components/stripboard/autoLayout5";
-import { LAB, GENOME, PARTS } from "./lab";
+import { DECODE_WALK, GENOME, PARTS } from "./lab";
 import BoardView from "./BoardView";
 import LaneView from "./LaneView";
 import Player from "./Player";
 
 // ── Section 6: the decode of one description, stage by stage ──
-// Each figure replays the frames the real decoder recorded on the example.
+// Each figure replays the frames the real decoder recorded on the example
+// (lab.ts DECODE_WALK).
 
 function OrderChips({ order, pair }: { order: number[]; pair?: [number, number] }) {
   return (
@@ -41,12 +42,8 @@ function RelationsView({ f }: { f: LabFrame }) {
   );
 }
 
-// the decoder writes strip-group splits back into the description it is
-// given, so it gets a copy
-const DECODED = LAB.decode(LAB.cloneG(GENOME), true);
-
 export default function DecodeStage({ stage, caption }: { stage: 1 | 2 | 3 | 4 | 5 | 6; caption?: string }) {
-  const frames = useMemo(() => DECODED.frames.filter((f) => f.stage === stage), [stage]);
+  const frames = useMemo(() => DECODE_WALK.filter((f) => f.stage === stage), [stage]);
   const size = useMemo(() => {
     let rows = 1, cols = 1;
     for (const f of frames) {

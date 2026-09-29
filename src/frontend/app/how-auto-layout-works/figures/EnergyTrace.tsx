@@ -1,5 +1,5 @@
 // ── A real run, traced ──
-// One anneal of a 27-component corpus board (project 61), one sample per 1% of the
+// One anneal of a 27-component corpus board, one sample per 1% of the
 // run: progress %, temperature, price of a slanted or crossing wire, current
 // score, best score so far, worse moves kept and worse moves offered in that
 // window. Captured through the engine's trace hook.

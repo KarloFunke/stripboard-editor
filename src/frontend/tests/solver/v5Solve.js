@@ -1,14 +1,22 @@
 // One v5 solve of one corpus project for one seed; prints a JSON line.
 //   node tests/solver/v5Solve.js --data <dir> --id <n> --seed <k> --moves <m> [--out <compiled dir>]
 //        [--movelog <dir>]   one gzipped CSV of every anneal proposal per id/seed
+//                            (last column: the leaf of a stacked solve, empty for a joint one)
 //        [--time <ms>]       wall-time budget per seed instead of --moves
+//        [--speedprobe <n>]  only time n decodes of random genomes (prints probeMs)
+//        [--progress 1]      print the anneal's progress reports with their time (stderr)
+//        [--effort <x>]      moves = the pin-count formula times x (the editor's effort; --time then only guards)
 //        [--drilled 1]       drilled cuts only
 //        [--nostack 1]       no wire stacking
 //        [--protect 1]       strip groups are never dissolved by the decoder (contradicting proposals refused)
+//        [--wasm <file>]     the decoder module (default components/stripboard/v5wasm/v5decode.wasm)
+//        [--routewasm <file>] the wire router module (default components/stripboard/v5wasm/v5route.wasm)
+//        [--native 1]        decoder and router as native code (npm run build:native; see nativeInstance.js)
 //        [--exact 1]         finish every new best of the walk exactly and keep the cheapest
 //        [--dump <dir>]      store the seed's skeleton (the anneal's placement and wiring) as <dir>/<id>_s<seed>.json
 //        [--stack <pins>]    the stacked solve: leaves under this pin cap, one above the other
 //        [--stackfree 1]     with --stack: leaves at their own width instead of one locked width
+//        [--stackmin <pins>] with --stack: stack only from this many placeable pins, as the editor does (joint below)
 //        [--macro <pins>]    the macro solve: leaves under this pin cap become parts of a top-level anneal
 //        [--toptime <ms>]    with --macro: the top-level anneal's own time budget
 //        [--topmoves <n>]    with --macro: the top-level anneal's own move count (repeatable under load)
@@ -21,6 +29,8 @@
 //        [--skeleton <file>] skip the anneal: run the finish alone on a stored skeleton
 //        [--repair 0|1|2]    with --skeleton: router only (0), the decoder's board routed again when not clean (1)
 //                            or as is (2); without the flag both finishes run and the cheaper board wins, as the editor does
+//        [--mix <json>]      another move mix: {"early":[13 entries],"late":[13 entries],"lateFrom":0.5} (decode.c mixEarly;
+//                            a table of 12, as before 2026-09-27, has no pull and tie; joint solves only)
 //        [--hint <ms/move>]  decode speed of an earlier run: the time budget becomes a fixed count
 const fs = require("fs");
 const path = require("path");
@@ -47,18 +57,35 @@ const id = Number(argVal("id"));
 const seed = Number(argVal("seed") ?? 0);
 const moves = argVal("moves") ? Number(argVal("moves")) : undefined;
 const moveLogDir = argVal("movelog");
-const cutAware = argVal("cutaware") === "1";
 const sched = argVal("sched") ? JSON.parse(argVal("sched")) : undefined;
 const timeMs = argVal("time") ? Number(argVal("time")) : undefined;
+const effort = argVal("effort") ? Number(argVal("effort")) : undefined;
+const tProg = performance.now();
+const speedProbe = argVal("speedprobe") ? Number(argVal("speedprobe")) : undefined;
+const onProgress = argVal("progress") === "1" ? (p) => console.error(`progress ${p.frac.toFixed(3)} ${((performance.now() - tProg) / 1000).toFixed(2)}s`) : undefined;
 const drilled = argVal("drilled") === "1";
 const noStack = argVal("nostack") === "1";
 const exact = argVal("exact") === "1";
 const protect = argVal("protect") === "1";
+// the decoder and the wire router in WebAssembly ("1" also means the default
+// file, as older runs passed it); builds before 2026-09-26 route in TypeScript
+const moduleOf = (arg, file) => new WebAssembly.Module(fs.readFileSync(arg && arg !== "1" ? arg : path.join(__dirname, "../../components/stripboard/v5wasm", file)));
+const wasmOpts = { wasm: moduleOf(argVal("wasm"), "v5decode.wasm") };
+const routeModule = moduleOf(argVal("routewasm"), "v5route.wasm");
+if (argVal("native") === "1") require("./nativeInstance.js").install(wasmOpts.wasm, routeModule);
+try {
+  const { setRouteWasm } = require(path.join(OUT, "components/stripboard/v5wasm/routeWasm.js"));
+  setRouteWasm(routeModule);
+} catch (err) {
+  if (err.code !== "MODULE_NOT_FOUND") throw err;
+}
 const dumpDir = argVal("dump");
 const skeletonFile = argVal("skeleton");
 const repair = argVal("repair") === "1" ? "fallback" : argVal("repair") === "2" ? "only" : argVal("repair") === "0" ? "never" : undefined;
 const hint = argVal("hint") ? Number(argVal("hint")) : undefined;
-const stackCap = argVal("stack") ? Number(argVal("stack")) : undefined;
+const moveMix = argVal("mix") ? JSON.parse(argVal("mix")) : undefined;
+let stackCap = argVal("stack") ? Number(argVal("stack")) : undefined;
+const stackMin = argVal("stackmin") ? Number(argVal("stackmin")) : undefined;
 const stackFree = argVal("stackfree") === "1";
 const macroCap = argVal("macro") ? Number(argVal("macro")) : undefined;
 const topTime = argVal("toptime") ? Number(argVal("toptime")) : undefined;
@@ -76,24 +103,25 @@ let budget;
 // a full anneal is millions of proposals and keeping them all in memory
 // cost about 2 GB per worker on a big board, which 12 workers cannot afford.
 let logBuf = [];
+// written synchronously, one gzip member per batch: the anneal never yields to
+// the event loop, so an async stream would hold the whole log in memory
 let logGz = null;
 const logFlush = () => {
   if (!logGz || logBuf.length === 0) return;
-  logGz.write(logBuf.join("\n") + "\n");
+  fs.writeSync(logGz, require("zlib").gzipSync(logBuf.join("\n") + "\n", { level: 1 }));
   logBuf = [];
 };
 const moveLog = moveLogDir
-  ? (r) => {
+  ? (r, leaf) => {
       if (!logGz) {
         fs.mkdirSync(moveLogDir, { recursive: true });
-        logGz = require("zlib").createGzip();
-        logGz.pipe(fs.createWriteStream(path.join(moveLogDir, `${id}_s${seed}.csv.gz`)));
+        logGz = fs.openSync(path.join(moveLogDir, `${id}_s${seed}.csv.gz`), "w");
       }
       logBuf.push(
         r.out < 2
-          ? `${id},${seed},${r.it},${r.kind},${r.out},,,,,,,,,,,,,,,,,`
+          ? `${id},${seed},${r.it},${r.kind},${r.out},,,,,,,,,,,,,,,,,,${leaf ?? ""}`
           : `${id},${seed},${r.it},${r.kind},${r.out},${r.best},${r.same},${r.dEcur.toFixed(2)},${r.dEfin.toFixed(2)},${r.curFin.toFixed(2)},` +
-            `${r.dArea},${r.dWires},${r.dWlen},${r.dCuts},${r.dBcuts},${r.dMess},${r.dHard},${r.dStarv},${r.dOther.toFixed(2)},${r.dGeo},${r.dOverlap},${r.dStarvH}`
+            `${r.dArea},${r.dWires},${r.dWlen},${r.dCuts},${r.dBcuts},${r.dMess},${r.dHard},${r.dStarv},${r.dOther.toFixed(2)},${r.dGeo},${r.dOverlap},${r.dStarvH},${leaf ?? ""}`
       );
       if (logBuf.length >= 8192) logFlush();
     }
@@ -107,6 +135,10 @@ const blankComps = data.components.map((c) => ({
   ...c, boardPos: null, flexibleEndPos: undefined, rotation: 0, locked: undefined,
 }));
 const blankBoard = { ...data.board, cuts: [], wires: [], lockedRows: false, lockedCols: false };
+if (stackCap && stackMin) {
+  const placeable = new Set(blankComps.filter((c) => !c.boardExcluded).map((c) => c.id));
+  if (asg.filter((a) => placeable.has(a.componentId)).length < stackMin) stackCap = undefined;
+}
 
 const t0 = Date.now();
 // the anneal's own best skeleton for this seed, read off the debugSeeds line
@@ -156,20 +188,27 @@ try {
       ...(noStack ? { noWireStacking: true } : {}),
       ...(exact ? { exactBest: true } : {}),
       ...(stackFree ? { freeWidth: true } : {}),
+      ...(effort !== undefined ? { effort } : {}),
+      ...(protect ? { protectTies: true } : {}),
+      ...wasmOpts,
+      ...(moveLog ? { moveLog } : {}),
       onLeaves: (info) => { stackInfo = info; },
     });
-  } else res = computeAutoLayout5(blankBoard, blankComps, defs, nets, asg, undefined, {
+  } else res = computeAutoLayout5(blankBoard, blankComps, defs, nets, asg, onProgress, {
     seedIndex: seed,
     ...(moves ? { moves } : {}),
     ...(moveLog ? { moveLog } : {}),
-    ...(cutAware ? { cutAwareScan: true } : {}),
+    ...(moveMix ? { moveMix } : {}),
     ...(sched ? { schedule: sched } : {}),
     ...(timeMs ? { timeBudgetMs: timeMs, onBudget: (b) => { budget = b; } } : {}),
+    ...(effort !== undefined ? { effort } : {}),
     ...(drilled ? { drilledCutsOnly: true } : {}),
     ...(noStack ? { noWireStacking: true } : {}),
     ...(exact ? { exactBest: true } : {}),
     ...(protect ? { protectTies: true } : {}),
+    ...wasmOpts,
     ...(hint ? { msPerMoveHint: hint } : {}),
+    ...(speedProbe ? { speedProbe, onSpeedProbe: (ms) => { process.stderr.write(`probeMs ${ms}\n`); } } : {}),
     debugSeeds: true,
     ...(dumpDir ? { onSkeleton: (s, sk) => { fs.mkdirSync(dumpDir, { recursive: true }); fs.writeFileSync(path.join(dumpDir, `${id}_s${s}.json`), JSON.stringify(sk)); } } : {}),
   });
@@ -181,7 +220,7 @@ console.log = origLog;
 const ms = Date.now() - t0;
 if (logGz) {
   logFlush();
-  logGz.end();
+  fs.closeSync(logGz);
 }
 const rate = rateResult(res, blankBoard, blankComps, defs, drilled);
 const price = priceResult ? priceResult(res, blankBoard, expandOffBoard(blankComps, defs, asg).components, defs, drilled) : undefined;
@@ -224,10 +263,18 @@ if (saveFile) {
   };
   fs.writeFileSync(saveFile, JSON.stringify(saved));
 }
-const m = metrics(solvedBoard, solvedComps, defs, nets, asg);
+// measured as the editor sees the board: an off-board part is its pads, placed
+// where the layouter put them (until 2026-09-28 the parents were measured, so
+// every net through an off-board part counted as incomplete)
+const view = expandOffBoard(blankComps, defs, asg);
+const boardComps = view.components.map((c) => {
+  const p = byId.get(c.id);
+  return p ? { ...c, boardPos: p.boardPos, ...(p.rotation !== undefined ? { rotation: p.rotation } : {}), ...(p.flexibleEndPos !== undefined ? { flexibleEndPos: p.flexibleEndPos } : {}) } : c;
+});
+const m = metrics(solvedBoard, boardComps, defs, nets, view.netAssignments);
 // connectors: off any edge, or on an edge but reaching into the board
 let connOff = 0, connIn = 0, knife = 0;
-for (const c of solvedComps) {
+for (const c of boardComps) {
   const def = defs.find((x) => x.id === c.defId);
   if (!def || def.category !== "connector" || !c.boardPos || c.boardExcluded) continue;
   let minRow, maxRow, minCol, maxCol;
@@ -241,8 +288,8 @@ for (const c of solvedComps) {
 for (const cut of solvedBoard.cuts) if (cut.kind !== "hole") knife++;
 const { wireStackDepth } = require(path.join(OUT, "components/stripboard/flexGeometry.js"));
 const stacked = res.wires.filter((w, i) => wireStackDepth(w.from, w.to, res.wires.slice(0, i)) > 0).length;
-const v = verify(solvedBoard, solvedComps, nets, asg, defs);
-const geo = checkGeometry(solvedBoard, solvedComps, defs).length;
+const v = verify(solvedBoard, boardComps, nets, view.netAssignments, defs);
+const geo = checkGeometry(solvedBoard, boardComps, defs).length;
 console.log(JSON.stringify({
   id, seed, ms, rate, ...(price !== undefined ? { price } : {}), sig,
   ...(budget ? { budget } : {}),

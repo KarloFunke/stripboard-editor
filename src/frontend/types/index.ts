@@ -274,10 +274,6 @@ export interface Project {
   // Auto-layout config: free board lines kept between all parts, on top of
   // their real size. 0 packs parts as tightly as they physically fit.
   partSpacing?: number;
-  // Auto-layout config: tidy second pass that trades board area for
-  // straighter wires, kept only when it actually is tidier. On by default;
-  // false turns it off (halves solve time, may leave messier wires).
-  tidyWires?: boolean;
   // Auto-layout config: only sever strips by drilling a hole, never by
   // cutting the copper between two holes (easier to build, may cost board
   // space). On unless explicitly false.
@@ -291,11 +287,13 @@ export interface Project {
   permWorkers?: number;
   // v5 beta: anneal moves per seed (undefined = size-scaled default)
   v5Moves?: number;
-  // v5: wall-time budget per layout in seconds (undefined = 60)
-  v5TimeS?: number;
-  // v5: decode speed the last run measured on this machine, ms per move;
-  // turns the time budget into a repeatable move count
-  v5MsPerMove?: number;
+  // v5: moves per layout as a multiple of the pin-count formula
+  // (undefined = V5_EFFORT_DEFAULT)
+  v5Effort?: number;
+  // v5: how long the last full run took on this machine, in seconds at
+  // effort 1 (its wall time divided by its effort), and the layouter version
+  // that ran it: the settings' time estimate, void once the version changes
+  v5RunS?: { s: number; version: string };
   // v5: fresh random seeds on every run instead of the fixed series
   v5RandomSeeds?: boolean;
   // Auto-layout engine: "v5" (annealed, default when absent) or "v2"

@@ -8,6 +8,13 @@ export interface Update {
 
 export const UPDATES: Update[] = [
   {
+    date: "2026-09-29",
+    items: [
+      "Auto-layout is a lot faster (and even a bit better). Most circuits are done in a few seconds instead of about a minute, and large ones get a more thorough search.",
+      "Effort now sets how many layouts are tried, and a new Processor threads setting sets how much of your computer they use without changing the board you get. The settings show how long a run will take.",
+    ],
+  },
+  {
     date: "2026-09-24",
     items: [
       "Bug fixed so correctly with the part. The pin 1 notch on an IC and the slider on a switch stayed put at some angles.",

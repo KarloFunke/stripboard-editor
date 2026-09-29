@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { getSymbolDef, type SymbolDef } from "@/data/symbolDefs";
+import { getSymbolDef } from "@/data/symbolDefs";
 
 interface SymbolRendererProps {
   symbolId: string;

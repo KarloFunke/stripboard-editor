@@ -58,6 +58,8 @@ export interface AutoLayout5MacroOptions {
   minCompress?: number;
   // free lines a cluster keeps to its neighbours (default 1)
   clusterGap?: number;
+  // the decoder in WebAssembly (autoLayout5 wasm)
+  wasm?: WebAssembly.Module;
   onInfo?: (info: MacroInfo) => void;
 }
 
@@ -229,6 +231,7 @@ export function computeAutoLayout5Macro(
     ...(options?.drilledCutsOnly ? { drilledCutsOnly: true } : {}),
     ...(options?.noWireStacking ? { noWireStacking: true } : {}),
     ...(options?.exactBest ? { exactBest: true } : {}),
+    ...(options?.wasm ? { wasm: options.wasm } : {}),
   };
   interface Leaf {
     def: ComponentDef;
@@ -364,6 +367,7 @@ export function computeAutoLayout5Macro(
           ...(options?.drilledCutsOnly ? { drilledCutsOnly: true } : {}),
           ...(options?.noWireStacking ? { noWireStacking: true } : {}),
           ...(options?.exactBest ? { exactBest: true } : {}),
+          ...(options?.wasm ? { wasm: options.wasm } : {}),
         });
   if (!top.boardSize || top.quality > 0) return fail("the clusters could not be laid out together");
   info.top = { parts: topComps.filter((c) => !c.boardExcluded).length, pins: topAsg.length, ms: Date.now() - t1, rows: top.boardSize.rows, cols: top.boardSize.cols };

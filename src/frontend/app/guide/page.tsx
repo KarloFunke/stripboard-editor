@@ -174,7 +174,7 @@ export default function GuidePage() {
           <UL>
             <li><strong>Lock the board size.</strong> Click the padlock next to <em>Rows</em> or <em>Cols</em> to keep exactly that many. A locked board cannot grow, so a few slanted or crossing wires may remain.</li>
             <li><strong>Lock parts.</strong> Select placed parts and press <K>L</K> to keep them where they are. Locked layouts come out a little larger.</li>
-            <li><strong>Settings</strong> (gear beside the button): standing parts, extra room between parts, drilled cuts only, no stacked wires, how many layouts to solve, and the anneal effort per layout. Each option explains itself in the panel.</li>
+            <li><strong>Settings</strong> (gear beside the button): new layouts every run, drilled cuts only, no stacked wires, standing parts, extra room between parts, effort, and processor threads. Effort sets how many layouts are tried and how long each one searches; the panel shows how long a run will take on your machine. Each option explains itself in the panel.</li>
           </UL>
           <p className="text-sm text-neutral-700 dark:text-neutral-300 mt-3">
             Curious how it decides all this? <TrackedLink from="guide" to="explainer" href="/how-auto-layout-works" className="text-[var(--copper)] hover:underline font-semibold">How auto-layout works &rarr;</TrackedLink>

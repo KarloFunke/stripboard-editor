@@ -206,4 +206,20 @@ const {
   assert(res.issues.length === 0, `T9: no reserve demand once nothing is pending (${JSON.stringify(res.issues)})`);
 }
 
+// ── T13: the idle-cut pass keeps a pin on no net floating ──
+{
+  const { dropIdleCuts } = require("./out/components/stripboard/layout2/finish.js");
+  const a = testPin(5, 1), floater = testPin(5, 4);
+  const nets = [net("n1")];
+  const asg = [assign("n1", a, "1")];
+  const result = {
+    placements: [a, floater].map((c) => ({ componentId: c.id, boardPos: c.boardPos })),
+    cuts: [{ row: 5, col: 2 }, { row: 5, col: 5 }], wires: [], issues: [], quality: 0, starvedNetIds: [],
+    boardSize: { rows: 10, cols: 10 },
+  };
+  const res = dropIdleCuts(result, emptyBoard(10, 10), [a, floater], DEFS, asg);
+  assert(res.cuts.some((k) => k.col === 2), `T13: the cut between n1 and the floater stays (${JSON.stringify(res.cuts)})`);
+  assert(!res.cuts.some((k) => k.col === 5), `T13: the cut beside dead copper goes (${JSON.stringify(res.cuts)})`);
+}
+
 finish("autofinish");

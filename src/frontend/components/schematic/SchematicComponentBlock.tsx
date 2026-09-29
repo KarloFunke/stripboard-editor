@@ -6,7 +6,6 @@ import { Component } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import SymbolRenderer, { getSymbolBounds, getRotatedPinPositions } from "./SymbolRenderer";
 import { getSymbolDef } from "@/data/symbolDefs";
-import { snapToGrid } from "@/utils/schematicConstants";
 
 interface Props {
   component: Component;

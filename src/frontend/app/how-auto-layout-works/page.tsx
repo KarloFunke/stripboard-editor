@@ -79,19 +79,17 @@ export default function AutoLayoutGuidePage() {
           </P>
           <P>
             So the layouter searches. It describes a board in a compact form, scores it, changes the description a little, scores
-            it again, and repeats this hundreds of thousands of times slowly creating a better and better layout.
+            it again, and repeats this tens of thousands to millions of times slowly creating a better and better layout.
             The method is called simulated annealing, after the way slowly cooled metal settles into an orderly crystal, and it is
             the heart of the whole thing.
           </P>
           <P>
-            This page explains how the algorithm used by this website works.
-            First what annealing is, by demonstrating it on a simplified version of the problem. Then
-            what a problem needs so that annealing works on it. Then what a good board is, how a stripboard layout is written down and changed, how the
-            written form turns back into a board and a score, and how a run is put together and finished. It assumes an interest in how things work and nothing else.
+            This page explains how it works. It starts with annealing on a much simpler puzzle, then follows a real board
+            through the layouter from start to finish. It assumes an interest in how things work and nothing else.
           </P>
           <details id="stripboard" className="my-6 rounded border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800/40 px-3 py-2 [&[open]]:pb-3">
             <summary className="cursor-pointer text-xs font-mono text-[var(--copper)] hover:underline marker:text-neutral-400">
-              0. What is stripboard? (if you somehow ended up on a website that lays out stripboard but don&apos;t know what it is, please read this)
+              0. What is stripboard? A quick introduction if you are new to it
             </summary>
             <div className="mt-3">
               <P>
@@ -115,6 +113,17 @@ export default function AutoLayoutGuidePage() {
                 be joined, a short piece of wire is soldered from a hole in one row to a hole in the other, which is called a
                 link wire.
               </P>
+              <figure className="my-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <img src="/board-fully-assembled-front.jpg" alt="A finished stripboard seen from the component side: resistors, an optocoupler, capacitors, LEDs, a fuse, two connectors and coloured link wires, pushed through a printed layout" width={1500} height={1165} className="w-full h-auto rounded border border-neutral-200 dark:border-neutral-700" />
+                  <img src="/board-fully-assembled-back.jpg" alt="The same board from the copper side: solder joints along the copper strips, and a few holes drilled out to break a strip" width={1500} height={1258} className="w-full h-auto rounded border border-neutral-200 dark:border-neutral-700" />
+                </div>
+                <figcaption className="mt-2 text-xs text-neutral-500 dark:text-neutral-400 leading-snug">
+                  A finished board from both sides. On the component side the parts and their coloured link wires are pushed
+                  through a printout of the layout from the editor, which shows where everything goes. On the copper side every
+                  leg is soldered to its strip, and in a few places a hole is drilled out to break the strip.
+                </figcaption>
+              </figure>
               <P>
                 So a stripboard layout is three decisions at once: where each component sits, where the strips are cut, and
                 where the link wires run. They depend on each other, and doing them by hand is a puzzle.
@@ -219,13 +228,13 @@ export default function AutoLayoutGuidePage() {
           <P>
             Sadly few real problems can be written down so that they turn into the rolling hills on the left, and stripboards are
             not among them (as far as I know as of writing this anyway). But luckily it turns out they do not have to be. A landscape anneals well as long as it has structure of the
-            right kind, picture a river valley: steep walls on most sides, but between the walls a floor
-            that keeps going downhill. A hot search crosses the walls freely and stumbles into different valleys. 
-            A cooling one is caught by one valley, and once it is in that valley it can follow the valley downstream. 
+            right kind, picture a canyon running through a mesa terrain: steep walls on most sides, but between the walls a floor
+            that keeps going downhill just slightly, now and then a watefall as a big drop. A hot search crosses the walls freely and stumbles into a different canyon.
+            A cooling one is caught by one canyon, and once it is in that canyon it can follow the river downstream. 
             Such a landscape takes more effort to walk than rolling hills, since most
-            directions from any point are walls and the annealer cannot see the channel, it has to blindly try moves slowly stumbling downhill. But it anneals.
+            directions from any point are walls and the annealer cannot see the canyon, it has to blindly try moves slowly stumbling downhill.
           </P>
-          <LandscapeValley caption="What most real problems offer at best: walls on most sides, and channels between them that run downhill. A search that finds a channel can follow it a long way down." />
+          <LandscapeValley caption="What most real problems offer at best: walls on most sides, and canyons between them. A search that finds a canyon can follow it a long way down." />
           <H3>The description must rule out nonsense, or price it</H3>
           <P>
             The toy rejects overlapping placements outright, which is fine for eight blocks where most moves are valid. For a real
@@ -285,7 +294,7 @@ export default function AutoLayoutGuidePage() {
           <P>
             This section describes the alternative the layouter uses instead: a way of writing a board down in which
             every value is a board, every good board can still be expressed, and the landscape resembles the 
-            river valleys instead of a saw blade.
+            canyons instead of a saw blade.
           </P>
           <P>
             To achieve this the layouter never records where a component is. 
@@ -373,12 +382,13 @@ export default function AutoLayoutGuidePage() {
           <H2 id="moves">5. The moves</H2>
           <P>
             The description is settled, so the next question is what a step of the search looks like. In section 1 a step
-            nudged a block by one cell. Here a step edits the description: it changes one or two of its entries.
+            nudged a block by one cell. Here a step edits the description: it changes one or a few of its entries.
             Each step proposes one of these changes, chosen at random with fixed odds:
           </P>
           <UL>
             <li>Swap two nearby entries in the first order, in the second, or in both.</li>
             <li>Pull a component next to another component of the same net, in both orders at once.</li>
+            <li>Pull and tie: the same pull, and the pulled component&apos;s pin on that net joins the strip group of the other, so the two are asked to share a strip. This is the most frequent move, about a third of all steps.</li>
             <li>Flip a flexible component between flat and upright, turn it around, or change how far its leads span.</li>
             <li>Merge two strip groups of a net, or split a pin off into a group of its own.</li>
             <li>Open or close a reserved blank row or column beside a component.</li>
@@ -386,22 +396,14 @@ export default function AutoLayoutGuidePage() {
             <li>Throw a connector to the far end of both orders, so it can reach the opposite board edge.</li>
           </UL>
           <P>
-            Try them on the example. Each button proposes one random change of that kind and marks what changed in the
-            description. The two boards are what the description stood for before and after: how the layouter gets from the
-            description to a board is the subject of the next section, so for now take them as given. Keep a change or undo it, as
-            the annealer does at every step.
+            Here is one move of each kind on the example, each one proposed by the layouter&apos;s own move generator and each
+            starting from the same description. Step through them and compare the board before and after. Most of them make the
+            score worse, some by hundreds of points (but there is one good move among them : ) ). Those jumps are the steep walls
+            of the canyons; late in a run, the annealer spends its time finding the few moves that follow a canyon down.
           </P>
+          <MoveDemo caption="One move of each kind, all from the same description, with mess priced as at the end of a run. The changed entries of the description are marked." />
           <P>
-            Be warned that most buttons will make the score jump by several hundred points (But there is at least one good move to discover : ) ). 
-            That is the consequence of the landscape. 
-            A change that leaves a pin without a free hole for its wire, or lays a wire across a component, is
-            priced far above any saving in area. Most single edits of a decent description do exactly that. Those are the steep walls
-            at the edges of the river valleys. Finding the few moves that travel down the river valley is what the annealer is spending its time on 
-            in the ending phase of each run. While at the start it accepts those big jumps in the score to find a valley to settle into.
-          </P>
-          <MoveDemo caption="One move at a time, with mess priced as at the end of a run. The changed entries of the description are marked." />
-          <P>
-            One thing the demo quietly assumes is the whole problem of the next section. A move changes an entry or two of
+            One thing the demo quietly assumes is the whole problem of the next section. A move changes a few entries of
             the description, and the annealer has to judge whether the board got better. But the description has no area,
             no wires and no cuts; it is far too abstract to score. So every single step, the description has to be turned back into a board
             first, so that it can be measured.
@@ -440,9 +442,11 @@ export default function AutoLayoutGuidePage() {
           </P>
           <P>
             Sometimes the ties and the arrows ask for the impossible: the orders put one component above another, but a strip
-            group wants pins of the two on the same strip. In this case the decoder
-            splits one pin out of its strip group, writes that back into the description so the annealer state gets it as well, and
-            starts the row solve over. The pin gets a link wire later instead.
+            group wants pins of the two on the same strip. When that happens to the random description a run starts from, or to
+            the example here, the decoder splits one pin out of its strip group, writes that back into the description so the
+            annealer state gets it as well, and starts the row solve over. The pin gets a link wire later instead. Once the run is
+            under way the decoder is stricter: a move whose orders contradict a strip group is thrown away, so the groups the
+            search has built up are not dissolved by accident.
           </P>
           <DecodeStage stage={2} caption="The row solve. One lane per component in the sequence of the first order, the vertical axis is the row. Amber: the arrow being applied. Dashed lines: pins tied to one strip. Red: a contradiction." />
           <H3>Columns</H3>
@@ -509,7 +513,7 @@ export default function AutoLayoutGuidePage() {
           <P>
             Here is everything from sections 4 to 8 in one place: a random description of the example, the moves of section
             5, the decoder of section 6 and the score of section 7, a falling temperature and a rising price of mess. It is
-            the layouter&apos;s own loop, run on the example for a few thousand steps and replayed. Press play and watch a board
+            the layouter&apos;s own loop, run on the example for twenty-five thousand steps and replayed. Press play and watch a board
             appear.
           </P>
           <MiniRun seed={7} steps={25000} caption="A full run on the example. Early on the board is a mess and the annealer does not care; as the price of mess rises the wires straighten, and as the temperature falls the board packs. Finished runs show the best board found, scored at the full price." />
@@ -517,38 +521,32 @@ export default function AutoLayoutGuidePage() {
           {/* 9 */}
           <H2 id="finish">9. Finishing the board</H2>
           <P>
-            The annealer returns a description, and its decoded board is already complete in principle. But the decoder&apos;s wire routing is a
-            fast approximation, built to be run hundreds of thousands of times, and two of the editor&apos;s rules are not in it
-            at all: no link wire may lie on top of another (if asked for it), and none may run over the body of a part.
-            So the best description of a run is finished
-            properly before you ever see it in the editor.
-          </P>
-          <P>
-            There are two approaches. We try both and keep whichever produced the better result:
+            The decoded board of a run is complete in principle, but its wiring is a fast approximation, and two of the
+            editor&apos;s rules are not in it at all: no link wire may lie on top of another (if asked for it), and none may run
+            over the body of a part. So the best board of a run is finished properly before you see it, in two ways, and the
+            cheaper result wins:
           </P>
           <UL>
-            <li><strong>Start over.</strong> Keep only where the parts stand, throw the decoder&apos;s cuts and wires away, and hand them to a much slower and more thorough router that works them out again from the strips up. It may pick quite different wires, and it buys a blank row or column wherever one is needed to keep them straight.</li>
-            <li><strong>Repair.</strong> Keep the decoder&apos;s board exactly as the annealer scored it, and touch only what the rules reject. A wire lying on another or crossing a part moves to a different column of the same two strips, or is given a blank column of its own. Which two strips a wire joins never changes, and no cut is worked out again.</li>
+            <li><strong>Start over.</strong> Keep only where the parts stand and let a slower, more thorough router work out the cuts and wires again from the strips up. It may pick quite different wires, and it adds a blank row or column wherever a wire needs one to stay straight.</li>
+            <li><strong>Repair.</strong> Keep the decoder&apos;s board as the annealer scored it and fix only what the rules reject. A wire lying on another or crossing a part moves to another column of the same two strips, or gets a blank column of its own.</li>
           </UL>
-          <H3>Why the search cannot use them</H3>
           <P>
-            A fair question at this point: if these two abide by the real rules and do a better job in general, then why 
-            does the search not use them during the annealing process?
-            Because both are hundreds of times slower, and the search needs hundreds of thousands of steps on big boards. Here is
-            one decode, one repair and one full route timed on four boards of the corpus:
+            The repair is quick enough to run on every new best board the second half of a run finds, not only on the last one,
+            and now and then one of those finishes cheaper than the last. How often each finish delivers the board you get,
+            at the Normal setting:
           </P>
           <div className="my-4 overflow-x-auto">
             <table className="w-full text-xs border-collapse">
               <thead>
                 <tr className="text-left text-neutral-500 dark:text-neutral-400">
-                  <th className="py-1 pr-4 font-normal">Parts</th>
-                  <th className="py-1 pr-4 font-normal">One decode</th>
-                  <th className="py-1 pr-4 font-normal">One repair</th>
-                  <th className="py-1 font-normal">One full route</th>
+                  <th className="py-1 pr-4 font-normal">Circuit</th>
+                  <th className="py-1 pr-4 font-normal">Start over</th>
+                  <th className="py-1 pr-4 font-normal">Repair</th>
+                  <th className="py-1 font-normal">Repair of an earlier board</th>
                 </tr>
               </thead>
               <tbody className="text-neutral-700 dark:text-neutral-300">
-                {([["13", "0.047 ms", "4.5 ms", "6 ms"], ["22", "0.065 ms", "10 ms", "31 ms"], ["48", "0.143 ms", "26 ms", "83 ms"], ["55", "0.165 ms", "25 ms", "116 ms"]] as const).map((r) => (
+                {([["under 25 pins", "65%", "22%", "13%"], ["25 to 49", "47%", "30%", "23%"], ["50 to 99", "25%", "39%", "36%"], ["100 to 199", "32%", "15%", "52%"]] as const).map((r) => (
                   <tr key={r[0]} className="border-t border-neutral-200 dark:border-neutral-700">
                     <td className="py-1 pr-4">{r[0]}</td><td className="py-1 pr-4">{r[1]}</td><td className="py-1 pr-4">{r[2]}</td><td className="py-1">{r[3]}</td>
                   </tr>
@@ -557,18 +555,17 @@ export default function AutoLayoutGuidePage() {
             </table>
           </div>
           <P>
-            On the largest of those the decoder scores about six thousand descriptions a second. Routing each one properly
-            instead would manage nine per second, so the default minute the layouter is given would need to become about twelve hours. 
-            Repairing is much
-            cheaper than routing, but still around 150 times slower than a decode, which is a run of two and a half hours.
-            That is the whole reason the decoder is allowed to be approximate.
+            Starting over wins most boards under 25 pins. From about 50 pins on, the annealer&apos;s own wiring, repaired,
+            delivers two boards in three.
+          </P>
+          <H3>Why the search cannot use them</H3>
+          <P>
+            If these two follow the real rules, why does the search not use them at every step? Because each is hundreds of
+            times slower than a decode, so a run that takes a minute would take many hours. That is the whole reason the
+            decoder is allowed to be approximate.
           </P>
           <P>
-            Here are both finishes, working on the description the run of section 8 ended with. One part does move before
-            either of them starts: the finish first adds blank lines around the board for the wires to use, and a connector
-            that belongs on an edge is pinned to the new edge rather than carried along with everything else. That is why the
-            connector sits two columns further right in the first frame while every other part is exactly where the annealer
-            left it.
+            Here are both finishes on the description the run of section 8 ended with.
           </P>
           <FinishWalk/>
           <P>
@@ -579,42 +576,50 @@ export default function AutoLayoutGuidePage() {
           {/* 10 */}
           <H2 id="portfolio">10. Many runs</H2>
           <P>
-            A run ends where its channel took it, and a different random start means a different channel. Nothing marks the
-            one a run found as the deepest there was, so the layouter does not make one run. It tries several in parallel, from
-            different starts, and keeps the best board of the lot.
+            A run ends where its canyon took it, and a different random start means a different canyon. Nothing marks the
+            one a run found as the deepest there was, so the layouter does not make one run. It makes several, from different
+            starts, and keeps the best board of the lot.
           </P>
-          <LandscapeValley seed={3} runs={6} caption="Six runs on the landscape of section 2. Each ball is where one run froze, at the bottom of whichever channel it happened to find. They end at quite different depths, and the copper one, the deepest, is the board you would be given." />
+          <LandscapeValley runs caption="Four runs on the landscape of section 2, each from a random start to where it ended (dot)." />
           <P>
-            The Layouts to solve setting says how many. The runs are spread over the processor cores of your machine,
-            one run per core in use. The finished
-            boards are compared on completeness first (for the very rare cases where a run wasn&apos;t able to complete a board), 
-            then on the score. Every run uses a fixed random seed, so the same circuit with the same settings on the same machine
-            gives the same board again; a setting starts every run from fresh random arrangements instead, for when you
-            want to see more alternatives.
+            Each of the four starts out hot and wanders over the plateau, where every direction is about as good as any other.
+            As it cools, it is caught by a canyon and follows it down. The red run even
+            fell into a small canyon early on and, still hot, climbed back out and crossed over to a bigger one. The four end at
+            four very different depths, and only the red one found the deepest canyon. Its board is the one you get.
+          </P>
+          <P>
+            How many runs are made, and how long each one searches, is what the Effort setting controls.
           </P>
 
           {/* 11 */}
           <H2 id="limits">11. What it cannot do</H2>
           <UL>
             <li><strong>Locked boards and locked components.</strong> Expect a run containing locked pieces or dimensions to be somewhat larger, or to keep a few slanted wires. It takes away some freedom from the solver.</li>
-            <li><strong>Time.</strong> A small circuit is done in seconds; a big one uses the default minute it is given, depending on exact size it would probably still improve with more time (which you can adjust in the settings).</li>
+            <li><strong>Time.</strong> Hardly a limit any more: most circuits are done in seconds. Only the largest boards of several hundred pins may still take a few minutes.</li>
             <li><strong>Taste.</strong> The score encodes some basic properties like size, wire length and count. It does not know that you wanted the LEDs in a row. Place those components yourself, lock them, and let it arrange the rest around them.</li>
           </UL>
 
           {/* 12 */}
           <H2 id="results">12. How well it works</H2>
           <P>
-            There is currently no fair benchmark for the layouter. It used to be measured against 271 circuits that people had laid out
-            by hand in this editor, but those boards were drawn under the old editor rules. Since then every part is drawn and
-            spaced at its true physical size, so many of the old hand layouts would not pass today&apos;s rules, and a solver held to
-            the stricter rules can&apos;t be fairly compared against them. A new set of hand layouts made under the current rules
-            does not exist yet.
+            To see how it does in practice, I ran it on every circuit saved in the editor so far, 
+            over a thousand of them, each
+            at the Normal setting exactly as the editor would by default. It completed all, and
+            every one of its boards came out clean: no slanted wire, no wire crossing a part or another wire, and
+            none lying on top of another. Most circuits were done in a couple of seconds; those with 
+            hundreds of connected pins took up to 5 minutes at most.
           </P>
           <P>
-            Under the old rules it completed all 271 circuits, from three components up to about fifty, with no slanted wire and
-            no wire crossing a component, at the default of one minute per layout. Its board was smaller than the hand layout in 199
-            cases, larger in 70 and the same size in 2, and 30% smaller on the median. The margin was largest on small boards;
-            beyond about forty components the hand layouts were often still a bit tighter.
+            Compared with the boards people had saved for the same circuits, it usually lays out a smaller board, with fewer
+            link wires and fewer cuts. Take that as a trend rather than a score because many of the saved boards were drawn under older
+            clearance rules, about half of them were laid out by an earlier version of this layouter at some point, and not
+            every saved board was meant to be as small as possible. But it shows that it performs reasonably well.
+          </P>
+          <P>
+            What people do with the result may say the most. Since version 5 came out, about half of the boards it laid out
+            have been kept exactly as delivered, without a single part moved or wire changed, and that share has grown with every
+            update. An untouched board can also be a project someone walked away from, so this too is a trend rather than a
+            score, but it points the same way: on the whole, the layouter builds boards that work, are tight and are clean.
           </P>
           <P>
             Refer to the <Link href="/guide" className="text-[var(--copper)] hover:underline">quick guide</Link> for the buttons
@@ -660,7 +665,7 @@ export default function AutoLayoutGuidePage() {
             the parts of the best candidates along their rows, and only then is the full board worked out: a drilled cut
             at a free hole between two nets, insulated link wires between strips, and a few sweeps to remove unused space.
             Annealing is a helper there: each run is a few thousand steps that polish a board built by other means, judged by
-            the quick estimate. Here it is the whole search: hundreds of thousands of steps on a description of the complete
+            the quick estimate. Here it is the whole search: tens of thousands to millions of steps on a description of the complete
             board, each one decoded and scored with its cuts and wires in place. It is
             a new tool (even newer than this one), and I was not aware of it while developing the layouter on this site, so the two were made independently.
           </P>

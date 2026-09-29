@@ -1,26 +1,18 @@
 import { Board, BoardPosition, Component, ComponentDef, Cut, Net, NetAssignment } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { getComponentBounds, getComponentPinPositions, getRotatedPinPositions } from "./boardLayout";
-import { AutoLayoutProgress, AutoLayoutResult } from "./layoutTypes";
+import { AutoLayoutProgress, AutoLayoutResult, effortMoves } from "./layoutTypes";
 import { Rot, allowedDrows } from "./layout2/tileModel";
-import { Capsule, FootprintRect, bodyRectsClash, capsuleClashesRect, capsulesClash, coveredHoles, segmentsIntersect, wireStackDepth } from "./flexGeometry";
-import { flexBody, flexCoveredHoles, flexProfile, rigidGeometry } from "./partGeometry";
+import { FootprintRect, coveredHoles } from "./flexGeometry";
+import { flexBody, flexProfile, rigidGeometry } from "./partGeometry";
 import { expandOffBoard, leadSiblings } from "./offBoard";
-import { resolvePackage } from "./packageBodies";
-import { alignCuts } from "./layout2/alignCuts";
-import { padAroundEdgeConnectors } from "./layout2/edgePadding";
-import { drillRemainingCuts } from "./autoFinish";
+import { MM_PER_HOLE, bodyWidth, resolvePackage } from "./packageBodies";
+import { V5WasmDecoder, WasmDecodeOut, WasmExport, WasmModel } from "./v5wasm/v5Wasm";
 import { computeStripSegments } from "./stripSegments";
-import { Chooser } from "./layout2/chooser";
-import { compactPlacements } from "./layout2/compaction";
-import { insertWireChannels } from "./layout2/channelPass";
-import { repairSlantWires } from "./layout2/slantRepairPass";
-import { trimResult } from "./layout2/trimResult";
-import { wireMessScore } from "./layout2/tidyScore";
-import { rateResult } from "./autoLayout2";
 import { pinKey } from "./keys";
 import { FinishOptions, Skeleton, finishRepair, finishSkeleton } from "./layout2/finish";
-import { ConnSides, ENTRY_SIDE, PricedConn, PricedGroup, PricedShaft, W_AREA, W_BCUT, W_BCUT_DRILL, W_CUT, W_WIRE, W_WLEN, priceBreakdown } from "./layout2/boardPrice";
+import { unreachablePins, unreachablePinsIssue } from "./unreachablePins";
+import { ConnSides, ENTRY_SIDE, W_BCUT, W_BCUT_DRILL } from "./layout2/boardPrice";
 
 // ── The v5 "skeleton + exact decoder" layouter (beta) ──
 //
@@ -42,6 +34,12 @@ export interface AutoLayout5Options {
   seeds?: number;
   // Anneal budget per seed (default: scaled with part count)
   moves?: number;
+  // Moves per seed as a multiple of the pin-count formula (layoutTypes
+  // effortMoves) with no ceiling: the editor's effort setting. A time budget
+  // given along with it only guards the wall time (the schedule follows the
+  // moves unless the clock runs ahead of them), so an unhurried run repeats
+  // exactly on any machine.
+  effort?: number;
   // Wall-time budget per seed in ms: the schedule (temperature and mess
   // price) then follows the elapsed share of the budget, the run ends when
   // the budget is spent, never before 40k moves and never past the quality
@@ -90,32 +88,36 @@ export interface AutoLayout5Options {
   // mostly through the group moves. The first decode of a seed still splits,
   // since the initial genome asks every net to share one strip.
   protectTies?: boolean | number;
-  // Harness-only landscape instrumentation (never set by the UI): trace is
-  // called once per 1% of the anneal with window statistics, probe once per
-  // seed after the anneal with the engine closures
-  trace?: (rec: LandscapeTrace) => void;
-  probe?: (api: LandscapeProbe) => void;
+  // The pull and tie move (v5wasm/decode.c mutate), on unless false: the
+  // stacked solve's leaves keep the mix without it
+  pullTie?: boolean;
+  // The decoder and the anneal loop (v5wasm/decode.c), compiled: a solve
+  // needs it, the explainer's lab for everything but the part data
+  wasm?: WebAssembly.Module;
   // Harness-only move log: called once per proposal of the anneal with a
   // REUSED record (copy what you keep); see MoveLogRec
   moveLog?: (rec: MoveLogRec) => void;
-  // Harness-only experiment: the row scan hands a boundary's spare holes to
-  // the neighbouring segment that would otherwise have none (knife cut
-  // instead of drilling the only spare hole), so a pin between two cuts is
-  // not declared starved when the finish could still cut with a knife
-  cutAwareScan?: boolean;
+  // Harness-only: another move mix (see V5WasmDecoder.setMix)
+  moveMix?: { early: number[]; late?: number[]; lateFrom?: number };
   // Harness-only schedule overrides for annealing experiments
   schedule?: { t0?: number; t0Scale?: number; tEnd?: number; rampStart?: number; rampEndFrac?: number; hardStart?: number; coldT?: number;
+    // cooling curve shape: T = t0 * (tEnd / t0)^(f^shape), above 1 hotter for longer
+    shape?: number;
     // lean: moves that cannot change the board (rotating a 1x1 part, merging
     // merged labels, splitting a lone label) return null and are resampled
     // instead of spending the iteration
-    lean?: boolean;
-    // adaptive: the move mix follows each kind's recent accepted improvement
-    // per proposal (window in iterations, floor share per kind)
-    adaptive?: { window?: number; floor?: number } };
+    lean?: boolean };
   // Explainer-only: hand the decoder, the moves and the anneal loop to the
   // caller instead of running the portfolio (the guide's figures replay the
-  // decoder step by step on a small circuit)
+  // decoder step by step on a small circuit, and the recording script
+  // stores its walkthroughs)
   lab?: (api: LabApi) => void;
+  // Speed probe instead of a solve: this many decodes of random genomes, then
+  // their mean time (ms) goes to onSpeedProbe and nothing is laid out. Early
+  // anneal decodes are the slowest, so this overstates a whole run's pace
+  // (the settings' first-run estimate scales it down).
+  speedProbe?: number;
+  onSpeedProbe?: (msPerDecode: number) => void;
 }
 
 // ── lab types: what the explainer figures draw ──
@@ -138,14 +140,17 @@ export interface LabLanes { order: number[]; nodeY: number[]; geo: LabLaneGeo[];
 export interface LabFrame { stage: 1 | 2 | 3 | 4 | 5 | 6 | 7; msg: string; lanes?: LabLanes; board?: LabBoard; relations?: { a: number; b: number; rel: "left" | "above" }[]; pair?: [number, number] }
 export interface LabDecoded { eBase: number; hard: number; mess: number; H: number; W: number; board: LabBoard; wires: number; wireLen: number; cuts: number; bCuts: number; starved: number; relays: number; connEdge: number }
 export interface LabStep { it: number; moves: number; T: number; w: number; g: LabGenome; d: LabDecoded; E: number; best: number; bestG: LabGenome; bestD: LabDecoded; kind: "better" | "worse-kept" | "worse-rejected" | "infeasible" | "null"; done: boolean }
+// the lab's random numbers: the state of a mulberry32 stream (the anneal's
+// generator), which every draw advances
+export interface LabRng { state: number }
 export interface LabApi {
   parts: { id: string; comp: Component; kind: "rigid" | "flex"; isConn: boolean; canH: boolean; canV: boolean; spans: [number, number]; pinNames: string[] }[];
   nets: { name: string; color: string; pins: { pi: number; name: string }[] }[];
   rigidIdx: number[];
   flexIdx: number[];
-  initGenome: (rng: () => number) => LabGenome;
+  initGenome: (rng: LabRng) => LabGenome;
   cloneG: (g: LabGenome) => LabGenome;
-  mutate: (g: LabGenome, rng: () => number) => LabGenome | null;
+  mutate: (g: LabGenome, rng: LabRng) => LabGenome | null;
   decode: (g: LabGenome, frames?: boolean) => { d: LabDecoded | null; frames: LabFrame[]; g: LabGenome };
   run: (seed: number, moves: number, every: number, cb: (step: LabStep) => void) => void;
   // both finishes of one description, each stage by stage, with the price
@@ -155,27 +160,7 @@ export interface LabApi {
     router: { frames: LabFrame[]; price: number };
     repair: { frames: LabFrame[]; price: number; ok: boolean } | null;
   };
-  W_MESS: number;
-  RAMP_START: number;
   T_START: number;
-}
-
-export interface LandscapeTrace {
-  seed: number; it: number; T: number; w: number;
-  cur: number; best: number; curFin: number;
-  acc: number; accUp: number; up: number; nulls: number; infeasible: number;
-  H: number; W: number;
-}
-export interface LandscapeProbe {
-  seed: number;
-  best: { E: number; g: unknown; d: unknown };
-  decode: (g: unknown) => unknown;
-  mutate: (g: unknown, rng: () => number) => unknown;
-  initGenome: (rng: () => number) => unknown;
-  cloneG: (g: unknown) => unknown;
-  price: (d: unknown, w: number) => number;
-  t0: number;
-  W_MESS: number;
 }
 
 // one proposal of the anneal: which move kind, what it would have changed,
@@ -193,24 +178,13 @@ export interface MoveLogRec {
   dGeo: number; dOverlap: number; dStarvH: number;
 }
 // move kinds as numbered by mutate
-export const MOVE_KINDS = ["throw", "pull", "swapP", "swapN", "swapBoth", "rot", "hv", "br", "grpMerge", "gap", "xgap", "grpSplit"];
+export const MOVE_KINDS = ["throw", "pull", "swapP", "swapN", "swapBoth", "rot", "hv", "br", "grpMerge", "gap", "xgap", "grpSplit", "pullTie"];
 
 const W_MESS = 400;     // final price per off-axis or crossing wire
 const RAMP_START = 25;  // their price while the skeleton forms
 const T_START = 150;    // anneal start temperature (see solveSeed)
 const ROTS: Rot[] = [0, 90, 180, 270];
 // the way a part's front face looks at each rotation (front() in rigidBodies)
-
-function mulberry32(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
 
 interface RigidShape {
   w: number;
@@ -276,7 +250,6 @@ interface Genome {
 
 interface Decoded {
   eBase: number;
-  hardPen: number;
   slants: number;
   crossings: number;
   H: number;
@@ -285,8 +258,6 @@ interface Decoded {
   xI: Int32Array;
   geo: { w: number; h: number; sh?: RigidShape; mode?: "H" | "V" }[];
   vBot: Map<number, number>;
-  // the genome's branch bits, part of what identifies the board
-  br: number[];
   dbg?: Record<string, number | string[]>;
 }
 
@@ -416,9 +387,10 @@ export function computeAutoLayout5(
   // (2026-09-08): up to ~16 pins a run is done well before 40k moves; from
   // there the useful length grows about linearly with the pin count, each
   // doubling still buying ~5% at eight times the old cap of 160k, which is
-  // where the cap now sits. A time budget can only lower the count.
+  // where the cap now sits. A time budget can only lower the count. An
+  // effort scales the formula instead and drops the ceiling.
   const nPins = netPins.reduce((n, l) => n + l.length, 0);
-  const capMoves = Math.min(1280000, Math.max(40000, 16000 * (nPins - 13)));
+  const capMoves = options?.effort !== undefined ? effortMoves(nPins, options.effort) : Math.min(1280000, Math.max(40000, 16000 * (nPins - 13)));
   // a time budget with a known speed becomes a count on a ladder: 5k steps up
   // to 100k, 5% steps above, so ordinary load noise lands on the same rung
   const plannedMoves = (n: number) => {
@@ -453,25 +425,6 @@ export function computeAutoLayout5(
   const mRow = anyLockedPart || lockedRowsCap !== undefined ? 0 : 1;
 
   // ── genotype ──
-  const initGenome = (rng: () => number): Genome => {
-    const shuffle = (a: number[]) => {
-      for (let i = a.length - 1; i > 0; i--) {
-        const j = Math.floor(rng() * (i + 1));
-        [a[i], a[j]] = [a[j], a[i]];
-      }
-      return a;
-    };
-    return {
-      gp: shuffle([...Array(nP).keys()]),
-      gn: shuffle([...Array(nP).keys()]),
-      rot: rigidIdx.map(() => 0),
-      hv: flexIdx.map(() => 0),
-      br: flexIdx.map(() => 0),
-      grp: netPins.map((pins) => pins.map(() => 0)),
-      gap: parts.map(() => 0),
-      xgap: parts.map(() => 0),
-    };
-  };
   const cloneG = (g: Genome): Genome => ({
     gp: g.gp.slice(), gn: g.gn.slice(), rot: g.rot.slice(),
     hv: g.hv.slice(), br: g.br.slice(), grp: g.grp.map((a) => a.slice()), gap: g.gap.slice(), xgap: g.xgap.slice(),
@@ -483,11 +436,7 @@ export function computeAutoLayout5(
   };
   const flexBit = (arr: number[], pi: number) => arr[flexIdx.indexOf(pi)];
 
-  // ── lab recorder (explainer figures only; off in every real run) ──
-  let labMode: 0 | 1 | 2 = 0; // 0 off, 1 final board only, 2 every frame
-  let labFrames: LabFrame[] = [];
-  let labBoardOut: LabBoard | null = null;
-  const pushF = (f: LabFrame) => { if (labMode === 2) labFrames.push(f); };
+  // ── explainer wording ──
   const labelOf = (pi: number) => parts[pi].comp.label;
   const netName = (n: number) => (n >= 0 && n < nets.length ? nets[n].name : "an unconnected pin");
   const pinNameOf = (pi: number, pinId: string | undefined, end: number | undefined) => {
@@ -497,74 +446,107 @@ export function computeAutoLayout5(
   };
   const rowsWord = (k: number) => `${k} row${k === 1 ? "" : "s"}`;
 
-  // ── decoder ──
-  // constraint-graph edge buffers, sized for the largest graph a decode
-  // can build (every ordered pair at most once, plus source, span and
-  // locked-pin edges); reused across decodes
-  const maxE = nP + flexIdx.length + 1 + 2 * flexIdx.length + Math.ceil((nP * nP) / 2) + 2 * nP + 8;
-  const eU = new Int32Array(maxE), eV = new Int32Array(maxE), eW = new Float64Array(maxE);
-  const rU = new Int32Array(maxE), rV = new Int32Array(maxE), rW = new Float64Array(maxE), rRank = new Int32Array(maxE), rE = new Int32Array(maxE);
-  const ordBuf = new Int32Array(maxE), rankCnt = new Int32Array(2 * nP + 4);
-  const xU = new Int32Array(maxE), xV = new Int32Array(maxE), xW = new Float64Array(maxE);
-  const vBotArr = new Int32Array(nP);
-  // Prim key buffers: a net has at most one segment per pin
-  const maxK = Math.max(1, ...netPins.map((pins) => pins.length));
-  const kTotal = new Float64Array(maxK), kA = new Int32Array(maxK), kCross = new Int32Array(maxK);
-  const kLen = new Int32Array(maxK), kCol = new Int32Array(maxK), kOff = new Uint8Array(maxK);
-  const linkCount = new Int32Array(maxK), inTree = new Uint8Array(maxK);
-  const kRow = new Int32Array(maxK), kCA = new Int32Array(maxK), kCB = new Int32Array(maxK);
-  // per-decode scratch grids, grown on demand and cleared over the used
-  // prefix only (a fresh allocation per decode was a tenth of the run)
-  let gridCap = 0;
-  let occBuf = new Int8Array(0), ownerBuf = new Int16Array(0), pinNetBuf = new Int32Array(0);
-  let usedBuf = new Uint8Array(0), bodyPreBuf = new Int32Array(0), hopBuf = new Int32Array(0);
-  // free and wire-used holes per row as bit words (32 columns a word)
-  let freeMaskBuf = new Int32Array(0), usedMaskBuf = new Int32Array(0);
-  const ensureGrid = (n: number) => {
-    if (n <= gridCap) return;
-    gridCap = Math.max(n, gridCap * 2);
-    occBuf = new Int8Array(gridCap);
-    ownerBuf = new Int16Array(gridCap);
-    pinNetBuf = new Int32Array(gridCap);
-    usedBuf = new Uint8Array(gridCap);
-    bodyPreBuf = new Int32Array(gridCap);
-    freeMaskBuf = new Int32Array(gridCap);
-    usedMaskBuf = new Int32Array(gridCap);
+  // each part's size and shape under a genome
+  const geoOf = (g: Genome): Decoded["geo"] => parts.map((p, pi) => {
+    if (p.kind === "rigid") {
+      const sh = p.shapes.get(rotOfPart(g, pi))!;
+      return { w: sh.w, h: sh.h, sh };
+    }
+    const mode: "H" | "V" = flexBit(g.hv, pi) === 1 && p.canH ? "H" : "V";
+    return mode === "H" ? { w: p.dc0 + 1, h: 1, mode } : { w: 1, h: 0, mode };
+  });
+
+  // ── the decoder, in WebAssembly ──
+  const wasmModel = (): WasmModel => {
+    const sideMask = (s: ConnSides) => (s.left ? 1 : 0) | (s.right ? 2 : 0) | (s.top ? 4 : 0) | (s.bottom ? 8 : 0);
+    const sideCode = { left: 0, right: 1, top: 2, bottom: 3 };
+    const rect = (r: FootprintRect): [number, number, number, number] => [r.minRow, r.maxRow, r.minCol, r.maxCol];
+    const shapeKinds: Record<string, number> = { axial: 1, can: 2, led: 3 };
+    const pullGroups = netPins.map((pins, net) => ({ net, parts: [...new Set(pins.map((x) => x.pi))] })).filter((g) => g.parts.length >= 2);
+    return {
+      parts: parts.map((p, pi) => {
+        const sidesOf = options?.connSidesOf?.(p.comp.id);
+        const common = { locked: p.locked, isConn: p.isConn, clr: clrOf[pi], lines: linesOf[pi], fat: fatOf[pi], sides: sidesOf ? sideMask(sidesOf) : -1 };
+        if (p.kind === "rigid") {
+          const lockRot = p.locked ? Math.max(0, (ROTS as number[]).indexOf(p.comp.rotation)) : 0;
+          const lsh = p.shapes.get(ROTS[lockRot])!;
+          return {
+            ...common, kind: 0 as const, idx: rigidIdx.indexOf(pi), lockRot,
+            lockY0: p.locked ? p.comp.boardPos!.row + lsh.dRow : 0, lockY1: 0, lockX: p.locked ? p.comp.boardPos!.col + lsh.dCol : 0,
+            shapes: ROTS.map((r) => {
+              const sh = p.shapes.get(r)!;
+              return { w: sh.w, h: sh.h, entry: sh.entry ? sideCode[sh.entry] : -1, body: rect(sh.body), reach: sh.reach && rect(sh.reach), pins: sh.pins.map((q) => ({ rowOff: q.rowOff, colOff: q.colOff, net: q.net ?? -1 })) };
+            }),
+          };
+        }
+        const bp = p.comp.boardPos, ep = p.comp.flexibleEndPos ?? bp;
+        const spec = profOf[pi]!.spec;
+        return {
+          ...common, kind: 1 as const, idx: flexIdx.indexOf(pi), lockRot: 0,
+          lockY0: p.locked ? Math.min(bp!.row, ep!.row) : 0, lockY1: p.locked ? Math.max(bp!.row, ep!.row) : 0, lockX: p.locked ? Math.min(bp!.col, ep!.col) : 0,
+          flex: {
+            na: p.na ?? -1, nb: p.nb ?? -1, minS: p.minS, maxS: p.maxS, canH: p.canH, dc0: p.dc0,
+            vd: Array.from({ length: p.maxS + 1 }, (_, s) => p.vdSet.has(s)),
+            hasSpec: !!spec, shape: spec ? shapeKinds[spec.shape] ?? 0 : 0, mark: !!spec?.mark, len: spec?.len ?? 0, r: spec ? bodyWidth(spec) / 2 / MM_PER_HOLE : 0,
+          },
+        };
+      }),
+      nNets: nets.length,
+      netPins: netPins.map((pins) => pins.map((q) => ({
+        pi: q.pi, kind: q.kind === "rigid" ? 0 as const : 1 as const, end: q.end ?? 0,
+        pinIdx: q.kind === "rigid" ? ROTS.map((r) => (parts[q.pi] as RigidPart).shapes.get(r)!.pins.findIndex((x) => x.pinId === q.pinId)) : [0, 0, 0, 0],
+      }))),
+      flexIdx, rigidIdx, siblingGroups,
+      mRow, mCol, lockedRowsCap: lockedRowsCap ?? -1, lockedColsCap: lockedColsCap ?? -1,
+      sidesDef: sideMask(connSides), clrPad, wBCut,
+      conns: parts.map((p, i) => (p.isConn && !p.locked ? i : -1)).filter((i) => i >= 0),
+      pullNets: pullGroups.map((g) => g.parts),
+      pullNet: pullGroups.map((g) => g.net),
+      halfTurn: rigidIdx.map((pi) => !!parts[pi].def.halfTurnOnly),
+      canHV: flexIdx.map((pi) => { const p = parts[pi] as FlexPart; return p.canH && p.canV; }),
+      rotK,
+    };
   };
-  // `ref` is the board the proposal is measured against: a proposal that
-  // puts every part on the same hole in the same shape is that board, and
-  // its measurement is returned as is (about a third of all proposals, the
-  // label and gap moves that do not bite)
-  let strictTies = 0;
-  let strictRand: () => number = () => 0;
-  const refuseSplit = () => strictTies > 0 && (strictTies >= 1 || strictRand() < strictTies);
-  function decode(g: Genome, ref?: Decoded): Decoded | null {
+  const wasmOf = (): WebAssembly.Module => {
+    if (!options?.wasm) throw new Error("the v5 layouter needs its WebAssembly module (v5wasm/v5decode.wasm)");
+    return options.wasm;
+  };
+
+  // ── the decoder's board and walkthrough, from the WebAssembly export ──
+  // A decode with the export on (a decoder of its own: the anneal's keeps
+  // its state) lists the board the way the explainer and the repair finish
+  // draw it; with the trace on it also lists the decoder's steps, which this
+  // turns into the explainer's frames.
+  let exportDec: V5WasmDecoder | null = null;
+  const exportDecoder = () => (exportDec ??= new V5WasmDecoder(wasmOf(), wasmModel()));
+  const exportDecode = (g: Genome, trace: boolean): { o: WasmDecodeOut; ex: WasmExport } => {
+    exportDecoder().setExport(true, trace);
+    const w = exportDecoder();
+    w.writeGenome(g);
+    const o = w.decode();
+    w.grpBack(g.grp);
+    return { o, ex: w.exported() };
+  };
+  function labWalk(g: Genome, o: WasmDecodeOut, ex: WasmExport, withFrames: boolean): { board: LabBoard | null; frames: LabFrame[] } {
+    const frames: LabFrame[] = [];
+    const pushF = (f: LabFrame) => { if (withFrames) frames.push(f); };
     const posP = new Int32Array(nP), posN = new Int32Array(nP);
     g.gp.forEach((p, i) => (posP[p] = i));
     g.gn.forEach((p, i) => (posN[p] = i));
-    if (labMode === 2) {
+    if (withFrames) {
       const rels: { a: number; b: number; rel: "left" | "above" }[] = [];
       for (const a of g.gp) for (const b of g.gp) if (a !== b && posP[a] < posP[b]) rels.push({ a, b, rel: posN[a] < posN[b] ? "left" : "above" });
       pushF({ stage: 1, msg: "The two orders, and nothing else.", relations: [] });
       rels.forEach((r, i) => pushF({ stage: 1, msg: `${labelOf(r.a)} comes before ${labelOf(r.b)} in ${r.rel === "left" ? `both orders: ${labelOf(r.a)} is left of ${labelOf(r.b)}` : `the first order but after it in the second: ${labelOf(r.a)} is above ${labelOf(r.b)}`}.`, relations: rels.slice(0, i + 1), pair: [r.a, r.b] }));
       pushF({ stage: 1, msg: "Every pair has exactly one relation. That is the whole packing, still without a single coordinate.", relations: rels });
     }
-
-    const geo = parts.map((p, pi) => {
-      if (p.kind === "rigid") {
-        const sh = p.shapes.get(rotOfPart(g, pi))!;
-        return { w: sh.w, h: sh.h, sh };
-      }
-      const mode: "H" | "V" = flexBit(g.hv, pi) === 1 && p.canH ? "H" : "V";
-      return mode === "H" ? { w: p.dc0 + 1, h: 1, mode } : { w: 1, h: 0, mode };
-    });
-
+    const geo = geoOf(g);
     const vBot = new Map<number, number>();
     let nNode = nP;
     for (const pi of flexIdx) if (geo[pi].mode === "V") vBot.set(pi, nNode++);
-    const SRC = nNode++;
-
-    // lab: lane geometry and node names
+    nNode++;
+    const vBotArr = new Int32Array(nP).fill(-1);
+    for (const [pi, b2] of vBot) vBotArr[pi] = b2;
     const nodePart = (n: number) => { for (const [pi, b] of vBot) if (b === n) return pi; return n; };
     const nodeName = (n: number) => { const pi = nodePart(n); return n === pi ? labelOf(pi) : `${labelOf(pi)}'s lower end`; };
     const labLaneGeo = (): LabLaneGeo[] => parts.map((p, pi) => {
@@ -578,6 +560,10 @@ export function computeAutoLayout5(
       const b = vBot.get(pi)!;
       return { pi, top: pi, bot: b, h: 0, flex: true, pins: [{ node: pi, off: 0, dc: 0, net: nA, name: br === 0 ? "1" : "2" }, { node: b, off: 0, dc: 0, net: nB, name: br === 0 ? "2" : "1" }] };
     });
+    // the y and x constraint edges, as the trace lists them
+    let eU: number[] = [], eV: number[] = [], eW: number[] = [], nE = 0;
+    let xU: number[] = [], xV: number[] = [], xW: number[] = [], nX = 0;
+    const SRC = nNode - 1, XS = nP;
     const labArrows = (state: LabArrowState, nE2: number, hot = -1): LabArrow[] => {
       const out: LabArrow[] = [];
       for (let ei = 0; ei < nE2; ei++) { if (eU[ei] === SRC || eV[ei] === SRC || eW[ei] < 0) continue; out.push({ a: eU[ei], b: eV[ei], w: eW[ei], state: ei === hot ? "push" : state }); }
@@ -596,1186 +582,243 @@ export function computeAutoLayout5(
       const b = vBot.get(pi)!;
       return { pi, x: xv(pi), y: yv(pi), w: 1, h: yv(b) - yv(pi) + 1, flex: true, rot: 0, pos: { row: br === 0 ? yv(pi) : yv(b), col: xv(pi) }, end: { row: br === 0 ? yv(b) : yv(pi), col: xv(pi) }, pins: [{ r: yv(pi), c: xv(pi), net: nA, name: br === 0 ? "1" : "2", id: br === 0 ? "1" : "2" }, { r: yv(b), c: xv(pi), net: nB, name: br === 0 ? "2" : "1", id: br === 0 ? "2" : "1" }] };
     });
-
-    const pinYExpr = (pin: { pi: number; kind: string; end?: number; pinId?: string }): [number, number] => {
-      const p = parts[pin.pi];
-      if (pin.kind === "rigid") {
-        const sh = geo[pin.pi].sh!;
-        const sp = sh.pins.find((x) => x.pinId === pin.pinId)!;
-        return [pin.pi, sp.rowOff];
-      }
-      if (geo[pin.pi].mode === "H") return [pin.pi, 0];
-      const isTop = (pin.end === 0) === (flexBit(g.br, pin.pi) === 0);
-      return [isTop ? pin.pi : vBot.get(pin.pi)!, 0];
-    };
-
-    // optimistic: the part's own clearance below it; real pair clearances
-    // are checked EXACTLY at decoded coordinates (bodiesTooClose /
-    // bodyIntersectsRect) and priced. Independent of the part below, which
-    // the nearest-successor edge pruning relies on.
-    const vgapOf = (i: number, _j: number) => Math.max(1, clrOf[i]);
-
-    let nE = 0;
-    const addE = (u: number, v: number, w: number) => {
-      eU[nE] = u;
-      eV[nE] = v;
-      eW[nE] = w;
-      nE++;
-    };
-    for (let i = 0; i < nNode - 1; i++) addE(SRC, i, 0);
-    for (const pi of flexIdx) {
-      if (geo[pi].mode !== "V") continue;
-      const p = parts[pi] as FlexPart;
-      const b = vBot.get(pi)!;
-      addE(pi, b, p.minS);
-      addE(b, pi, -p.maxS);
-    }
-    vBotArr.fill(-1);
-    for (const [pi, b2] of vBot) vBotArr[pi] = b2;
-    for (let i = 0; i < nP; i++) {
-      if (parts[i].locked) continue;
-      // the part's bottom node and its offset: a V flex ends at its bottom
-      // pin node, anything else at its own node plus its height
-      const bu = vBotArr[i] >= 0 ? vBotArr[i] : i;
-      const w0 = (vBotArr[i] >= 0 ? 0 : geo[i].h - 1) + vgapOf(i, 0) + g.gap[i];
-      const pi_ = posP[i], ni = posN[i];
-      // nearest successors only: any other part below i is reached through
-      // one of them with at least this edge's weight (the weight does not
-      // depend on j), so the longest paths are the same with far fewer edges
-      let seen = -1;
-      for (let q = pi_ + 1; q < nP; q++) {
-        const j = g.gp[q];
-        const nj = posN[j];
-        if (nj > ni || parts[j].locked) continue;
-        if (nj < seen) continue;
-        seen = nj;
-        addE(bu, j, w0);
-      }
-    }
-    const lockedY = new Map<number, number>();
-    for (let pi = 0; pi < nP; pi++) {
-      const p = parts[pi];
-      if (!p.locked) continue;
-      if (p.kind === "rigid") {
-        const sh = geo[pi].sh!;
-        lockedY.set(pi, p.comp.boardPos!.row + sh.dRow);
-      } else {
-        const bp = p.comp.boardPos!;
-        const ep = p.comp.flexibleEndPos ?? bp;
-        lockedY.set(pi, Math.min(bp.row, ep.row));
-        if (vBot.has(pi)) lockedY.set(vBot.get(pi)!, Math.max(bp.row, ep.row));
-      }
-    }
-    for (const [n, v] of lockedY) {
-      addE(SRC, n, v);
-      addE(n, SRC, -v);
-    }
-
-    if (labMode === 2) pushF({ stage: 2, msg: "Every part starts on row 0. Each above-relation becomes an arrow: the lower part must sit at least the upper part's height plus its clearance further down.", lanes: labLanes(new Array(nNode - 1).fill(0), labArrows("idle", nE), []) });
-    // group equalities via weighted union-find; conflicts split the pin out
-    // of its group persistently (genotype write-back)
-    // node rank along the first sequence (source first, a flex part's
-    // bottom right after its top): the relaxation order of the y-solve
-    const rankOf = new Int32Array(nNode);
-    for (let pi = 0; pi < nP; pi++) rankOf[pi] = 2 * posP[pi] + 1;
-    for (const [pi, b2] of vBot) rankOf[b2] = 2 * posP[pi] + 2;
-    const dist = new Float64Array(nNode).fill(-1e18);
-    const walkSeen = new Int32Array(nNode);
-    let walkStamp = 0;
-    let solved = false;
-    for (let attempt = 0; attempt < 400 && !solved; attempt++) {
-      const parent = new Int32Array(nNode);
-      const poff = new Int32Array(nNode);
-      for (let i = 0; i < nNode; i++) parent[i] = i;
-      const find = (v0: number): [number, number] => {
-        let v = v0, off = 0;
-        while (parent[v] !== v) {
-          off += poff[v];
-          v = parent[v];
-        }
-        return [v, off];
-      };
-      const members = new Map<number, { net: number; k: number }[]>();
-      let conflict: { net: number; k: number } | "hard" | null = null;
-      const labTies: LabTie[] = [];
     const tieIdle = (t: LabTie): LabTie => ({ ...t, state: "idle" });
     const tieConflict = (t: LabTie): LabTie => ({ ...t, state: "conflict" });
-      const labY0 = new Array(nNode - 1).fill(0);
-      for (let n = 0; n < nets.length && !conflict; n++) {
-        const pins = netPins[n];
-        const anchorOf = new Map<number, number>();
-        for (let k = 0; k < pins.length; k++) {
-          const gl = g.grp[n][k];
-          if (!anchorOf.has(gl)) {
-            anchorOf.set(gl, k);
-            continue;
-          }
-          const [u, ou] = pinYExpr(pins[anchorOf.get(gl)!]);
-          const [v, ov] = pinYExpr(pins[k]);
-          const [ru, du] = find(u);
-          const [rv, dv] = find(v);
-          if (ru === rv) {
-            if (du + ou !== dv + ov) {
-              if (refuseSplit()) return null;
-              g.grp[n][k] = Math.max(...g.grp[n]) + 1;
-              if (labMode === 2) pushF({ stage: 2, msg: nodePart(u) === nodePart(v)
-                ? `Two ${nets[n].name} pins of ${labelOf(nodePart(u))} sit on different rows of the part, yet they are asked to share a strip. That cannot hold, so one of them is split into a strip group of its own; it will get a link wire later instead.`
-                : `The ${nets[n].name} pins of ${nodeName(u)} and ${nodeName(v)} are asked to share a strip too, but the ties already fix those parts at a distance that puts these pins on different rows. That cannot hold, so the ${nets[n].name} pin of ${labelOf(pins[k].pi)} is split into a strip group of its own; it will get a link wire later instead.`, lanes: labLanes(labY0, labArrows("idle", nE), labTies.map(tieIdle).concat([{ u, offU: ou, v, offV: ov, state: "split" as const }]), [nodePart(u), nodePart(v)]) });
-            } else if (labMode === 2) pushF({ stage: 2, msg: `The ${nets[n].name} pins of ${nodeName(u)} and ${nodeName(v)} share a strip as well, and the distance already fits.`, lanes: labLanes(labY0, labArrows("idle", nE), labTies.map(tieIdle).concat([{ u, offU: ou, v, offV: ov, state: "check" as const }]), [nodePart(u), nodePart(v)]) });
-            continue;
-          }
-          parent[rv] = ru;
-          poff[rv] = du + ou - dv - ov;
-          if (labMode === 2) {
-            labTies.push({ u, offU: ou, v, offV: ov, state: "idle" });
-            const dd = poff[rv] + dv - du; // rows v's top sits below u's top
-            pushF({ stage: 2, msg: `The ${nets[n].name} pins of ${nodeName(u)} and ${nodeName(v)} are asked to share a strip, so ${nodeName(v)} is tied to ${nodeName(u)}: from now on they move together, ${dd === 0 ? "tops level" : `${nodeName(v)} ${rowsWord(Math.abs(dd))} ${dd > 0 ? "below" : "above"}`}.`, lanes: labLanes(labY0, labArrows("idle", nE), labTies.map((t, i): LabTie => ({ ...t, state: i === labTies.length - 1 ? "check" : "idle" })), [nodePart(u), nodePart(v)]) });
-          }
-          const mu = members.get(ru) ?? [];
-          const mv = members.get(rv);
-          if (mv) {
-            mu.push(...mv);
-            members.delete(rv);
-          }
-          mu.push({ net: n, k });
-          members.set(ru, mu);
-        }
-      }
-      const rootArr = new Int32Array(nNode), offArr = new Int32Array(nNode);
-      for (let v = 0; v < nNode; v++) {
-        const [r, o] = find(v);
-        rootArr[v] = r;
-        offArr[v] = o;
-      }
-      let nR = 0;
-      for (let ei = 0; ei < nE; ei++) {
-        const ru = rootArr[eU[ei]], rv = rootArr[eV[ei]];
-        const w = eW[ei] + offArr[eU[ei]] - offArr[eV[ei]];
-        if (ru === rv) {
-          if (w > 0 && !conflict) {
-            const mm = members.get(ru);
-            conflict = mm && mm.length ? mm[mm.length - 1] : "hard";
-            if (labMode === 2 && conflict !== "hard") pushF({ stage: 2, msg: `The ties fix ${nodeName(eV[ei])} ${rowsWord(Math.abs(offArr[eV[ei]] - offArr[eU[ei]]))} ${offArr[eV[ei]] >= offArr[eU[ei]] ? "below" : "above"} ${nodeName(eU[ei])}, but the orders say ${nodeName(eV[ei])} is below ${nodeName(eU[ei])} by at least ${rowsWord(eW[ei])}. Both cannot hold.`, lanes: labLanes(labY0, labArrows("idle", nE).map((a) => (a.a === eU[ei] && a.b === eV[ei] ? { ...a, state: "conflict" } : a)), labTies.map(tieConflict), [nodePart(eU[ei]), nodePart(eV[ei])]) });
-          }
-          continue;
-        }
-        rU[nR] = ru;
-        rV[nR] = rv;
-        rW[nR] = w;
-        rRank[nR] = rankOf[eU[ei]];
-        rE[nR] = ei;
-        nR++;
-      }
-      if (conflict) {
-        if (conflict === "hard" || refuseSplit()) return null;
-        g.grp[conflict.net][conflict.k] = Math.max(...g.grp[conflict.net]) + 1;
-        if (labMode === 2) pushF({ stage: 2, msg: `The decoder splits the ${nets[conflict.net].name} pin of ${labelOf(netPins[conflict.net][conflict.k].pi)} into a strip group of its own and starts over. That pin will get a link wire later instead.`, lanes: labLanes(labY0, labArrows("idle", nE), [], [netPins[conflict.net][conflict.k].pi]) });
-        continue;
-      }
-      // relax in first-sequence order: every SP edge points down that
-      // sequence, so a feasible graph settles in a few sweeps
-      const ord = ordBuf, cnt = rankCnt;
-      cnt.fill(0);
-      for (let ei = 0; ei < nR; ei++) cnt[rRank[ei] + 1]++;
-      for (let b2 = 1; b2 < cnt.length; b2++) cnt[b2] += cnt[b2 - 1];
-      for (let ei = 0; ei < nR; ei++) ord[cnt[rRank[ei]]++] = ei;
-      dist.fill(-1e18);
-      dist[SRC] = 0;
-      const pred = new Int32Array(nNode).fill(-1);
-      let changed = false, lastEdge = -1, cycleAt = -1;
-      for (let it = 0; it < nNode + 2; it++) {
-        changed = false;
-        for (let k = 0; k < nR; k++) {
-          const ei = ord[k];
-          const u = rU[ei], v = rV[ei];
-          if (dist[u] + rW[ei] > dist[v] + 1e-9) {
-            dist[v] = dist[u] + rW[ei];
-            pred[v] = ei;
-            changed = true;
-            lastEdge = ei;
-            if (labMode === 2 && it < 2) {
-              const oe = rE[ei];
-              if (eU[oe] !== SRC && eV[oe] !== SRC) {
-                const nodeY = Array.from({ length: nNode - 1 }, (_, n) => (dist[rootArr[n]] < -1e17 ? 0 : dist[rootArr[n]]) + offArr[n]);
-                const tgt = eV[oe], src = eU[oe];
-                const mates = [...Array(nP).keys()].filter((q) => q !== nodePart(tgt) && rootArr[q] === rootArr[tgt]).map(labelOf);
-                const span = nodePart(src) === nodePart(tgt);
-                pushF({ stage: 2, msg: span
-                  ? `${nodeName(tgt)} sits at least ${rowsWord(eW[oe])} below its upper end, so it moves down to row ${nodeY[tgt] + 1}.`
-                  : `${nodeName(tgt)} must be at least ${rowsWord(eW[oe])} below ${nodeName(src)}, so it moves down to row ${nodeY[tgt] + 1}${mates.length ? `, and ${mates.join(" and ")}, tied to it, ${mates.length > 1 ? "move" : "moves"} along` : ""}.`,
-                  lanes: labLanes(nodeY, labArrows("idle", nE, oe), labTies, [nodePart(tgt), ...mates.map((m) => parts.findIndex((p) => p.comp.label === m))]) });
-              }
-            }
-          }
-        }
-        if (labMode === 2 && changed && it >= 2) pushF({ stage: 2, msg: `Sweep ${it + 1}: parts are still moving down. The arrows chase each other in a circle through the ties.`, lanes: labLanes(Array.from({ length: nNode - 1 }, (_, n) => (dist[rootArr[n]] < -1e17 ? 0 : dist[rootArr[n]]) + offArr[n]), labArrows("check", nE), labTies) });
-        if (!changed) break;
-        // a positive cycle closes the predecessor walk long before the
-        // round bound would prove it: stop at the first closed walk
-        if (it >= 2) {
-          walkStamp++;
-          let cur = rV[lastEdge];
-          for (let s2 = 0; s2 <= nNode; s2++) {
-            if (walkSeen[cur] === walkStamp) {
-              cycleAt = cur;
-              break;
-            }
-            walkSeen[cur] = walkStamp;
-            const ei = pred[cur];
-            if (ei < 0) break;
-            cur = rU[ei];
-          }
-          if (cycleAt >= 0) break;
-        }
-      }
-      if (!changed) {
-        for (let v = 0; v < nNode; v++) dist[v] = dist[rootArr[v]] + offArr[v];
-        solved = true;
-        break;
-      }
-      let cur = cycleAt >= 0 ? cycleAt : rV[lastEdge];
-      for (let s = 0; s < nNode + 2; s++) {
-        const ei = pred[cur];
-        if (ei < 0) break;
-        cur = rU[ei];
-      }
-      let fixed = false;
-      const start = cur;
-      for (let s = 0; s < nNode + 2 && !fixed; s++) {
-        const mm = members.get(cur);
-        if (mm && mm.length) {
-          const m = mm[mm.length - 1];
-          if (refuseSplit()) return null;
-          g.grp[m.net][m.k] = Math.max(...g.grp[m.net]) + 1;
-          if (labMode === 2) pushF({ stage: 2, msg: `No rows can satisfy all of them at once. The decoder splits the ${nets[m.net].name} pin of ${labelOf(netPins[m.net][m.k].pi)} into a strip group of its own and starts over.`, lanes: labLanes(labY0, labArrows("idle", nE), [], [netPins[m.net][m.k].pi]) });
-          fixed = true;
-          break;
-        }
-        const ei = pred[cur];
-        if (ei < 0) break;
-        cur = rU[ei];
-        if (cur === start) break;
-      }
-      if (!fixed) return null;
-    }
-    if (!solved) return null;
-    const y = dist;
-    if (labMode === 2) pushF({ stage: 2, msg: "Nothing moves any more. These are the rows.", lanes: labLanes(Array.from({ length: nNode - 1 }, (_, n) => y[n]), labArrows("ok", nE), []) });
-
-    // x: SP left edges + locked pins; longest path
-    const XS = nP;
-    let nX = 0;
-    const addX = (u: number, v: number, w: number) => {
-      xU[nX] = u;
-      xV[nX] = v;
-      xW[nX] = w;
-      nX++;
-    };
-    for (let i = 0; i < nP; i++) addX(XS, i, 0);
-    // two parts that share rows always keep one free column between them:
-    // every pin segment then has an attachment hole on at least one side,
-    // so a proposal can no longer starve a net by packing parts edge to
-    // edge (starved proposals were rejected outright and cut the landscape
-    // into pieces the walk could not cross)
-    const hgap = (i: number, j: number) => {
-      const fi = parts[i].kind === "flex", fj = parts[j].kind === "flex";
-      if (fi && fj) return 1 + Math.max(1, clrOf[i], clrOf[j]);
-      if (!fi && !fj) return 2;
-      const f = fi ? i : j;
-      return geo[f].mode === "V" ? 1 + Math.max(1, clrOf[f]) : 2;
-    };
-    // edges in first-sequence order, so the sweep below settles fast
-    for (let r = 0; r < nP; r++) {
-      const i = g.gp[r];
-      if (parts[i].locked) continue;
-      const ti = y[i], bi = vBotArr[i] >= 0 ? y[vBotArr[i]] : ti + geo[i].h - 1;
-      const pi_ = posP[i], ni = posN[i];
-      for (let q = pi_ + 1; q < nP; q++) {
-        const j = g.gp[q];
-        if (ni > posN[j] || parts[j].locked) continue;
-        const tj = y[j], bj = vBotArr[j] >= 0 ? y[vBotArr[j]] : tj + geo[j].h - 1;
-        const margin = vgapOf(i, j) >= 2 ? 1.5 : 0.5;
-        if (!(bi < tj - margin || bj < ti - margin)) addX(i, j, geo[i].w - 1 + hgap(i, j) + g.xgap[i]);
-      }
-    }
-    const lockedX = new Map<number, number>();
-    for (let pi = 0; pi < nP; pi++) {
-      const p = parts[pi];
-      if (!p.locked) continue;
-      if (p.kind === "rigid") lockedX.set(pi, p.comp.boardPos!.col + geo[pi].sh!.dCol);
-      else {
-        const bp = p.comp.boardPos!;
-        const ep = p.comp.flexibleEndPos ?? bp;
-        lockedX.set(pi, Math.min(bp.col, ep.col));
-      }
-    }
-    for (const [n, v] of lockedX) {
-      addX(XS, n, v);
-      addX(n, XS, -v);
-    }
-    const xd = new Float64Array(nP + 1).fill(-1e18);
+    let labTies: LabTie[] = [];
+    let rootArr: number[] = [];
+    let y: number[] = [];
+    let xd: number[] = new Array(nP + 1).fill(-1e18);
     xd[XS] = 0;
     const labXArrows = (state: LabArrowState, hot = -1): LabArrow[] => { const out: LabArrow[] = []; for (let ei = 0; ei < nX; ei++) { if (xU[ei] === XS || xV[ei] === XS) continue; out.push({ a: xU[ei], b: xV[ei], w: xW[ei], state: ei === hot ? "push" : state }); } return out; };
     const labRowsNow = () => { let h = 0; for (let pi = 0; pi < nP; pi++) h = Math.max(h, (vBotArr[pi] >= 0 ? y[vBotArr[pi]] : y[pi] + geo[pi].h - 1) + 1); return h; };
     const labColsNow = () => { let w = 0; for (let pi = 0; pi < nP; pi++) w = Math.max(w, (xd[pi] < -1e17 ? 0 : xd[pi]) + geo[pi].w); return w; };
-    if (labMode === 2) pushF({ stage: 3, msg: "Rows are known, so the parts can be drawn. Every part starts in column 0. Each left-of relation becomes an arrow: the right part must sit at least the left part's width plus the gap further right.", board: { rows: labRowsNow(), cols: labColsNow(), parts: labPlaced(y, xd, 0), ghost: true, segs: [], cuts: [], wires: [], busRows: [], arrows: labXArrows("idle") } });
-    let xOK = true;
-    for (let it = 0; it < nP + 3; it++) {
-      let ch = false;
-      for (let ei = 0; ei < nX; ei++) {
-        const u = xU[ei], v = xV[ei];
-        if (xd[u] + xW[ei] > xd[v] + 1e-9) {
-          xd[v] = xd[u] + xW[ei];
-          ch = true;
-          if (labMode === 2 && u !== XS) pushF({ stage: 3, msg: `${labelOf(v)} must be at least ${xW[ei]} columns right of ${labelOf(u)}, so it moves to column ${Math.round(xd[v]) + 1}.`, board: { rows: labRowsNow(), cols: labColsNow(), parts: labPlaced(y, xd, 0), ghost: true, segs: [], cuts: [], wires: [], busRows: [], arrows: labXArrows("idle", ei), hl: [v] } });
-        }
-      }
-      if (!ch) {
-        xOK = true;
-        break;
-      }
-      xOK = false;
-    }
-    if (!xOK) return null;
-
-    const yI = new Int32Array(nNode), xI = new Int32Array(nP);
-    for (let i = 0; i < nNode - 1; i++) yI[i] = Math.round(y[i]);
-    for (let i = 0; i < nP; i++) xI[i] = Math.round(xd[i]);
-    if (ref && !labMode) {
-      let same = ref.yI.length === nNode;
-      for (let i = 0; same && i < nNode - 1; i++) if (yI[i] !== ref.yI[i]) same = false;
-      for (let i = 0; same && i < nP; i++) {
-        if (xI[i] !== ref.xI[i] || geo[i].sh !== ref.geo[i].sh || geo[i].mode !== ref.geo[i].mode) same = false;
-      }
-      for (let i = 0; same && i < g.br.length; i++) if (g.br[i] !== ref.br[i]) same = false;
-      if (same) return ref;
-    }
-    if (labMode === 2) pushF({ stage: 3, msg: `Nothing moves any more. Every part has a row and a column: a ${labRowsNow()} by ${labColsNow()} board, as tight as the relations allow.`, board: { rows: labRowsNow(), cols: labColsNow(), parts: labPlaced(yI, xI, 0), segs: [], cuts: [], wires: [], busRows: [], arrows: labXArrows("ok") } });
-
-    // ── grid + exact measurement ──
-    let H = 0, W = 0;
-    for (let pi = 0; pi < nP; pi++) {
-      const bot = geo[pi].mode === "V" ? yI[vBot.get(pi)!] : yI[pi] + geo[pi].h - 1;
-      H = Math.max(H, bot + 1);
-      W = Math.max(W, xI[pi] + geo[pi].w);
-    }
-    // the grid carries one blank line of margin on every free side: the
-    // finish pads the route board the same way, so edge segments really do
-    // have an attachment hole there and the rim rows serve as bus rows
-    const GH = H + 2 * mRow, GW = W + 2 * mCol;
-    ensureGrid((GH + 1) * GW);
-    const occ = occBuf.fill(0, 0, GH * GW);
-    const owner = ownerBuf.fill(-1, 0, GH * GW);
-    const pinNetAt = pinNetBuf.fill(-1, 0, GH * GW);
-    const at = (r: number, c: number) => r * GW + c;
-    let overlapBad = 0;
-    const claim = (r: number, c: number, v: number, net: number | undefined, pi: number) => {
-      if (r < 0 || c < 0 || r >= H || c >= W) {
-        overlapBad++;
-        return;
-      }
-      const i = at(r + mRow, c + mCol);
-      if (occ[i] !== 0 && owner[i] !== pi) overlapBad++;
-      if (v === 2 || occ[i] === 0) {
-        occ[i] = v;
-        owner[i] = pi;
-        if (v === 2 && net !== undefined && net >= 0) pinNetAt[i] = net;
-      }
-    };
-    // a pin without a net still breaks the strip it sits on (the router
-    // isolates floating pins), so it claims a private pseudo-net: the cuts
-    // it forces get counted and the copper beyond it no longer joins nets
-    let floatNet = nets.length;
-    const lockedBoxes: { r1: number; r2: number; c1: number; c2: number }[] = [];
-    for (let pi = 0; pi < nP; pi++) {
-      const p = parts[pi];
-      if (!p.locked || p.kind !== "rigid") continue;
-      const sh = geo[pi].sh!;
-      lockedBoxes.push({ r1: yI[pi], r2: yI[pi] + sh.h - 1, c1: xI[pi], c2: xI[pi] + sh.w - 1 });
-    }
-    const flexCellBad = (r: number, c: number, mode: "H" | "V") => {
-      for (const b of lockedBoxes) {
-        const inRing = r >= b.r1 - 1 && r <= b.r2 + 1 && c >= b.c1 - 1 && c <= b.c2 + 1;
-        if (!inRing) continue;
-        if (mode === "V" && r >= b.r1 && r <= b.r2) return true;
-        if (mode === "H" && c >= b.c1 && c <= b.c2) return true;
-        if (r >= b.r1 && r <= b.r2 && c >= b.c1 && c <= b.c2) return true;
-      }
-      return false;
-    };
-    // A body wider than the line between its legs (a can) lies over holes of
-    // its own: nothing else may use them, and a link through them runs under
-    // the part. Off the board's edge it simply hangs over.
-    const claimBody = (pi: number, p1: BoardPosition, p2: BoardPosition) => {
-      if (!fatOf[pi]) return;
-      for (const h of flexCoveredHoles(flexBody(profOf[pi]!, p1, p2))) {
-        if (h.row >= 0 && h.col >= 0 && h.row < H && h.col < W) claim(h.row, h.col, 1, undefined, pi);
-      }
-    };
-    let ringBad = 0;
-    for (let pi = 0; pi < nP; pi++) {
-      const p = parts[pi];
-      if (p.kind === "rigid") {
-        const sh = geo[pi].sh!;
-        for (let r = 0; r < sh.h; r++) for (let c = 0; c < sh.w; c++) claim(yI[pi] + r, xI[pi] + c, 1, undefined, pi);
-        for (const sp of sh.pins) claim(yI[pi] + sp.rowOff, xI[pi] + sp.colOff, 2, sp.net ?? floatNet++, pi);
-      } else if (geo[pi].mode === "H") {
-        for (let c = 0; c <= p.dc0; c++) {
-          if (c > 0 && c < p.dc0) claim(yI[pi], xI[pi] + c, 1, undefined, pi);
-          if (flexCellBad(yI[pi], xI[pi] + c, "H")) ringBad++;
-        }
-        claimBody(pi, { row: yI[pi], col: xI[pi] }, { row: yI[pi], col: xI[pi] + p.dc0 });
-        const brBit = flexBit(g.br, pi);
-        claim(yI[pi], xI[pi], 2, (brBit === 0 ? p.na : p.nb) ?? floatNet++, pi);
-        claim(yI[pi], xI[pi] + p.dc0, 2, (brBit === 0 ? p.nb : p.na) ?? floatNet++, pi);
-      } else {
-        const t = yI[pi], b = yI[vBot.get(pi)!];
-        for (let r = t; r <= b; r++) {
-          if (r > t && r < b) claim(r, xI[pi], 1, undefined, pi);
-          if (flexCellBad(r, xI[pi], "V")) ringBad++;
-        }
-        claimBody(pi, { row: t, col: xI[pi] }, { row: b, col: xI[pi] });
-        const brBit = flexBit(g.br, pi);
-        claim(t, xI[pi], 2, (brBit === 0 ? p.na : p.nb) ?? floatNet++, pi);
-        claim(b, xI[pi], 2, (brBit === 0 ? p.nb : p.na) ?? floatNet++, pi);
-      }
-    }
-
-    // lab: the grid as drawn, copper strips per segment as they are found
-    const labSegs: LabSeg[] = [], labCuts: LabCut[] = [], labWires: LabWire[] = [];
-    const labParts = labMode ? labPlaced(yI, xI, 0).map((p) => ({ ...p, x: p.x + mCol, y: p.y + mRow, pos: { row: p.pos.row + mRow, col: p.pos.col + mCol }, end: p.end && { row: p.end.row + mRow, col: p.end.col + mCol }, pins: p.pins.map((q) => ({ ...q, r: q.r + mRow, c: q.c + mCol })) })) : [];
-    const labBoardAt = (fromRow: number, extra: Partial<LabBoard> = {}): LabBoard => ({ rows: GH, cols: GW, parts: labParts, segs: [...labSegs, ...Array.from({ length: GH - fromRow }, (_, k) => ({ row: fromRow + k, c1: 0, c2: GW - 1, net: -1 }))], cuts: [...labCuts], wires: [...labWires], busRows: [], ...extra });
-    if (labMode === 2) pushF({ stage: 4, msg: `The board gets ${mRow ? "one blank line of margin on every side, and" : ""} every row is one copper strip. Now each row is read from left to right.`, board: labBoardAt(0) });
-    // runs, cuts, segments per row
-    let cuts = 0, bCuts = 0;
-    const cutAware = !!options?.cutAwareScan;
-    // cut-aware scan: a net with a single run never needs a link, so its
-    // segment needs no free hole
-    const runsOfNet = cutAware ? new Int32Array(nets.length) : null;
-    if (runsOfNet) {
-      for (let r = 0; r < GH; r++) {
-        let prev = -1;
-        for (let c = 0; c < GW; c++) {
-          const i = at(r, c);
-          if (occ[i] !== 2 || pinNetAt[i] < 0) continue;
-          if (pinNetAt[i] !== prev) runsOfNet[pinNetAt[i]]++;
-          prev = pinNetAt[i];
-        }
-      }
-    }
-    const segsOfNet = new Map<number, { row: number; c1: number; c2: number }[]>();
-    // pin-free rows are bus rows: copper a net may claim over a span to
-    // travel horizontally between two vertical hops (the router's relays)
-    const busRows: number[] = [];
-    const busClaims = new Map<number, { c1: number; c2: number; net: number }[]>();
-    for (let r = 0; r < GH; r++) {
-      const rowPins: { c: number; net: number }[] = [];
-      for (let c = 0; c < GW; c++) {
-        const i = at(r, c);
-        if (occ[i] === 2 && pinNetAt[i] >= 0) rowPins.push({ c, net: pinNetAt[i] });
-      }
-      if (rowPins.length === 0) {
-        busRows.push(r);
-        if (labMode) labSegs.push({ row: r, c1: 0, c2: GW - 1, net: -1 });
-        if (labMode === 2) pushF({ stage: 4, msg: `Row ${r + 1} carries no pin at all: a bus row, spare copper any net may borrow to travel sideways.`, board: labBoardAt(r + 1, { busRows: [...busRows], cursor: { r, c: GW - 1 } }) });
-        continue;
-      }
-      if (labMode === 2) pushF({ stage: 4, msg: `Row ${r + 1}.`, board: labBoardAt(r, { busRows: [...busRows], cursor: { r, c: 0 } }) });
-      let segStart = 0;
-      let curNet = rowPins[0].net;
-      let lastPinC = rowPins[0].c;
-      const flush = (endC: number, net: number) => {
-        if (!segsOfNet.has(net)) segsOfNet.set(net, []);
-        segsOfNet.get(net)!.push({ row: r, c1: segStart, c2: endC });
-        if (labMode) labSegs.push({ row: r, c1: segStart, c2: endC, net });
-      };
-      if (runsOfNet) {
-        const runEnd: number[] = [];
-        for (let k = rowPins.length - 1, e = rowPins.length - 1; k >= 0; k--) {
-          if (k < rowPins.length - 1 && rowPins[k].net !== rowPins[k + 1].net) e = k;
-          runEnd[k] = e;
-        }
-        const freeBetween = (a: number, b: number) => { let n = 0; for (let c = a; c <= b; c++) if (occ[at(r, c)] === 0) n++; return n; };
-        let freeA = freeBetween(0, rowPins[0].c);
-        for (let k = 1; k < rowPins.length; k++) {
-          if (rowPins[k].net === curNet) { freeA += freeBetween(lastPinC + 1, rowPins[k].c); lastPinC = rowPins[k].c; continue; }
-          cuts++;
-          const gap = rowPins[k].c - lastPinC;
-          const needA = runsOfNet[curNet] >= 2 && freeA === 0;
-          const eb = runEnd[k];
-          const needB = runsOfNet[rowPins[k].net] >= 2 && freeBetween(rowPins[k].c, eb === rowPins.length - 1 ? GW - 1 : rowPins[eb].c) === 0;
-          const sp: number[] = [];
-          for (let c = lastPinC + 1; c < rowPins[k].c; c++) if (occ[at(r, c)] === 0) sp.push(c);
-          let endA = lastPinC, startB: number;
-          if (sp.length === 0 || (!needA && !needB)) {
-            if (gap >= 2) startB = lastPinC + 2;
-            else { bCuts++; startB = rowPins[k].c; }
-          } else if (needA && (sp.length >= 3 || (sp.length === 2 && !needB))) {
-            endA = sp[1] - 1; startB = sp[1] + 1;
-          } else if (needA && (sp.length === 2 || !needB)) {
-            bCuts++; endA = sp[0]; startB = sp[0] + 1;
-          } else if (sp.length >= 2 || sp[0] !== lastPinC + 1) {
-            startB = lastPinC + 2;
-          } else {
-            bCuts++; startB = lastPinC + 1;
-          }
-          flush(endA, curNet);
-          segStart = startB;
-          curNet = rowPins[k].net;
-          freeA = freeBetween(startB, rowPins[k].c);
-          lastPinC = rowPins[k].c;
-        }
-        flush(GW - 1, curNet);
-        continue;
-      }
-      for (let k = 1; k < rowPins.length; k++) {
-        if (rowPins[k].net !== curNet) {
-          cuts++;
-          const gap = rowPins[k].c - lastPinC;
-          const prevNet = curNet;
-          if (gap >= 2) {
-            flush(lastPinC + 1 - 1, curNet);
-            segStart = lastPinC + 2;
-            if (labMode) labCuts.push({ row: r, col: lastPinC + 1, kind: "hole" });
-          } else {
-            bCuts++;
-            flush(lastPinC, curNet);
-            segStart = rowPins[k].c;
-            if (labMode) labCuts.push({ row: r, col: lastPinC, kind: "knife" });
-          }
-          curNet = rowPins[k].net;
-          if (labMode === 2) pushF({ stage: 4, msg: `Row ${r + 1}: ${netName(prevNet)} on the left, ${netName(curNet)} on the right. The strip is cut ${gap >= 2 ? "by drilling out the spare hole between them" : "with a knife between the two holes, since no spare hole is free"}.`, board: labBoardAt(r + 1, { busRows: [...busRows], cursor: { r, c: rowPins[k].c }, segs: [...labSegs, { row: r, c1: segStart, c2: GW - 1, net: -1 }, ...Array.from({ length: GH - r - 1 }, (_, q) => ({ row: r + 1 + q, c1: 0, c2: GW - 1, net: -1 }))] }) });
-        }
-        lastPinC = rowPins[k].c;
-      }
-      flush(GW - 1, curNet);
-    }
-    if (labMode === 2) pushF({ stage: 4, msg: `${cuts} cuts${bCuts ? `, ${bCuts} of them with a knife` : ""}, ${busRows.length} bus rows. Every strip segment now carries one net or none.`, board: labBoardAt(GH, { busRows: [...busRows] }) });
-
-    // wires: per-net MST over segments, realizability-aware
-    const used = usedBuf.fill(0, 0, GH * GW);
-    // body cells per column above each row, so the bodies a vertical wire
-    // would cross between two rows come out of one subtraction
-    const bodyPre = bodyPreBuf;
-    for (let c = 0; c < GW; c++) {
-      let n = 0;
-      for (let r = 0; r < GH; r++) {
-        bodyPre[r * GW + c] = n;
-        if (occ[r * GW + c] === 1) n++;
-      }
-      bodyPre[GH * GW + c] = n;
-    }
-    let wires = 0, wireLen = 0, slants = 0, crossings = 0, starved = 0, starvedHard = 0, relays = 0;
-    const hardSegs: string[] = [];
-    // a column free on two rows is a set bit in the AND of their words, so
-    // a scan visits only those columns instead of the whole range
-    const WPR = (GW + 31) >> 5;
-    const freeM = freeMaskBuf.fill(0, 0, GH * WPR);
-    const usedM = usedMaskBuf.fill(0, 0, GH * WPR);
-    for (let r = 0; r < GH; r++) {
-      const row = r * GW, rw = r * WPR;
-      for (let c = 0; c < GW; c++) if (occ[row + c] === 0) freeM[rw + (c >> 5)] |= 1 << (c & 31);
-    }
-    const markUsed = (r: number, c: number) => {
-      used[r * GW + c] = 1;
-      usedM[r * WPR + (c >> 5)] |= 1 << (c & 31);
-    };
-    // cleanest column shared by two rows over [c1, c2]: free and unused
-    // on both, fewest bodies between; the column plus the body count in
-    // the high bits, or -1
-    const sharedCol = (rowA: number, rowB: number, c1: number, c2: number): number => {
-      const wA = rowA * WPR, wB = rowB * WPR;
-      const preTop = (Math.min(rowA, rowB) + 1) * GW, preBot = Math.max(rowA, rowB) * GW;
-      let bestC = -1, bestCross = Infinity;
-      const wLo = c1 >> 5, wHi = c2 >> 5;
-      for (let w = wLo; w <= wHi; w++) {
-        let m = freeM[wA + w] & freeM[wB + w] & ~usedM[wA + w] & ~usedM[wB + w];
-        if (w === wLo) m &= -1 << (c1 & 31);
-        if (w === wHi && (c2 & 31) < 31) m &= (1 << ((c2 & 31) + 1)) - 1;
-        while (m !== 0) {
-          const low = m & -m;
-          m ^= low;
-          const c = (w << 5) + 31 - Math.clz32(low);
-          const cr = bodyPre[preBot + c] - bodyPre[preTop + c];
-          if (cr < bestCross) {
-            bestCross = cr;
-            bestC = c;
-          }
-          if (cr === 0) return bestC;
-        }
-      }
-      return bestC < 0 ? -1 : bestC + (bestCross << 16);
-    };
-    // cleanest hop column from a segment to a bus row
-    const hop = (S: { row: number; c1: number; c2: number }, r: number): number => sharedCol(S.row, r, S.c1, S.c2);
+    const labY0 = new Array(nNode - 1).fill(0);
+    const GH = ex.GH, GW = ex.GW;
+    let labParts: LabPlaced[] = [];
+    const labSegs: LabSeg[] = [], labCuts: LabCut[] = [], labWires: LabWire[] = [], busRows: number[] = [];
+    let nSegAt = 0, nWireAt = 0;
+    const segOf = (i: number): LabSeg => ({ row: ex.segs[4 * i], c1: ex.segs[4 * i + 1], c2: ex.segs[4 * i + 2], net: ex.segs[4 * i + 3] });
+    const wireOf = (i: number): LabWire => ({ r1: ex.wires[7 * i], c1: ex.wires[7 * i + 1], r2: ex.wires[7 * i + 2], c2: ex.wires[7 * i + 3], net: ex.wires[7 * i + 4], slanted: ex.wires[7 * i + 5] === 1, crossings: ex.wires[7 * i + 6] });
     const labBoard5 = (extra: Partial<LabBoard> = {}): LabBoard => ({ rows: GH, cols: GW, parts: labParts, segs: [...labSegs], cuts: [...labCuts], wires: [...labWires], busRows: [...busRows], ...extra });
-    for (const [net, segs] of segsOfNet) {
-      if (segs.length < 2) continue;
-      if (labMode === 2) pushF({ stage: 5, msg: `${netName(net)} has pins on ${segs.length} strip segments. They have to be joined by link wires.`, board: labBoard5({ hlNet: net }) });
-      const labStarved0 = starvedHard + starved;
-      const k = segs.length;
-      linkCount.fill(0, 0, k);
-      inTree.fill(0, 0, k);
-      const tree = [0];
-      inTree[0] = 1;
-      // Prim keys: per outside segment, its cheapest link from the tree
-      // (earliest tree member on ties, so the pick matches a full scan in
-      // tree order). A link only consumes holes on its two rows, so keys
-      // of segments elsewhere stay exact and are not recomputed.
-      // hop columns per (segment, bus row), found once and reused while
-      // the two holes they end on stay free
-      const nBus = busRows.length;
-      if (hopBuf.length < k * nBus) hopBuf = new Int32Array(Math.max(k * nBus, hopBuf.length * 2));
-      const hopCache = hopBuf.fill(-2, 0, k * nBus);
-      const hopCached = (si: number, bi2: number): number => {
-        const idx = si * nBus + bi2;
-        let h = hopCache[idx];
-        if (h >= 0) {
-          const c = h & 0xffff;
-          if (used[segs[si].row * GW + c] || used[busRows[bi2] * GW + c]) h = -2;
+    const labBoardAt = (fromRow: number, extra: Partial<LabBoard> = {}): LabBoard => ({ rows: GH, cols: GW, parts: labParts, segs: [...labSegs, ...Array.from({ length: GH - fromRow }, (_, k) => ({ row: fromRow + k, c1: 0, c2: GW - 1, net: -1 }))], cuts: [...labCuts], wires: [...labWires], busRows: [], ...extra });
+    // the board once rows and columns are known: parts, then the row scan
+    const scan = () => {
+      labParts = labPlaced(o.yI, o.xI, 0).map((p) => ({ ...p, x: p.x + mCol, y: p.y + mRow, pos: { row: p.pos.row + mRow, col: p.pos.col + mCol }, end: p.end && { row: p.end.row + mRow, col: p.end.col + mCol }, pins: p.pins.map((q) => ({ ...q, r: q.r + mRow, c: q.c + mCol })) }));
+      pushF({ stage: 4, msg: `The board gets ${mRow ? "one blank line of margin on every side, and" : ""} every row is one copper strip. Now each row is read from left to right.`, board: labBoardAt(0) });
+      let ci = 0;
+      const nScan = ex.segs.length / 4 - relays;
+      for (let r = 0; r < GH; r++) {
+        if (nSegAt < nScan && ex.segs[4 * nSegAt] === r && ex.segs[4 * nSegAt + 3] === -1 && busRowSet.has(r)) {
+          busRows.push(r);
+          labSegs.push(segOf(nSegAt++));
+          pushF({ stage: 4, msg: `Row ${r + 1} carries no pin at all: a bus row, spare copper any net may borrow to travel sideways.`, board: labBoardAt(r + 1, { busRows: [...busRows], cursor: { r, c: GW - 1 } }) });
+          continue;
         }
-        if (h === -2) {
-          h = hop(segs[si], busRows[bi2]);
-          hopCache[idx] = h;
+        pushF({ stage: 4, msg: `Row ${r + 1}.`, board: labBoardAt(r, { busRows: [...busRows], cursor: { r, c: 0 } }) });
+        while (ci < ex.cuts.length / 4 && ex.cuts[4 * ci] === r) {
+          const prev = segOf(nSegAt++);
+          labSegs.push(prev);
+          const cut = { row: r, col: ex.cuts[4 * ci + 1], kind: ex.cuts[4 * ci + 2] === 1 ? "knife" as const : "hole" as const };
+          labCuts.push(cut);
+          const next = segOf(nSegAt);
+          pushF({ stage: 4, msg: `Row ${r + 1}: ${netName(prev.net)} on the left, ${netName(next.net)} on the right. The strip is cut ${cut.kind === "hole" ? "by drilling out the spare hole between them" : "with a knife between the two holes, since no spare hole is free"}.`, board: labBoardAt(r + 1, { busRows: [...busRows], cursor: { r, c: ex.cuts[4 * ci + 3] }, segs: [...labSegs, { row: r, c1: next.c1, c2: GW - 1, net: -1 }, ...Array.from({ length: GH - r - 1 }, (_, q) => ({ row: r + 1 + q, c1: 0, c2: GW - 1, net: -1 }))] }) });
+          ci++;
         }
-        return h;
-      };
-      const offer = (ti: number, b2: number, force: boolean) => {
-        const A = segs[tree[ti]], B = segs[b2];
-        const lo = Math.max(A.c1, B.c1), hi = Math.min(A.c2, B.c2);
-        let cost: number, cross = 0, bestCol = -1;
-        if (A.row === B.row) cost = 50;
-        else if (lo <= hi) {
-          const h = sharedCol(A.row, B.row, lo, hi);
-          if (h < 0) cost = 50;
-          else {
-            bestCol = h & 0xffff;
-            cross = h >> 16;
-            cost = 1 + cross * 8;
-          }
-        } else cost = 50;
-        let len = Math.abs(A.row - B.row);
-        let total = cost + len * 0.1;
-        let relayRow = -1, cA = -1, cB = -1;
-        if (cost >= 50 && busRows.length) {
-          // no shared column: a bus-row relay, two vertical hops joined by
-          // a claimed span of pin-free copper. A clean relay through a row
-          // between the strips is the cheapest possible and ends the search
-          const rLo = Math.min(A.row, B.row), rHi = Math.max(A.row, B.row);
-          const sa = tree[ti];
-          for (let bi2 = 0; bi2 < busRows.length; bi2++) {
-            const r = busRows[bi2];
-            if (r === A.row || r === B.row) continue;
-            const hA = hopCached(sa, bi2);
-            if (hA < 0) continue;
-            const hB = hopCached(b2, bi2);
-            if (hB < 0) continue;
-            const ca = hA & 0xffff, cb = hB & 0xffff;
-            const lo2 = Math.min(ca, cb), hi2 = Math.max(ca, cb);
-            const claims = busClaims.get(r);
-            let taken = false;
-            if (claims) for (const cl of claims) if (cl.net !== net && cl.c1 <= hi2 && lo2 <= cl.c2) { taken = true; break; }
-            if (taken) continue;
-            const cr = (hA >> 16) + (hB >> 16);
-            const rl = Math.abs(A.row - r) + Math.abs(B.row - r);
-            const t = 3 + cr * 8 + rl * 0.1;
-            if (t < total) {
-              total = t;
-              cross = cr;
-              len = rl;
-              relayRow = r;
-              cA = ca;
-              cB = cb;
-              if (cr === 0 && r > rLo && r < rHi) break;
-            }
-          }
-        }
-        if (force || total < kTotal[b2]) {
-          kTotal[b2] = total;
-          kA[b2] = ti;
-          kCross[b2] = cross;
-          kLen[b2] = len;
-          kCol[b2] = bestCol;
-          kOff[b2] = relayRow < 0 && cost >= 50 ? 1 : 0;
-          kRow[b2] = relayRow;
-          kCA[b2] = cA;
-          kCB[b2] = cB;
-        }
-      };
-      const rekey = (b2: number) => {
-        offer(0, b2, true);
-        for (let ti = 1; ti < tree.length; ti++) offer(ti, b2, false);
-      };
-      for (let b2 = 1; b2 < k; b2++) rekey(b2);
-      while (tree.length < k) {
-        let bb = -1;
-        for (let b2 = 0; b2 < k; b2++) {
-          if (inTree[b2]) continue;
-          if (bb < 0 || kTotal[b2] < kTotal[bb] || (kTotal[b2] === kTotal[bb] && kA[b2] < kA[bb])) bb = b2;
-        }
-        const a = tree[kA[bb]];
-        inTree[bb] = 1;
-        tree.push(bb);
-        wireLen += kLen[bb];
-        crossings += kCross[bb];
-        if (kOff[bb]) slants++;
-        if (labMode) {
-          const A = segs[a], B = segs[bb];
-          if (kRow[bb] >= 0) {
-            const r = kRow[bb];
-            labWires.push({ r1: A.row, c1: kCA[bb], r2: r, c2: kCA[bb], net, slanted: false, crossings: 0 }, { r1: r, c1: kCB[bb], r2: B.row, c2: kCB[bb], net, slanted: false, crossings: 0 });
-            labSegs.push({ row: r, c1: Math.min(kCA[bb], kCB[bb]), c2: Math.max(kCA[bb], kCB[bb]), net });
-            if (labMode === 2) pushF({ stage: 5, msg: `${netName(net)}: no column has a free hole on both segments, so the decoder takes a detour: one hop along column ${kCA[bb] + 1} to bus row ${r + 1}, ${Math.abs(kCA[bb] - kCB[bb])} holes of borrowed copper, and a hop back along column ${kCB[bb] + 1}. Two straight wires instead of one slanted one.`, board: labBoard5({ hlNet: net }) });
-          } else if (kCol[bb] >= 0) {
-            labWires.push({ r1: A.row, c1: kCol[bb], r2: B.row, c2: kCol[bb], net, slanted: false, crossings: kCross[bb] });
-            if (labMode === 2) {
-              const marks: LabMark[] = [];
-              const lo = Math.max(A.c1, B.c1), hi = Math.min(A.c2, B.c2);
-              const preTop = (Math.min(A.row, B.row) + 1) * GW, preBot = Math.max(A.row, B.row) * GW;
-              for (let c = lo; c <= hi; c++) {
-                const ok = occ[A.row * GW + c] === 0 && occ[B.row * GW + c] === 0 && (c === kCol[bb] || (!used[A.row * GW + c] && !used[B.row * GW + c])) && bodyPre[preBot + c] - bodyPre[preTop + c] === 0;
-                marks.push({ r: A.row, c, kind: ok ? "ok" : "bad" }, { r: B.row, c, kind: ok ? "ok" : "bad" });
-              }
-              pushF({ stage: 5, msg: `${netName(net)}: the cheapest link runs straight down column ${kCol[bb] + 1}, ${Math.abs(A.row - B.row)} holes long${kCross[bb] ? `, over ${kCross[bb]} part${kCross[bb] === 1 ? "" : "s"}, which is charged as mess` : ""}.`, board: labBoard5({ hlNet: net, marks }) });
-            }
-          } else {
-            labWires.push({ r1: A.row, c1: Math.round((A.c1 + A.c2) / 2), r2: B.row, c2: Math.round((B.c1 + B.c2) / 2), net, slanted: true, crossings: 0 });
-            if (labMode === 2) pushF({ stage: 5, msg: `${netName(net)}: no straight link and no relay either. The decoder records a slanted wire and charges for it, so the annealer knows this description is nearly right, not hopeless.`, board: labBoard5({ hlNet: net }) });
-          }
-        }
-        if (kRow[bb] >= 0) {
-          const r = kRow[bb];
-          markUsed(segs[a].row, kCA[bb]);
-          markUsed(r, kCA[bb]);
-          markUsed(r, kCB[bb]);
-          markUsed(segs[bb].row, kCB[bb]);
-          if (!busClaims.has(r)) busClaims.set(r, []);
-          busClaims.get(r)!.push({ c1: Math.min(kCA[bb], kCB[bb]), c2: Math.max(kCA[bb], kCB[bb]), net });
-          wires += 2;
-          relays++;
-        } else {
-          wires++;
-          if (kCol[bb] >= 0) {
-            markUsed(segs[a].row, kCol[bb]);
-            markUsed(segs[bb].row, kCol[bb]);
-          }
-        }
-        linkCount[a]++;
-        linkCount[bb]++;
-        // a consumed hole only ever raises a pair's cost, and only when the
-        // key relied on that hole: just those keys are recomputed, the
-        // rest only hear the new member's offer (claims never collide
-        // inside one net, so relay keys depend on their four holes alone)
-        const tn = tree.length - 1;
-        for (let b2 = 0; b2 < k; b2++) {
-          if (inTree[b2]) continue;
-          const rb = segs[b2].row * GW, ra = segs[tree[kA[b2]]].row * GW;
-          let stale = false;
-          if (kRow[b2] >= 0) {
-            const rr = kRow[b2] * GW;
-            stale = !!(used[ra + kCA[b2]] || used[rr + kCA[b2]] || used[rr + kCB[b2]] || used[rb + kCB[b2]]);
-          } else if (kCol[b2] >= 0) {
-            stale = !!(used[ra + kCol[b2]] || used[rb + kCol[b2]]);
-          }
-          if (stale) rekey(b2);
-          else offer(tn, b2, false);
-        }
+        labSegs.push(segOf(nSegAt++));
       }
-      // a linked segment without any free hole cannot take its wire at all
-      // (hard); one whose only free hole the link consumes leaves the
-      // router no slack (headroom, soft)
-      for (let s = 0; s < segs.length; s++) {
-        if (linkCount[s] === 0) continue;
-        let free = 0, spare = 0;
-        for (let c = segs[s].c1; c <= segs[s].c2 && spare === 0; c++) {
-          if (occ[at(segs[s].row, c)] !== 0) continue;
-          free++;
-          if (!used[segs[s].row * GW + c]) spare++;
+      pushF({ stage: 4, msg: `${o.cuts} cuts${o.bCuts ? `, ${o.bCuts} of them with a knife` : ""}, ${busRows.length} bus rows. Every strip segment now carries one net or none.`, board: labBoardAt(GH, { busRows: [...busRows] }) });
+    };
+    const busRowSet = new Set(ex.busRows);
+    const relays = o.status === 2 ? o.relays : 0;
+    // replay the trace
+    const T = ex.trace;
+    let p = 0, net = -1;
+    const vals = (n: number) => Array.from(T.subarray(p, (p += n)));
+    while (withFrames && p < T.length) {
+      const code = T[p++];
+      if (code === 1) {
+        nE = T[p++];
+        eU = []; eV = []; eW = [];
+        for (let ei = 0; ei < nE; ei++) { eU.push(T[p++]); eV.push(T[p++]); eW.push(T[p++]); }
+        pushF({ stage: 2, msg: "Every part starts on row 0. Each above-relation becomes an arrow: the lower part must sit at least the upper part's height plus its clearance further down.", lanes: labLanes(new Array(nNode - 1).fill(0), labArrows("idle", nE), []) });
+      } else if (code === 2) {
+        labTies = [];
+      } else if (code === 3) {
+        const [n, k, u, ou, v, ov] = vals(6);
+        const pins = netPins[n];
+        pushF({ stage: 2, msg: nodePart(u) === nodePart(v)
+          ? `Two ${nets[n].name} pins of ${labelOf(nodePart(u))} sit on different rows of the part, yet they are asked to share a strip. That cannot hold, so one of them is split into a strip group of its own; it will get a link wire later instead.`
+          : `The ${nets[n].name} pins of ${nodeName(u)} and ${nodeName(v)} are asked to share a strip too, but the ties already fix those parts at a distance that puts these pins on different rows. That cannot hold, so the ${nets[n].name} pin of ${labelOf(pins[k].pi)} is split into a strip group of its own; it will get a link wire later instead.`, lanes: labLanes(labY0, labArrows("idle", nE), labTies.map(tieIdle).concat([{ u, offU: ou, v, offV: ov, state: "split" as const }]), [nodePart(u), nodePart(v)]) });
+      } else if (code === 4) {
+        const [n, u, ou, v, ov] = vals(5);
+        pushF({ stage: 2, msg: `The ${nets[n].name} pins of ${nodeName(u)} and ${nodeName(v)} share a strip as well, and the distance already fits.`, lanes: labLanes(labY0, labArrows("idle", nE), labTies.map(tieIdle).concat([{ u, offU: ou, v, offV: ov, state: "check" as const }]), [nodePart(u), nodePart(v)]) });
+      } else if (code === 5) {
+        const [n, u, ou, v, ov, dd] = vals(6);
+        labTies.push({ u, offU: ou, v, offV: ov, state: "idle" });
+        pushF({ stage: 2, msg: `The ${nets[n].name} pins of ${nodeName(u)} and ${nodeName(v)} are asked to share a strip, so ${nodeName(v)} is tied to ${nodeName(u)}: from now on they move together, ${dd === 0 ? "tops level" : `${nodeName(v)} ${rowsWord(Math.abs(dd))} ${dd > 0 ? "below" : "above"}`}.`, lanes: labLanes(labY0, labArrows("idle", nE), labTies.map((t, i): LabTie => ({ ...t, state: i === labTies.length - 1 ? "check" : "idle" })), [nodePart(u), nodePart(v)]) });
+      } else if (code === 6) {
+        rootArr = vals(nNode);
+      } else if (code === 7) {
+        const [cu, cv, cw, offU, offV] = vals(5);
+        pushF({ stage: 2, msg: `The ties fix ${nodeName(cv)} ${rowsWord(Math.abs(offV - offU))} ${offV >= offU ? "below" : "above"} ${nodeName(cu)}, but the orders say ${nodeName(cv)} is below ${nodeName(cu)} by at least ${rowsWord(cw)}. Both cannot hold.`, lanes: labLanes(labY0, labArrows("idle", nE).map((a) => (a.a === cu && a.b === cv ? { ...a, state: "conflict" } : a)), labTies.map(tieConflict), [nodePart(cu), nodePart(cv)]) });
+      } else if (code === 8 || code === 11) {
+        const [n, k] = vals(2);
+        pushF({ stage: 2, msg: code === 8
+          ? `The decoder splits the ${nets[n].name} pin of ${labelOf(netPins[n][k].pi)} into a strip group of its own and starts over. That pin will get a link wire later instead.`
+          : `No rows can satisfy all of them at once. The decoder splits the ${nets[n].name} pin of ${labelOf(netPins[n][k].pi)} into a strip group of its own and starts over.`, lanes: labLanes(labY0, labArrows("idle", nE), [], [netPins[n][k].pi]) });
+      } else if (code === 9) {
+        const oe = T[p++];
+        const nodeY = vals(nNode - 1);
+        const tgt = eV[oe], src = eU[oe];
+        const mates = [...Array(nP).keys()].filter((q) => q !== nodePart(tgt) && rootArr[q] === rootArr[tgt]).map(labelOf);
+        const span = nodePart(src) === nodePart(tgt);
+        pushF({ stage: 2, msg: span
+          ? `${nodeName(tgt)} sits at least ${rowsWord(eW[oe])} below its upper end, so it moves down to row ${nodeY[tgt] + 1}.`
+          : `${nodeName(tgt)} must be at least ${rowsWord(eW[oe])} below ${nodeName(src)}, so it moves down to row ${nodeY[tgt] + 1}${mates.length ? `, and ${mates.join(" and ")}, tied to it, ${mates.length > 1 ? "move" : "moves"} along` : ""}.`,
+          lanes: labLanes(nodeY, labArrows("idle", nE, oe), labTies, [nodePart(tgt), ...mates.map((m) => parts.findIndex((q) => q.comp.label === m))]) });
+      } else if (code === 10) {
+        const it = T[p++];
+        pushF({ stage: 2, msg: `Sweep ${it + 1}: parts are still moving down. The arrows chase each other in a circle through the ties.`, lanes: labLanes(vals(nNode - 1), labArrows("check", nE), labTies) });
+      } else if (code === 12) {
+        y = vals(nNode - 1);
+        pushF({ stage: 2, msg: "Nothing moves any more. These are the rows.", lanes: labLanes(Array.from({ length: nNode - 1 }, (_, n) => y[n]), labArrows("ok", nE), []) });
+      } else if (code === 13) {
+        nX = T[p++];
+        xU = []; xV = []; xW = [];
+        for (let ei = 0; ei < nX; ei++) { xU.push(T[p++]); xV.push(T[p++]); xW.push(T[p++]); }
+        pushF({ stage: 3, msg: "Rows are known, so the parts can be drawn. Every part starts in column 0. Each left-of relation becomes an arrow: the right part must sit at least the left part's width plus the gap further right.", board: { rows: labRowsNow(), cols: labColsNow(), parts: labPlaced(y, xd, 0), ghost: true, segs: [], cuts: [], wires: [], busRows: [], arrows: labXArrows("idle") } });
+      } else if (code === 14) {
+        const ei = T[p++];
+        xd = vals(nP + 1);
+        const u = xU[ei], v = xV[ei];
+        pushF({ stage: 3, msg: `${labelOf(v)} must be at least ${xW[ei]} columns right of ${labelOf(u)}, so it moves to column ${Math.round(xd[v]) + 1}.`, board: { rows: labRowsNow(), cols: labColsNow(), parts: labPlaced(y, xd, 0), ghost: true, segs: [], cuts: [], wires: [], busRows: [], arrows: labXArrows("idle", ei), hl: [v] } });
+      } else if (code === 15) {
+        for (let i = 0; i < nP; i++) xd[i] = o.xI[i];
+        pushF({ stage: 3, msg: `Nothing moves any more. Every part has a row and a column: a ${labRowsNow()} by ${labColsNow()} board, as tight as the relations allow.`, board: { rows: labRowsNow(), cols: labColsNow(), parts: labPlaced(o.yI, o.xI, 0), segs: [], cuts: [], wires: [], busRows: [], arrows: labXArrows("ok") } });
+        scan();
+      } else if (code === 16) {
+        net = T[p++];
+        const k = T[p++];
+        pushF({ stage: 5, msg: `${netName(net)} has pins on ${k} strip segments. They have to be joined by link wires.`, board: labBoard5({ hlNet: net }) });
+      } else if (code === 17) {
+        const w1 = wireOf(nWireAt++), w2 = wireOf(nWireAt++);
+        labWires.push(w1, w2);
+        labSegs.push(segOf(nSegAt++));
+        pushF({ stage: 5, msg: `${netName(net)}: no column has a free hole on both segments, so the decoder takes a detour: one hop along column ${w1.c1 + 1} to bus row ${w1.r2 + 1}, ${Math.abs(w1.c1 - w2.c1)} holes of borrowed copper, and a hop back along column ${w2.c1 + 1}. Two straight wires instead of one slanted one.`, board: labBoard5({ hlNet: net }) });
+      } else if (code === 18) {
+        const w = wireOf(nWireAt++);
+        labWires.push(w);
+        const nm = T[p++];
+        const marks: LabMark[] = [];
+        for (let m = 0; m < nm; m++) {
+          const c = T[p++], ok = T[p++] === 1;
+          marks.push({ r: w.r1, c, kind: ok ? "ok" : "bad" }, { r: w.r2, c, kind: ok ? "ok" : "bad" });
         }
-        if (free === 0) {
-          starvedHard++;
-          if (options?.debugSeeds) hardSegs.push(`${segs[s].row}:${segs[s].c1}-${segs[s].c2}/n${net}`);
-        } else if (spare === 0) starved++;
-      }
-      if (labMode === 2 && starvedHard + starved > labStarved0) pushF({ stage: 5, msg: `${netName(net)}: one of its segments has no free hole left for a wire to attach to. The decoder charges a heavy price for the starved pin and moves on.`, board: labBoard5({ hlNet: net }) });
+        pushF({ stage: 5, msg: `${netName(net)}: the cheapest link runs straight down column ${w.c1 + 1}, ${Math.abs(w.r1 - w.r2)} holes long${w.crossings ? `, over ${w.crossings} part${w.crossings === 1 ? "" : "s"}, which is charged as mess` : ""}.`, board: labBoard5({ hlNet: net, marks }) });
+      } else if (code === 19) {
+        labWires.push(wireOf(nWireAt++));
+        pushF({ stage: 5, msg: `${netName(net)}: no straight link and no relay either. The decoder records a slanted wire and charges for it, so the annealer knows this description is nearly right, not hopeless.`, board: labBoard5({ hlNet: net }) });
+      } else if (code === 20) {
+        const n = T[p++];
+        pushF({ stage: 5, msg: `${netName(n)}: one of its segments has no free hole left for a wire to attach to. The decoder charges a heavy price for the starved pin and moves on.`, board: labBoard5({ hlNet: n }) });
+      } else throw new Error(`v5 trace: unknown event ${code}`);
     }
-
-
-    let spanBad = 0;
-    for (const pi of flexIdx) {
-      if (geo[pi].mode !== "V") continue;
-      const span = yI[vBot.get(pi)!] - yI[pi];
-      if (!(parts[pi] as FlexPart).vdSet.has(span)) spanBad++;
+    if (o.status !== 2) return { board: null, frames };
+    if (!withFrames) {
+      // the whole board at once
+      labParts = labPlaced(o.yI, o.xI, 0).map((q) => ({ ...q, x: q.x + mCol, y: q.y + mRow, pos: { row: q.pos.row + mRow, col: q.pos.col + mCol }, end: q.end && { row: q.end.row + mRow, col: q.end.col + mCol }, pins: q.pins.map((pp) => ({ ...pp, r: pp.r + mRow, c: pp.c + mCol })) }));
+      for (let i = 0; i < ex.segs.length / 4; i++) labSegs.push(segOf(i));
+      for (let i = 0; i < ex.cuts.length / 4; i++) labCuts.push({ row: ex.cuts[4 * i], col: ex.cuts[4 * i + 1], kind: ex.cuts[4 * i + 2] === 1 ? "knife" : "hole" });
+      for (let i = 0; i < ex.wires.length / 7; i++) labWires.push(wireOf(i));
+      busRows.push(...ex.busRows);
     }
-
-    // exact clearance checks at decoded coordinates (the pair-exact rules
-    // the blanket gaps approximated); bbox prefilter keeps it cheap
-    let geoBad = 0;
-    {
-      interface PR { pi: number; kind: "rigid" | "flex"; p1?: BoardPosition; p2?: BoardPosition; cap?: Capsule; body?: FootprintRect; reach?: FootprintRect; minRow: number; maxRow: number; minCol: number; maxCol: number }
-      const rects: PR[] = [];
-      for (let pi = 0; pi < nP; pi++) {
-        const g2 = geo[pi];
-        if (parts[pi].kind === "rigid") {
-          const bd = g2.sh!.body;
-          const at = (o: FootprintRect): FootprintRect => ({ minRow: yI[pi] + o.minRow, maxRow: yI[pi] + o.maxRow, minCol: xI[pi] + o.minCol, maxCol: xI[pi] + o.maxCol });
-          const reach = g2.sh!.reach ? at(g2.sh!.reach) : undefined;
-          // the prefilter box has to take in the reach, or a part under a
-          // shaft is never even compared with it
-          rects.push({ pi, kind: "rigid", body: at(bd), reach,
-            minRow: Math.floor(Math.min(yI[pi], reach?.minRow ?? Infinity)), maxRow: Math.ceil(Math.max(yI[pi] + g2.h - 1, reach?.maxRow ?? -Infinity)),
-            minCol: Math.floor(Math.min(xI[pi], reach?.minCol ?? Infinity)), maxCol: Math.ceil(Math.max(xI[pi] + g2.w - 1, reach?.maxCol ?? -Infinity)) });
-        } else if (g2.mode === "H") {
-          const dc0 = (parts[pi] as FlexPart).dc0;
-          const p1 = { row: yI[pi], col: xI[pi] }, p2 = { row: yI[pi], col: xI[pi] + dc0 };
-          rects.push({ pi, kind: "flex", p1, p2, cap: flexBody(profOf[pi]!, p1, p2),
-            minRow: yI[pi], maxRow: yI[pi], minCol: xI[pi], maxCol: xI[pi] + dc0 });
-        } else {
-          const b = yI[vBot.get(pi)!];
-          const p1 = { row: yI[pi], col: xI[pi] }, p2 = { row: b, col: xI[pi] };
-          rects.push({ pi, kind: "flex", p1, p2, cap: flexBody(profOf[pi]!, p1, p2),
-            minRow: yI[pi], maxRow: b, minCol: xI[pi], maxCol: xI[pi] });
-        }
-      }
-      // sorted by top row, a pair is skipped as soon as B starts below A's reach
-      rects.sort((p, q) => p.minRow - q.minRow);
-      for (let a = 0; a < rects.length; a++) {
-        const A = rects[a];
-        for (let b2 = a + 1; b2 < rects.length; b2++) {
-          const B = rects[b2];
-          if (B.minRow > A.maxRow + clrPad) break;
-          if (A.minCol > B.maxCol + clrPad || B.minCol > A.maxCol + clrPad) continue;
-          if (A.kind === "flex" && B.kind === "flex") {
-            if (segmentsIntersect(A.p1!, A.p2!, B.p1!, B.p2!)) geoBad++;
-            else if (capsulesClash(A.cap!, B.cap!, Math.max(linesOf[A.pi], linesOf[B.pi]))) geoBad++;
-          } else if (A.kind === "flex" || B.kind === "flex") {
-            const F = A.kind === "flex" ? A : B;
-            const R = A.kind === "flex" ? B : A;
-            if (capsuleClashesRect(F.cap!, R.body!, Math.max(linesOf[F.pi], linesOf[R.pi])) || (R.reach && capsuleClashesRect(F.cap!, R.reach))) geoBad++;
-          } else if (
-            // two packages whose plastic overhangs their cells into each
-            // other, or one sitting under what the other holds over the board
-            bodyRectsClash(A.body!, B.body!, Math.max(linesOf[A.pi], linesOf[B.pi])) ||
-            (A.reach && bodyRectsClash(A.reach, B.body!)) || (B.reach && bodyRectsClash(B.reach, A.body!)) ||
-            (A.reach && B.reach && bodyRectsClash(A.reach, B.reach))
-          ) {
-            geoBad++;
-          }
-        }
-      }
-    }
-
-    // every term the price reads off a skeleton, then the price itself
-    // (layout2/boardPrice.ts, the one objective the finish shares)
-    const conns: PricedConn[] = [];
-    for (let pi = 0; pi < nP; pi++) {
-      const p = parts[pi];
-      if (!p.isConn || p.locked) continue;
-      const h = geo[pi].mode === "V" ? yI[vBot.get(pi)!] - yI[pi] + 1 : geo[pi].h;
-      const sidesOf = options?.connSidesOf?.(p.comp.id);
-      conns.push({ x: xI[pi], y: yI[pi], w: geo[pi].w, h, entry: geo[pi].sh?.entry, ...(sidesOf ? { sides: sidesOf } : {}) });
-    }
-    const shafts: PricedShaft[] = [];
-    for (const pi of rigidIdx) {
-      const reach = geo[pi].sh?.reach;
-      if (!reach || parts[pi].locked) continue;
-      shafts.push({ r0: yI[pi] + reach.minRow - 0.5, r1: yI[pi] + reach.maxRow + 0.5, c0: xI[pi] + reach.minCol - 0.5, c1: xI[pi] + reach.maxCol + 0.5 });
-    }
-    const groups: PricedGroup[] = siblingGroups.map((group) => {
-      let r0 = Infinity, r1 = -Infinity, c0 = Infinity, c1 = -Infinity;
-      for (const pi of group) {
-        r0 = Math.min(r0, yI[pi]); r1 = Math.max(r1, yI[pi]);
-        c0 = Math.min(c0, xI[pi]); c1 = Math.max(c1, xI[pi]);
-      }
-      return { r0, r1, c0, c1, n: group.length };
-    });
-    const priced = priceBreakdown({ H, W, lockedRowsCap, lockedColsCap, wires, wireLen, cuts, bCuts, conns, shafts, groups }, wBCut, connSides);
-    const { connEdge, lockOver } = priced;
-    const eBase =
-      priced.price +
-      overlapBad * 500 + geoBad * 450 + ringBad * 120 + spanBad * 60 + starved * 20 + starvedHard * 450;
-    const hardPen = overlapBad * 500 + geoBad * 450 + starvedHard * 450;
-    if (labMode) {
-      labBoardOut = labBoard5();
-      pushF({ stage: 5, msg: `Every net is joined: ${wires} link wire${wires === 1 ? "" : "s"} of total length ${wireLen} hole${wireLen === 1 ? "" : "s"}.`, board: labBoardOut });
-      pushF({ stage: 6, msg: `Board ${GH} by ${GW} = ${GH * GW} cells, ${wires} link wires of total length ${wireLen}, ${cuts} cuts${bCuts ? ` (${bCuts} with a knife)` : ""}, ${slants + crossings} messy wire${slants + crossings === 1 ? "" : "s"}${starvedHard ? `, ${starvedHard} starved pin${starvedHard === 1 ? "" : "s"}` : ""}${connEdge ? `, a connector away from the edge` : ""}. Score ${(eBase + W_MESS * (slants + crossings)).toFixed(1)}.`, board: labBoardOut });
-    }
-    return { eBase, hardPen, slants, crossings, H, W, yI, xI, geo, vBot, dbg: { wires, wireLen, relays, cuts, bCuts, starved, starvedHard, geoBad, overlapBad, connEdge, lockOver, spanBad, hardSegs }, br: g.br };
+    const board = labBoard5();
+    const mess = o.slants + o.crossings;
+    pushF({ stage: 5, msg: `Every net is joined: ${o.wires} link wire${o.wires === 1 ? "" : "s"} of total length ${o.wireLen} hole${o.wireLen === 1 ? "" : "s"}.`, board });
+    pushF({ stage: 6, msg: `Board ${GH} by ${GW} = ${GH * GW} cells, ${o.wires} link wires of total length ${o.wireLen}, ${o.cuts} cuts${o.bCuts ? ` (${o.bCuts} with a knife)` : ""}, ${mess} messy wire${mess === 1 ? "" : "s"}${o.starvedHard ? `, ${o.starvedHard} starved pin${o.starvedHard === 1 ? "" : "s"}` : ""}${o.connEdge ? `, a connector away from the edge` : ""}. Score ${(o.eBase + W_MESS * mess).toFixed(1)}.`, board });
+    return { board, frames };
   }
 
-  // ── mutation ──
-  // r bands of the move kinds (MOVE_KINDS order), for forcing a kind
-  const KIND_BANDS: [number, number][] = [[0, 0.06], [0.06, 0.17], [0.17, 0.336], [0.336, 0.502], [0.502, 0.585], [0.585, 0.6514], [0.6514, 0.7344], [0.7344, 0.8008], [0.8008, 0.9004], [0.9004, 0.92115], [0.92115, 0.9419], [0.9419, 1]];
-  function mutate(g: Genome, rng: () => number, cold = false, tag?: { kind: number }, force?: number): Genome | null {
-    let r = rng();
-    if (tag) tag.kind = -1;
-    if (force !== undefined) { const b = KIND_BANDS[force]; r = b[0] + rng() * (b[1] - b[0]); }
-    if (cold) {
-      // low-temperature mix: only the move kinds that stay on the plateau
-      // (pull, sequence swaps, branch flip, label merge, gap toggles)
-      const bands: [number, number, number][] = [[0.06, 0.17, 8], [0.17, 0.336, 22], [0.336, 0.502, 22], [0.502, 0.585, 12], [0.7344, 0.8008, 6], [0.8008, 0.9004, 14], [0.9004, 0.92115, 8], [0.92115, 0.9419, 8]];
-      let x = rng() * 100, b = bands[0];
-      for (const bb of bands) { if (x < bb[2]) { b = bb; break; } x -= bb[2]; }
-      r = b[0] + rng() * (b[1] - b[0]);
+  // the anneal's own decoder (the loop in C keeps its state there)
+  let annealDecInst: V5WasmDecoder | null = null;
+  const annealDec = () => (annealDecInst ??= new V5WasmDecoder(wasmOf(), wasmModel()));
+
+  if (options?.speedProbe) {
+    const w = annealDec();
+    w.rngSet(1);
+    const t0p = performance.now();
+    for (let i = 0; i < options.speedProbe; i++) {
+      w.writeGenome(w.labInit());
+      w.decode();
     }
-    const gg = cloneG(g);
-    const ri = (n: number) => Math.floor(rng() * n);
-    // side-switch teleport: throw a connector to the opposite extreme of
-    // both sequences (the other board edge). Connectors stacked on one edge
-    // set the board height; the area pricing already prefers a split, but
-    // ordinary swaps cannot carry a connector across the board.
-    if (r < 0.06 && nP >= 3) {
-      if (tag) tag.kind = 0;
-      const conns = parts.map((p, i) => (p.isConn && !p.locked ? i : -1)).filter((i) => i >= 0);
-      if (!conns.length) return null;
-      const a = conns[ri(conns.length)];
-      const back = rng() < 0.5;
-      for (const arr of [gg.gp, gg.gn]) {
-        arr.splice(arr.indexOf(a), 1);
-        if (back) arr.push(a);
-        else arr.unshift(a);
-      }
-      return gg;
-    }
-    if (r < 0.17 && nP >= 3) {
-      if (tag) tag.kind = 1;
-      const cand: number[][] = [];
-      for (let n = 0; n < nets.length; n++) {
-        const ps = [...new Set(netPins[n].map((x) => x.pi))];
-        if (ps.length >= 2) cand.push(ps);
-      }
-      if (!cand.length) return null;
-      const ps = cand[ri(cand.length)];
-      const a = ps[ri(ps.length)];
-      let b = ps[ri(ps.length)];
-      if (a === b) b = ps[(ps.indexOf(b) + 1) % ps.length];
-      if (a === b) return null;
-      const side = rng() < 0.5 ? 0 : 1;
-      for (const arr of [gg.gp, gg.gn]) {
-        arr.splice(arr.indexOf(a), 1);
-        arr.splice(arr.indexOf(b) + side, 0, a);
-      }
-      return gg;
-    }
-    r = (r - 0.17) / 0.83;
-    const swapNear = (arr: number[]) => {
-      const i = ri(arr.length - 1);
-      const j = Math.min(arr.length - 1, i + 1 + ri(3));
-      [arr[i], arr[j]] = [arr[j], arr[i]];
-    };
-    if (nP < 2) {
-      if (tag) tag.kind = 5;
-      if (rigidIdx.length > 0 && !parts[rigidIdx[0]].locked) {
-        gg.rot[0] = (gg.rot[0] + (parts[rigidIdx[0]].def.halfTurnOnly ? 2 : 1 + ri(3))) % 4;
-        return gg;
-      }
-      return null;
-    }
-    if (r < 0.2) { if (tag) tag.kind = 2; swapNear(gg.gp); }
-    else if (r < 0.4) { if (tag) tag.kind = 3; swapNear(gg.gn); }
-    else if (r < 0.5) {
-      if (tag) tag.kind = 4;
-      swapNear(gg.gp);
-      swapNear(gg.gn);
-    } else if (r < 0.58 && rigidIdx.length > 0) {
-      if (tag) tag.kind = 5;
-      if (lean && !rotK.length) return null;
-      const k = lean ? rotK[ri(rotK.length)] : ri(rigidIdx.length);
-      gg.rot[k] = (gg.rot[k] + (parts[rigidIdx[k]].def.halfTurnOnly ? 2 : 1 + ri(3))) % 4;
-    } else if (r < 0.68 && flexIdx.length > 0) {
-      if (tag) tag.kind = 6;
-      const k = ri(flexIdx.length);
-      const p = parts[flexIdx[k]] as FlexPart;
-      if (p.canH && p.canV) gg.hv[k] = 1 - gg.hv[k];
-      else return null;
-    } else if (r < 0.76 && flexIdx.length > 0) {
-      if (tag) tag.kind = 7;
-      const k = ri(flexIdx.length);
-      gg.br[k] = 1 - gg.br[k];
-    } else if (r < 0.88) {
-      if (tag) tag.kind = 8;
-      const n = ri(nets.length);
-      const pins = netPins[n];
-      if (pins.length < 2) return null;
-      const a = ri(pins.length);
-      let b = ri(pins.length);
-      if (a === b) b = (b + 1) % pins.length;
-      if (lean && gg.grp[n][a] === gg.grp[n][b]) return null;
-      gg.grp[n][a] = gg.grp[n][b];
-    } else if (r < 0.905) {
-      if (tag) tag.kind = 9;
-      // open or close a blank row below a part (bus-row supply)
-      const i = ri(nP);
-      gg.gap[i] = gg.gap[i] > 0 ? 0 : 1 + ri(2);
-    } else if (r < 0.93) {
-      if (tag) tag.kind = 10;
-      // open or close blank columns right of a part (attachment holes)
-      const i = ri(nP);
-      gg.xgap[i] = gg.xgap[i] > 0 ? 0 : 1 + ri(2);
-    } else {
-      if (tag) tag.kind = 11;
-      const n = ri(nets.length);
-      const pins = netPins[n];
-      if (pins.length < 2) return null;
-      const a = ri(pins.length);
-      if (lean && gg.grp[n].indexOf(gg.grp[n][a]) === gg.grp[n].lastIndexOf(gg.grp[n][a])) return null;
-      gg.grp[n][a] = 1 + Math.max(...gg.grp[n]);
-    }
-    return gg;
+    options.onSpeedProbe?.((performance.now() - t0p) / options.speedProbe);
+    return emptyResult([]);
   }
 
   // ── SA with penalty ramp ──
+  // the Decoded of a board the WebAssembly decoder measured
+  const decodedOf = (g: Genome, o: WasmDecodeOut): Decoded => {
+    const geo = geoOf(g);
+    const vBot = new Map<number, number>();
+    let nNode = nP;
+    for (const pi of flexIdx) if (geo[pi].mode === "V") vBot.set(pi, nNode++);
+    return {
+      eBase: o.eBase, slants: o.slants, crossings: o.crossings, H: o.H, W: o.W, yI: o.yI, xI: o.xI, geo, vBot,
+      dbg: { wires: o.wires, wireLen: o.wireLen, relays: o.relays, cuts: o.cuts, bCuts: o.bCuts, starved: o.starved, starvedHard: o.starvedHard, geoBad: o.geoBad, overlapBad: o.overlapBad, connEdge: o.connEdge, lockOver: o.lockOver, spanBad: o.spanBad, hardSegs: [] },
+    };
+  };
+  // one seed's walk, run by the loop in C, which stops at every new best for
+  // the exact finish
   function solveSeed(seed: number, seedPos: number): { E: number; g: Genome; d: Decoded; exact: { final: AutoLayoutResult; score: number } | null; exactN: number } | null {
-    const rng = mulberry32((seed + 1) * 0x9e3779b9);
-    let exact: { final: AutoLayoutResult; score: number } | null = null, exactN = 0;
-    const rampStart = options?.schedule?.rampStart ?? RAMP_START;
-    const rampEnd = movesN * (options?.schedule?.rampEndFrac ?? 1);
-    const wOf = (it: number) => Math.min(W_MESS, rampStart * Math.pow(W_MESS / rampStart, it / rampEnd));
-    const hardStart = options?.schedule?.hardStart ?? 1;
-    const hardOf = (it: number) => hardStart >= 1 ? 1 : Math.min(1, hardStart * Math.pow(1 / hardStart, it / rampEnd));
-    let hardScale = 1;
-    const price = (d: Decoded, w: number) => d.eBase + w * (d.slants + d.crossings) + (hardScale - 1) * d.hardPen;
-    const priceFin = (d: Decoded) => d.eBase + W_MESS * (d.slants + d.crossings);
-    strictTies = 0;
-    strictRand = mulberry32((seed + 1) * 0x85ebca6b);
-    let g = initGenome(rng);
-    let cur = decode(g);
-    if (options?.debugSeeds && cur) console.log('FP0 gp=' + g.gp.slice(0, 8).join(',') + ' eBase=' + cur.eBase.toFixed(2) + ' HxW=' + cur.H + 'x' + cur.W + ' ySum=' + cur.yI.reduce((a, b) => a + b, 0) + ' xSum=' + cur.xI.reduce((a, b) => a + b, 0) + ' grp=' + g.grp.map((a) => a.join('')).join('|') + ' xI=' + Array.from(cur.xI).join(','));
-    let tries = 0;
-    while (!cur && tries++ < 50) {
-      g = initGenome(rng);
-      cur = decode(g);
-    }
-    if (!cur) return null;
-    strictTies = options?.protectTies === true ? 1 : Number(options?.protectTies ?? 0);
-    if (options?.debugSeeds) console.log("FP gp=" + g.gp.join(",") + " gn=" + g.gn.join(","));
-
-    // fixed start temperature: the landscape is plateaus between penalty
-    // cliffs (400–450 per violation); above ~150 the walk is random, and the
-    // calibrated start (2000–8000) wasted the first third of every run
+    const w = annealDec();
+    if (options?.pullTie === false) w.setPullTie(false);
+    if (options?.moveMix) w.setMix(options.moveMix.early, options.moveMix.late, options.moveMix.lateFrom);
+    w.setShape(options?.schedule?.shape ?? 1);
+    const timed = options?.timeBudgetMs !== undefined && options?.moves === undefined && !options?.msPerMoveHint;
     const t0 = options?.schedule?.t0 ?? T_START * (options?.schedule?.t0Scale ?? 1);
     const tEnd = options?.schedule?.tEnd ?? 0.15;
-    const coldT = options?.schedule?.coldT ?? 0;
-    const cool = Math.pow(tEnd / t0, 1 / movesN);
-    let T = t0;
-    // time budget: the schedule follows the elapsed share of the budget (or
-    // the share of the move cap, whichever is further along), the clock is
-    // read every 32 iterations
-    const timed = options?.timeBudgetMs !== undefined && options?.moves === undefined && !options?.msPerMoveHint;
-    const budgetMs = options?.timeBudgetMs ?? 0;
-    const tStart = options?.timeBudgetMs !== undefined ? performance.now() : 0;
-    let fTime = 0, f = 0;
-    let best = { E: priceFin(cur), g: cloneG(g), d: cur };
-    const reportEvery = Math.max(2000, Math.floor(movesN / 20));
-    const traceEvery = Math.max(1, Math.floor(movesN / 100));
-    let tAcc = 0, tAccUp = 0, tUp = 0, tNull = 0, tInf = 0;
+    w.onReport = (f) => report("arrange", options?.seedIndex !== undefined ? f : (seedPos + f) / seedsN);
+    w.annealStart({
+      seedState: ((seed + 1) * 0x9e3779b9) >>> 0, strictSeed: ((seed + 1) * 0x85ebca6b) >>> 0,
+      protect: options?.protectTies === true ? 1 : Number(options?.protectTies ?? 0),
+      movesN, timed, budgetMs: options?.timeBudgetMs ?? 0, t0, tEnd, coldT: options?.schedule?.coldT ?? 0, cool: Math.pow(tEnd / t0, 1 / movesN),
+      rampStart: options?.schedule?.rampStart ?? RAMP_START, rampEnd: movesN * (options?.schedule?.rampEndFrac ?? 1), hardStart: options?.schedule?.hardStart ?? 1,
+      reportEvery: Math.max(400, Math.floor(movesN / 100)), lean,
+    });
     const ml = options?.moveLog;
-    const ad = options?.schedule?.adaptive;
-    const tag = ml || ad ? { kind: -1 } : undefined;
-    const K = MOVE_KINDS.length;
-    const adWin = ad?.window ?? 2000, adFloor = ad?.floor ?? 0.02;
-    const BASE_MIX = KIND_BANDS.map(([a, b]) => b - a);
-    let adP = BASE_MIX.slice();
-    const adN = new Float64Array(K), adG = new Float64Array(K), adY = new Float64Array(K);
-    const pickKind = () => { let x = rng(); for (let k = 0; k < K; k++) { x -= adP[k]; if (x < 0) return k; } return K - 1; };
-    const rec: MoveLogRec = { it: 0, kind: -1, out: 0, best: 0, same: 0, dEcur: 0, dEfin: 0, curFin: 0, dArea: 0, dWires: 0, dWlen: 0, dCuts: 0, dBcuts: 0, dMess: 0, dHard: 0, dStarv: 0, dOther: 0, dGeo: 0, dOverlap: 0, dStarvH: 0 };
-    const sameBoard = (a: Decoded, b: Decoded) => {
-      if (a.H !== b.H || a.W !== b.W || a.eBase !== b.eBase || a.hardPen !== b.hardPen) return false;
-      for (let i = 0; i < nP; i++) {
-        if (a.yI[i] !== b.yI[i] || a.xI[i] !== b.xI[i] || a.geo[i].w !== b.geo[i].w || a.geo[i].h !== b.geo[i].h) return false;
-      }
-      return true;
-    };
-    const logMove = (it: number, out: number, e2: Decoded | null, w: number, isBest: boolean) => {
-      rec.it = it; rec.kind = tag!.kind; rec.out = out; rec.best = isBest ? 1 : 0; rec.curFin = priceFin(cur!);
-      if (e2) {
-        const a = cur!, b = e2;
-        const da = a.dbg as Record<string, number>, db = b.dbg as Record<string, number>;
-        rec.same = sameBoard(a, b) ? 1 : 0;
-        rec.dEcur = price(b, w) - price(a, w);
-        rec.dEfin = priceFin(b) - priceFin(a);
-        rec.dArea = b.H * b.W - a.H * a.W;
-        rec.dWires = db.wires - da.wires;
-        rec.dWlen = db.wireLen - da.wireLen;
-        rec.dCuts = db.cuts - da.cuts;
-        rec.dBcuts = db.bCuts - da.bCuts;
-        rec.dMess = b.slants + b.crossings - a.slants - a.crossings;
-        rec.dHard = b.hardPen - a.hardPen;
-        rec.dStarv = db.starved - da.starved;
-        rec.dGeo = db.geoBad - da.geoBad;
-        rec.dOverlap = db.overlapBad - da.overlapBad;
-        rec.dStarvH = db.starvedHard - da.starvedHard;
-        rec.dOther = b.eBase - a.eBase - (W_AREA * rec.dArea + W_WIRE * rec.dWires + W_WLEN * rec.dWlen + W_CUT * rec.dCuts + wBCut * rec.dBcuts + rec.dHard + 20 * rec.dStarv);
-      } else {
-        rec.same = 0; rec.dEcur = rec.dEfin = 0;
-        rec.dArea = rec.dWires = rec.dWlen = rec.dCuts = rec.dBcuts = rec.dMess = rec.dHard = rec.dStarv = rec.dOther = rec.dGeo = rec.dOverlap = rec.dStarvH = 0;
-      }
-      ml!(rec);
-    };
-    let it = 0;
-    for (; it < movesN; it++) {
-      let itV = it;
-      if (timed) {
-        if ((it & 31) === 0) fTime = (performance.now() - tStart) / budgetMs;
-        f = Math.max(it / movesN, fTime);
-        if (f >= 1 && it >= 40000) break;
-        if (f >= 1) f = 1;
-        T = t0 * Math.pow(tEnd / t0, f);
-        itV = f * movesN;
-      } else T *= cool;
-      if (it % reportEvery === 0) report("arrange", (options?.seedIndex !== undefined ? (timed ? f : it / movesN) : (seedPos + (timed ? f : it / movesN)) / seedsN));
-      if (options?.trace && it % traceEvery === 0) {
-        options.trace({ seed, it, T, w: wOf(itV), cur: price(cur, wOf(it)), best: best.E, curFin: priceFin(cur), acc: tAcc, accUp: tAccUp, up: tUp, nulls: tNull, infeasible: tInf, H: cur.H, W: cur.W });
-        tAcc = tAccUp = tUp = tNull = tInf = 0;
-      }
-      let g2: Genome | null = null;
-      for (let tries = 0; tries < 50; tries++) {
-        g2 = mutate(g, rng, T < coldT, tag, ad ? pickKind() : undefined);
-        if (g2 || !lean) break;
-      }
-      if (!g2) { tNull++; if (ml) logMove(it, 0, null, 0, false); continue; }
-      const e2 = decode(g2, cur);
-      if (!e2) { tInf++; if (ml) logMove(it, 1, null, 0, false); continue; }
-      const w = wOf(itV);
-      hardScale = hardOf(itV);
-      const dE = price(e2, w) - price(cur, w);
-      if (dE > 0) tUp++;
-      const accepted = dE <= 0 || rng() < Math.exp(-dE / T);
-      if (ad && tag!.kind >= 0) {
-        adN[tag!.kind]++;
-        if (accepted && dE < 0) adG[tag!.kind] -= dE;
-        if (it % adWin === adWin - 1) {
-          let sum = 0;
-          for (let k = 0; k < K; k++) { adY[k] = 0.5 * adY[k] + 0.5 * adG[k] / Math.max(1, adN[k]); sum += adY[k]; adN[k] = adG[k] = 0; }
-          if (sum > 0) adP = adY.map((y) => adFloor + (1 - K * adFloor) * y / sum) as unknown as number[];
-          else adP = BASE_MIX.slice();
+    w.setMoveLog(!!ml);
+    if (ml) {
+      const rec: MoveLogRec = { it: 0, kind: -1, out: 0, best: 0, same: 0, dEcur: 0, dEfin: 0, curFin: 0, dArea: 0, dWires: 0, dWlen: 0, dCuts: 0, dBcuts: 0, dMess: 0, dHard: 0, dStarv: 0, dOther: 0, dGeo: 0, dOverlap: 0, dStarvH: 0 };
+      const keys = ["it", "kind", "out", "best", "same", "dEcur", "dEfin", "curFin", "dArea", "dWires", "dWlen", "dCuts", "dBcuts", "dMess", "dHard", "dStarv", "dOther", "dGeo", "dOverlap", "dStarvH"] as const;
+      w.onMoveLog = (rows, n) => {
+        for (let r = 0; r < n; r++) {
+          for (let k = 0; k < keys.length; k++) rec[keys[k]] = rows[20 * r + k];
+          ml(rec);
         }
-      }
-      if (accepted) {
-        tAcc++;
-        if (dE > 0) tAccUp++;
-        const eFin = priceFin(e2);
-        const isBest = eFin < best.E;
-        if (ml) logMove(it, 3, e2, w, isBest);
-        g = g2;
-        cur = e2;
-        if (isBest) {
-          best = { E: eFin, g: cloneG(g2), d: e2 };
-          if (exactOn && (timed ? f : it / movesN) >= 0.5) {
-            exactN++;
-            const r = finishRepair(board, components, componentDefs, nets, netAssignments, skeletonOf(g2, e2, true), finishOpts);
-            if (r && r.ok && (!exact || r.score < exact.score)) exact = { final: r.final, score: r.score };
-          }
-        }
-      } else if (ml) logMove(it, 2, e2, w, false);
+      };
     }
+    let best: { E: number; g: Genome; d: Decoded } | null = null;
+    let exact: { final: AutoLayoutResult; score: number } | null = null, exactN = 0, tStart = 0, it = 0;
+    for (;;) {
+      const ev = w.annealStep();
+      if (ev < 0) return null;
+      if (ev === 0) break;
+      const c = w.cur();
+      const g = c.g as Genome, d = decodedOf(g, c.o);
+      it = c.it;
+      if (!best) tStart = performance.now();
+      else if (exactOn && c.frac >= 0.5) {
+        exactN++;
+        const r = finishRepair(board, components, componentDefs, nets, netAssignments, skeletonOf(cloneG(g), d, true), finishOpts);
+        if (r && r.ok && (!exact || r.score < exact.score)) exact = { final: r.final, score: r.score };
+      }
+      best = { E: c.E, g, d };
+    }
+    it = w.cur().it;
     if (options?.timeBudgetMs !== undefined) options.onBudget?.({ moves: it, cap: capMoves, msPerMove: (performance.now() - tStart) / Math.max(1, it) });
-    if (options?.probe) options.probe({ seed, best, decode, mutate, initGenome, cloneG, price: (d: Decoded) => priceFin(d), t0, W_MESS } as unknown as LandscapeProbe);
     return best ? { ...best, exact, exactN } : null;
   }
-
   // ── finalize through the real completion pipeline ──
-  const hasLocked = parts.some((p) => p.locked);
   const finishOpts = { drilledCutsOnly: options?.drilledCutsOnly ?? false, noWireStacking: options?.noWireStacking ?? false };
   const exactOn = !!options?.exactBest && !options?.lab;
   // A routed board (components, cuts, wires) in the shape the explainer
@@ -1831,9 +874,8 @@ export function computeAutoLayout5(
   };
 
   // What the anneal hands to the finish: the decoded placement of every
-  // part and what the decoder measured. With `wiring` (harness only: the
-  // lab decode is not hardened for every board) the record also carries the
-  // decoder's own cuts and wires.
+  // part and what the decoder measured. With `wiring` the record also
+  // carries the decoder's own cuts and wires, for the repair finish.
   function skeletonOf(bestG: Genome, d: Decoded, wiring: boolean): Skeleton {
     const placed: Skeleton["placed"] = [];
     for (let pi = 0; pi < nP; pi++) {
@@ -1855,15 +897,8 @@ export function computeAutoLayout5(
     }
     let wiringOut: LabBoard | undefined;
     if (wiring) {
-      labMode = 1;
-      labBoardOut = null;
-      try {
-        decode(bestG);
-        wiringOut = labBoardOut ?? undefined;
-      } finally {
-        labMode = 0;
-        labBoardOut = null;
-      }
+      const { o, ex } = exportDecode(bestG, false);
+      wiringOut = labWalk(bestG, o, ex, false).board ?? undefined;
     }
     const dg = (d.dbg ?? {}) as Record<string, number>;
     return {
@@ -1889,29 +924,17 @@ export function computeAutoLayout5(
 
   // ── lab: hand everything to the explainer and stop ──
   if (options?.lab) {
-    const labDecode = (g: Genome, mode: 1 | 2) => {
-      labMode = mode;
-      labFrames = [];
-      labBoardOut = null;
-      const d = decode(g);
-      const frames = labFrames, board = labBoardOut as LabBoard | null;
-      labMode = 0;
-      labFrames = [];
-      labBoardOut = null;
-      const dg = (d?.dbg ?? {}) as unknown as Record<string, number>;
-      const ld: LabDecoded | null = d && board ? { eBase: d.eBase, hard: d.hardPen, mess: d.slants + d.crossings, H: d.H, W: d.W, board, wires: dg.wires, wireLen: dg.wireLen, cuts: dg.cuts, bCuts: dg.bCuts, starved: dg.starvedHard, relays: dg.relays, connEdge: dg.connEdge } : null;
-      return { d: ld, frames, g };
+    const labDecoded = (o: WasmDecodeOut, board: LabBoard): LabDecoded => ({ eBase: o.eBase, hard: o.hardPen, mess: o.slants + o.crossings, H: o.H, W: o.W, board, wires: o.wires, wireLen: o.wireLen, cuts: o.cuts, bCuts: o.bCuts, starved: o.starvedHard, relays: o.relays, connEdge: o.connEdge });
+    const labDecode = (g: Genome, frames: boolean) => {
+      const { o, ex } = exportDecode(g, frames);
+      const walk = labWalk(g, o, ex, frames);
+      return { d: o.status === 2 && walk.board ? labDecoded(o, walk.board) : null, frames: walk.frames, g };
     };
     const labFinishBoth: LabApi["finishBoth"] = (g) => {
       const g2 = cloneG(g as Genome);
-      labMode = 1;
-      labFrames = [];
-      labBoardOut = null;
-      const d = decode(g2);
-      const start = labBoardOut as LabBoard | null;
-      labMode = 0;
-      labFrames = [];
-      labBoardOut = null;
+      const { o, ex } = exportDecode(g2, false);
+      const start = labWalk(g2, o, ex, false).board;
+      const d = o.status === 2 ? decodedOf(g2, o) : null;
       const empty = { start: start!, router: { frames: [], price: 0 }, repair: null };
       if (!d || !start) return empty;
       const sk = skeletonOf(g2, d, true);
@@ -1927,50 +950,81 @@ export function computeAutoLayout5(
         repair: repaired ? { frames: repairFrames, price: repaired.score, ok: repaired.ok } : null,
       };
     };
+    // the moves and starting genomes of the anneal, drawing from the lab's rng
+    const labInit = (r: LabRng): Genome => {
+      const w = exportDecoder();
+      w.rngSet(r.state);
+      const g = w.labInit() as Genome;
+      r.state = w.rngGet();
+      return g;
+    };
+    const labMutate = (g: Genome, r: LabRng): Genome | null => {
+      const w = exportDecoder();
+      w.rngSet(r.state);
+      const g2 = w.labMutate(g) as Genome | null;
+      r.state = w.rngGet();
+      return g2;
+    };
+    // a short anneal as the explainer runs it: the plain schedule, every
+    // proposal decoded in full (no same-board shortcut, no protected ties)
     const labRun: LabApi["run"] = (seed, movesN2, every, cb) => {
-      const rng = mulberry32((seed + 1) * 0x9e3779b9);
+      const rng: LabRng = { state: ((seed + 1) * 0x9e3779b9) >>> 0 };
       const wOf = (it: number) => Math.min(W_MESS, RAMP_START * Math.pow(W_MESS / RAMP_START, it / movesN2));
-      const price = (d: LabDecoded, w: number) => d.eBase + w * d.mess;
-      let g = initGenome(rng);
-      let cur = labDecode(g, 1);
+      const price = (o: WasmDecodeOut, w: number) => o.eBase + w * (o.slants + o.crossings);
+      // the board of a state, built only when a snapshot shows it
+      type State = { g: Genome; o: WasmDecodeOut; ex: WasmExport; d?: LabDecoded };
+      const dOf = (st: State): LabDecoded => {
+        if (!st.d) {
+          st.d = labDecoded(st.o, labWalk(st.g, st.o, st.ex, false).board!);
+        }
+        return st.d;
+      };
+      const dec = (g: Genome): State | null => {
+        const { o, ex } = exportDecode(g, false);
+        return o.status === 2 ? { g, o, ex } : null;
+      };
+      let cur = dec(labInit(rng));
       let tries = 0;
-      while (!cur.d && tries++ < 50) { g = initGenome(rng); cur = labDecode(g, 1); }
-      if (!cur.d) return;
-      g = cur.g;
+      while (!cur && tries++ < 50) cur = dec(labInit(rng));
+      if (!cur) return;
       const cool = Math.pow(0.15 / T_START, 1 / movesN2);
       let T = T_START;
-      let best = { E: price(cur.d, W_MESS), g: cloneG(g), d: cur.d };
+      let best = { E: price(cur.o, W_MESS), st: { ...cur, g: cloneG(cur.g) } as State };
       for (let it = 0; it < movesN2; it++) {
         T *= cool;
         const w = wOf(it);
-        const g2 = mutate(g, rng, false);
+        const g2 = labMutate(cur.g, rng);
         let kind: LabStep["kind"] = "null";
         if (g2) {
-          const r2 = labDecode(g2, 1);
-          if (!r2.d) kind = "infeasible";
+          const r2 = dec(g2);
+          if (!r2) kind = "infeasible";
           else {
-            const dE = price(r2.d, w) - price(cur.d!, w);
-            if (dE <= 0 || rng() < Math.exp(-dE / T)) {
+            const dE = price(r2.o, w) - price(cur.o, w);
+            const wd = exportDecoder();
+            wd.rngSet(rng.state);
+            const take = dE <= 0 || wd.rand() < Math.exp(-dE / T);
+            if (dE > 0) rng.state = wd.rngGet();
+            if (take) {
               kind = dE <= 0 ? "better" : "worse-kept";
-              g = r2.g;
               cur = r2;
-              const eFin = price(r2.d, W_MESS);
-              if (eFin < best.E) best = { E: eFin, g: cloneG(g), d: r2.d };
+              const eFin = price(r2.o, W_MESS);
+              if (eFin < best.E) best = { E: eFin, st: { ...r2, g: cloneG(r2.g) } };
             } else kind = "worse-rejected";
           }
         }
-        if ((it + 1) % every === 0 || it === movesN2 - 1) cb({ it: it + 1, moves: movesN2, T, w, g, d: cur.d!, E: price(cur.d!, w), best: best.E, bestG: best.g, bestD: best.d, kind, done: it === movesN2 - 1 });
+        if ((it + 1) % every === 0 || it === movesN2 - 1) cb({ it: it + 1, moves: movesN2, T, w, g: cur.g, d: dOf(cur), E: price(cur.o, w), best: best.E, bestG: best.st.g, bestD: dOf(best.st), kind, done: it === movesN2 - 1 });
       }
     };
     options.lab({
       parts: parts.map((p) => ({ id: p.comp.label, comp: p.comp, kind: p.kind, isConn: p.isConn, canH: p.kind === "flex" ? p.canH : false, canV: p.kind === "flex" ? p.canV : false, spans: p.kind === "flex" ? [p.minS, p.maxS] : [0, 0], pinNames: p.kind === "rigid" ? p.def.pins.map((q) => q.name) : ["1", "2"] })),
       nets: nets.map((n, ni) => ({ name: n.name, color: n.color, pins: netPins[ni].map((q) => ({ pi: q.pi, name: pinNameOf(q.pi, q.pinId, q.end) })) })),
-      rigidIdx, flexIdx, initGenome, cloneG,
-      mutate: (g, rng) => mutate(g, rng, false),
-      decode: (g, frames = true) => labDecode(g, frames ? 2 : 1),
+      rigidIdx, flexIdx, cloneG,
+      initGenome: (rng) => labInit(rng),
+      mutate: (g, rng) => labMutate(g as Genome, rng),
+      decode: (g, frames = true) => labDecode(g as Genome, frames),
       run: labRun,
       finishBoth: labFinishBoth,
-      W_MESS, RAMP_START, T_START,
+      T_START,
     });
     return emptyResult([]);
   }
@@ -1986,7 +1040,10 @@ export function computeAutoLayout5(
       if (r.exactN) console.log(`[v5 seed ${seed}] exact ${r.exactN} bests finished${r.exact ? `, cheapest ${r.exact.score.toFixed(1)}` : ""}`);
     }
   }
-  if (seedBests.length === 0) return emptyResult(["auto-layout found no feasible arrangement"]);
+  // pins no board can wire leave their nets open whatever the search does:
+  // name them, so the result says why and what to change
+  const unreachable = unreachablePins(components, componentDefs, netAssignments).map(unreachablePinsIssue);
+  if (seedBests.length === 0) return emptyResult([...unreachable, "auto-layout found no feasible arrangement"]);
   seedBests.sort((a, b) => a.E - b.E);
   let bestFin: { final: AutoLayoutResult; score: number } | null = null;
   const finalists = seedBests.slice(0, 4);
@@ -1998,5 +1055,6 @@ export function computeAutoLayout5(
   // the exact bests of every seed, finalist or not
   for (const r of seedBests) if (r.exact && (!bestFin || r.exact.score < bestFin.score)) bestFin = r.exact;
   report("place", 1);
-  return bestFin!.final;
+  const final: AutoLayoutResult = bestFin!.final;
+  return unreachable.length ? { ...final, issues: [...unreachable, ...final.issues] } : final;
 }
