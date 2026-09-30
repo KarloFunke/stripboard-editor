@@ -11,7 +11,8 @@ import SchematicWireLine from "./SchematicWireLine";
 import SchematicNetLabel, { netLabelBounds } from "./SchematicNetLabel";
 import { UnionFind } from "./netInference";
 import { getSymbolBounds } from "./SymbolRenderer";
-import { pointInRect, schematicPinPoints, wireInRect } from "./schematicGeometry";
+import { findFreeSpot, partBox, pointInRect, schematicPinPoints, wireInRect, type Box } from "./schematicGeometry";
+import { registerLibraryPlacer, type LibraryItem } from "./libraryPlacement";
 import { GRID_SIZE, snapToGrid, pointKey } from "@/utils/schematicConstants";
 import { SelectionActionBar, RotateIcon, MirrorIcon, DeleteIcon, ExcludeIcon, OffBoardIcon, type CanvasAction } from "@/components/canvas/SelectionActionBar";
 import { TOOL_STRIP_HOME } from "@/components/canvas/ToolStrip";
@@ -858,6 +859,18 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
     }
   }, []);
 
+  // Adds a library tile's part or flag at pos and selects it
+  const addLibraryItem = useCallback((item: LibraryItem, pos: { x: number; y: number }) => {
+    if ("flag" in item) {
+      placeLabel(item.flag, pos, item.name);
+      return;
+    }
+    // A part from the user's library is copied into the project first
+    const libDef = useLibraryStore.getState().defs.find((d) => d.id === item.defId);
+    const id = libDef ? addLibraryComponent(libDef, pos) : addComponent(item.defId, pos);
+    applySelection({ components: [id], wires: [], labels: [] });
+  }, [placeLabel, addLibraryComponent, addComponent, applySelection]);
+
   const handleDrop = useCallback((e: React.DragEvent) => {
     if (readOnly || !svgRef.current) return;
     const pos = screenToSvg(e.clientX, e.clientY, svgRef.current);
@@ -865,10 +878,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
     const defId = e.dataTransfer.getData("application/schematic-component");
     if (defId) {
       e.preventDefault();
-      // A part from the user's library is copied into the project first
-      const libDef = useLibraryStore.getState().defs.find((d) => d.id === defId);
-      if (libDef) addLibraryComponent(libDef, snapped);
-      else addComponent(defId, snapped);
+      addLibraryItem({ defId }, snapped);
       return;
     }
     const raw = e.dataTransfer.getData("application/schematic-netlabel");
@@ -878,10 +888,48 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
       const kind = tile.kind;
       if (kind === "gnd" || kind === "power" || kind === "label") {
         e.preventDefault();
-        placeLabel(kind, snapped, tile.name);
+        addLibraryItem({ flag: kind, name: tile.name }, snapped);
       }
     }
-  }, [readOnly, screenToSvg, addComponent, addLibraryComponent, placeLabel]);
+  }, [readOnly, screenToSvg, addLibraryItem]);
+
+  // A click on a library tile: the part or flag goes to the free spot
+  // nearest the middle of the view, a grid step clear of every part, wire
+  // and flag, so it joins no net by accident. The view follows when nothing
+  // in it was free.
+  const { panX, panY, zoom, centerOn } = panZoom;
+  useEffect(() => {
+    if (readOnly) return;
+    return registerLibraryPlacer((item) => {
+      const view = { minX: panX, minY: panY, maxX: panX + containerSize.width / zoom, maxY: panY + containerSize.height / zoom };
+      const obstacles: Box[] = [
+        ...components.flatMap((c) => {
+          const def = resolveComponentDef(c, componentDefs);
+          if (!def) return [];
+          const b = partBox(def.symbol, c.schematicRotation ?? 0, c.schematicMirrored ?? false);
+          const { x, y } = c.schematicPos;
+          return [{ minX: x + b.minX, minY: y + b.minY, maxX: x + b.maxX, maxY: y + b.maxY }];
+        }),
+        ...schematicWires.map((w) => ({
+          minX: Math.min(w.start.x, w.end.x), minY: Math.min(w.start.y, w.end.y),
+          maxX: Math.max(w.start.x, w.end.x), maxY: Math.max(w.start.y, w.end.y),
+        })),
+        ...netLabels.map(netLabelBounds),
+      ];
+      let box: Box;
+      if ("flag" in item) {
+        const name = item.name ?? (item.flag === "gnd" ? "GND" : item.flag === "power" ? "VCC" : "NET");
+        box = netLabelBounds({ id: "", kind: item.flag, name, pos: { x: 0, y: 0 }, rotation: 0 });
+      } else {
+        const def = componentDefs.find((d) => d.id === item.defId) ?? useLibraryStore.getState().defs.find((d) => d.id === item.defId);
+        if (!def) return;
+        box = partBox(def.symbol, 0, false);
+      }
+      const spot = findFreeSpot(box, obstacles, view, GRID_SIZE);
+      addLibraryItem(item, spot.at);
+      if (!spot.inView) centerOn(spot.at.x, spot.at.y, containerSize.width, containerSize.height);
+    });
+  }, [readOnly, panX, panY, zoom, centerOn, containerSize, components, componentDefs, schematicWires, netLabels, addLibraryItem]);
 
   // ── Render ────────────────────────────────────────────
 

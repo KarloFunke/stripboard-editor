@@ -127,12 +127,12 @@ interface ProjectActions {
   // A new version of one custom part in this project
   replaceComponentDef: (def: ComponentDef) => void;
   // Places a library part, copying it into the project unless a linked copy is already here
-  addLibraryComponent: (libDef: ComponentDef, schematicPos: { x: number; y: number }) => void;
+  addLibraryComponent: (libDef: ComponentDef, schematicPos: { x: number; y: number }) => string;
   // Carries a saved library part into this project's linked copies
   applyLibraryUpdate: (libDef: ComponentDef) => void;
 
   // Components
-  addComponent: (defId: string, schematicPos: { x: number; y: number }) => void;
+  addComponent: (defId: string, schematicPos: { x: number; y: number }) => string;
   removeComponent: (id: string) => void;
   updateLabelOffset: (id: string, offset: { x: number; y: number }) => void;
   updatePinLabelOffset: (id: string, pinId: string, offset: { x: number; y: number }) => void;
@@ -589,11 +589,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }
     const defId = def.id;
     const prefix = def.defaultLabelPrefix;
+    const id = generateId();
     set((s) => ({
       components: [
         ...s.components,
         {
-          id: generateId(),
+          id,
           defId,
           label: nextLabel(s.components, prefix),
           schematicPos,
@@ -604,6 +605,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       ],
     }));
     set(settleSchematic(get()));
+    return id;
   },
 
   removeComponentDef: (defId) => {
@@ -638,6 +640,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       };
     });
     set(settleSchematic(get()));
+    return id;
   },
 
   updateLabel: (id, label) => {

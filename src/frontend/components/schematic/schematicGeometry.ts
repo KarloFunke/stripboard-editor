@@ -1,7 +1,8 @@
 import { Component, ComponentDef, NetLabel, SchematicWire } from "@/types";
-import { pointKey, snapToGrid } from "@/utils/schematicConstants";
+import { GRID_SIZE, pointKey, snapToGrid } from "@/utils/schematicConstants";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
-import { getRotatedPinPositions } from "./SymbolRenderer";
+import { getSymbolDef } from "@/data/symbolDefs";
+import { getRotatedPinPositions, getSymbolBounds } from "./SymbolRenderer";
 
 // Pure schematic geometry shared by the store, the canvas and the tests.
 //
@@ -433,4 +434,61 @@ export function segmentIntersectsRect(a: Pt, b: Pt, x1: number, y1: number, x2: 
 export function wireInRect(wire: SchematicWire, x1: number, y1: number, x2: number, y2: number, enclosed: boolean): boolean {
   if (enclosed) return pointInRect(wire.start, x1, y1, x2, y2) && pointInRect(wire.end, x1, y1, x2, y2);
   return segmentIntersectsRect(wire.start, wire.end, x1, y1, x2, y2);
+}
+
+// ── Free spot for a new part or flag ─────────────────────
+
+export type Box = { minX: number; minY: number; maxX: number; maxY: number };
+
+/**
+ * The room a part takes on the sheet, relative to its origin: its pins and
+ * stubs, half a grid step of body beyond them, and its name and value above,
+ * centred and about 40 px wide (drawn by SchematicComponentBlock 6 px over
+ * the pins plus the symbol's own offset).
+ */
+export function partBox(symbolId: string, rotation: 0 | 90 | 180 | 270, mirrored: boolean): Box {
+  const b = getSymbolBounds(symbolId, rotation, mirrored);
+  const nameTop = b.minY - 6 - (getSymbolDef(symbolId)?.labelYOffset ?? 0) - 12;
+  const mid = (b.minX + b.maxX) / 2;
+  const h = GRID_SIZE / 2;
+  return {
+    minX: Math.min(b.minX - h, mid - 20), minY: Math.min(nameTop, b.minY - h),
+    maxX: Math.max(b.maxX + h, mid + 20), maxY: b.maxY + h,
+  };
+}
+
+/**
+ * Where a part or flag added by a click goes: the grid point nearest the
+ * middle of the view at which its box (relative to its origin), grown by
+ * `air` on every side, overlaps no obstacle, so none of its pins can land on
+ * a wire or another pin. Spots whose box lies fully in view come first; with
+ * none free, the nearest one outside, and past that, right of everything.
+ * A step up or down counts as two sideways, and among equally near spots
+ * the same row wins, right before left, below before above, so parts added
+ * one after another fill a row before starting the next.
+ */
+export function findFreeSpot(box: Box, obstacles: Box[], view: Box, air: number): { at: Pt; inView: boolean } {
+  const G = GRID_SIZE;
+  const c = { x: snapToGrid((view.minX + view.maxX) / 2), y: snapToGrid((view.minY + view.maxY) / 2) };
+  const free = (p: Pt) => !obstacles.some((o) =>
+    p.x + box.minX - air < o.maxX && p.x + box.maxX + air > o.minX &&
+    p.y + box.minY - air < o.maxY && p.y + box.maxY + air > o.minY);
+  const inView = (p: Pt) =>
+    p.x + box.minX >= view.minX && p.x + box.maxX <= view.maxX &&
+    p.y + box.minY >= view.minY && p.y + box.maxY <= view.maxY;
+  // out to the edge of the view and as far again, capped for a zoomed-out view
+  const r = Math.min(100, Math.ceil(Math.max(view.maxX - view.minX, view.maxY - view.minY) / G));
+  const offsets: [number, number][] = [];
+  for (let i = -r; i <= r; i++) for (let j = -r; j <= r; j++) offsets.push([i, j]);
+  offsets.sort((a, b) => a[0] * a[0] + 4 * a[1] * a[1] - b[0] * b[0] - 4 * b[1] * b[1]
+    || Math.abs(a[1]) - Math.abs(b[1]) || b[0] - a[0] || b[1] - a[1]);
+  let outside: Pt | null = null;
+  for (const [i, j] of offsets) {
+    const p = { x: c.x + i * G, y: c.y + j * G };
+    if (!free(p)) continue;
+    if (inView(p)) return { at: p, inView: true };
+    outside ??= p;
+  }
+  const at = outside ?? { x: Math.ceil((Math.max(...obstacles.map((o) => o.maxX)) + air - box.minX) / G) * G, y: c.y };
+  return { at, inView: inView(at) };
 }

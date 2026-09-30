@@ -213,6 +213,11 @@ export function usePanZoom(initialZoom = 1, home: { x: number; y: number } = ORI
     setState({ panX: home.x, panY: home.y, zoom: initialZoom });
   }, [initialZoom, home]);
 
+  /** Scroll so the point sits mid-view, keeping the zoom */
+  const centerOn = useCallback((x: number, y: number, width: number, height: number) => {
+    setState((prev) => ({ ...prev, panX: x - width / 2 / prev.zoom, panY: y - height / 2 / prev.zoom }));
+  }, []);
+
   return {
     ...state,
     panning,
@@ -225,5 +230,6 @@ export function usePanZoom(initialZoom = 1, home: { x: number; y: number } = ORI
     handleContextMenu,
     setTouchTarget,
     resetView,
+    centerOn,
   };
 }

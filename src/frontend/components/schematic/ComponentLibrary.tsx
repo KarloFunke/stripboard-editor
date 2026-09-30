@@ -4,12 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useLibraryStore } from "@/store/useLibraryStore";
 import { ComponentDef, NetLabel, NetLabelKind } from "@/types";
-import { snapToGrid } from "@/utils/schematicConstants";
 import { COMPONENT_GROUPS, DEFAULT_COMPONENTS } from "@/data/defaultComponents";
 import { getSymbolDef } from "@/data/symbolDefs";
 import { getSymbolBounds } from "./SymbolRenderer";
 import { track } from "@/lib/track";
 import CustomComponentEditor from "./CustomComponentEditor";
+import { placeFromLibrary } from "./libraryPlacement";
 
 // Fixed thumbnail box so every tray tile is the same size regardless of the
 // symbol's own dimensions.
@@ -195,10 +195,7 @@ function flagTiles(netLabels: NetLabel[]): { kind: NetLabelKind; name: string; s
 }
 
 export default function ComponentLibrary() {
-  const addComponent = useProjectStore((s) => s.addComponent);
-  const addNetLabel = useProjectStore((s) => s.addNetLabel);
   const netLabels = useProjectStore((s) => s.netLabels);
-  const addLibraryComponent = useProjectStore((s) => s.addLibraryComponent);
   const removeComponentDef = useProjectStore((s) => s.removeComponentDef);
   const componentDefs = useProjectStore((s) => s.componentDefs);
   const libraryDefs = useLibraryStore((s) => s.defs);
@@ -237,11 +234,8 @@ export default function ComponentLibrary() {
   };
 
   const handleAdd = (def: ComponentDef) => {
-    const pos = { x: snapToGrid(100 + Math.random() * 200), y: snapToGrid(100 + Math.random() * 200) };
-    if (isLibraryDef(def)) {
-      track("part-library-use");
-      addLibraryComponent(def, pos);
-    } else addComponent(def.id, pos);
+    if (isLibraryDef(def)) track("part-library-use");
+    placeFromLibrary({ defId: def.id });
   };
 
   // A library part travels by its panel id; the canvas copies it in on drop
@@ -385,7 +379,7 @@ export default function ComponentLibrary() {
                         e.dataTransfer.setData("application/schematic-netlabel", JSON.stringify({ kind: t.kind, name: t.name }));
                         e.dataTransfer.effectAllowed = "copy";
                       }}
-                      onClick={() => addNetLabel(t.kind, { x: 100 + Math.random() * 200, y: 100 + Math.random() * 200 }, t.name)}
+                      onClick={() => placeFromLibrary({ flag: t.kind, name: t.name })}
                       className="w-full flex flex-col items-center gap-1 px-1 py-1.5 rounded border border-transparent hover:border-neutral-300 dark:hover:border-neutral-600 hover:bg-neutral-50 dark:hover:bg-neutral-800 active:bg-neutral-100 dark:active:bg-neutral-700 transition-colors cursor-grab active:cursor-grabbing"
                       title={
                         t.kind === "gnd" ? `Ground flag ${t.name}: every ${t.name} flag is one net`
