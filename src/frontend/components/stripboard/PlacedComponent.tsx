@@ -30,9 +30,10 @@ interface Props {
   onMouseDown: (e: React.MouseEvent) => void;
   onPinDragStart?: (pinId: string, e: React.MouseEvent) => void;
   readOnly?: boolean;
+  part?: "all" | "body" | "pins" | "labels";
 }
 
-export default function PlacedComponent({ component, isSelected, clashing = false, onMouseDown, onPinDragStart, readOnly = false }: Props) {
+export default function PlacedComponent({ component, isSelected, clashing = false, onMouseDown, onPinDragStart, readOnly = false, part = "all" }: Props) {
   const componentDefs = useProjectStore((s) => s.componentDefs);
   const { netAssignments } = useBoardView();
   const nets = useProjectStore((s) => s.nets);
@@ -98,8 +99,11 @@ export default function PlacedComponent({ component, isSelected, clashing = fals
   const allowsValue = def.hasValue ?? false;
   const isFlexible = def.flexible ?? false;
   const { pins, label } = drawing;
+  const showBody = part === "all" || part === "body";
+  const showPinNames = part === "all" || part === "pins";
+  const showLabel = part === "all" || part === "labels";
 
-  const renderPin = (pin: PinPosition) => {
+  const renderPinMarker = (pin: PinPosition) => {
     const center = holeCenter(pin.row, pin.col);
     const assignment = netAssignments.find(
       (a) => a.componentId === component.id && a.pinId === pin.pinId
@@ -136,22 +140,28 @@ export default function PlacedComponent({ component, isSelected, clashing = fals
           strokeWidth={hasNet ? 1.5 : 0.5}
           pointerEvents="none"
         />
-        {/* Pin ID label */}
-        {drawing.pinNames && <text
-          x={center.x}
-          y={center.y + 10}
-          textAnchor="middle"
-          fontSize={6}
-          fill={drawing.pinOnDark ? "#e8e8e8" : "var(--component-subtext)"}
-          stroke={drawing.pinOnDark ? "rgba(0,0,0,0.6)" : "var(--board-fill)"}
-          strokeWidth={1.6}
-          paintOrder="stroke"
-          strokeLinejoin="round"
-          pointerEvents="none"
-        >
-          {def.pins.find((p) => p.id === pin.pinId)?.name ?? pin.pinId}
-        </text>}
       </g>
+    );
+  };
+
+  const renderPinName = (pin: PinPosition) => {
+    if (!drawing.pinNames) return null;
+    const center = holeCenter(pin.row, pin.col);
+    return (
+      <text
+        key={`name-${pin.pinId}-${pin.row}-${pin.col}`}
+        className="label-halo stripboard-pin-text"
+        x={center.x}
+        y={center.y + 10}
+        textAnchor="middle"
+        fontSize={6}
+        strokeWidth={1.6}
+        paintOrder="stroke"
+        strokeLinejoin="round"
+        pointerEvents="none"
+      >
+        {def.pins.find((p) => p.id === pin.pinId)?.name ?? pin.pinId}
+      </text>
     );
   };
 
@@ -161,8 +171,11 @@ export default function PlacedComponent({ component, isSelected, clashing = fals
   const ly = label.y + (component.boardLabelOffset?.y ?? 0);
   const onBody = {
     dominantBaseline: "central" as const,
-    fill: label.onDark ? "#f7f7f7" : "#1a1a1a",
-    stroke: label.onDark ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.8)",
+    strokeWidth: 3,
+    paintOrder: "stroke",
+    strokeLinejoin: "round" as const,
+  };
+  const offBody = {
     strokeWidth: 3,
     paintOrder: "stroke",
     strokeLinejoin: "round" as const,
@@ -170,42 +183,52 @@ export default function PlacedComponent({ component, isSelected, clashing = fals
 
   return (
     <g>
-      <PartBody
-        drawing={drawing}
-        outline={isSelected ? "var(--selection-stroke)" : clashing ? CLASH_STROKE : "var(--component-stroke)"}
-        outlineWidth={isSelected ? 0.26 : clashing ? 0.3 : 0.12}
-        fill={isSelected ? "var(--selection-fill)" : "var(--component-fill)"}
-        strokeWidth={isSelected || clashing ? 1.5 : 1}
-        style={{ cursor: toolActive ? undefined : "grab" }}
-        onMouseDown={onMouseDown}
-      />
-      {pins.map(renderPin)}
-      <text
-        x={lx}
-        y={ly}
-        textAnchor="middle" fontSize={11} fontWeight={600}
-        {...(label.onBody ? onBody : { fill: "var(--component-text)" })}
-        style={{ cursor: "grab" }}
-        onMouseDown={(e) => handleLabelMouseDown(e, label.x, label.y)}
-      >
-        <tspan ref={labelRef} x={lx}>
-          {component.label}
-        </tspan>
-        {showValues && allowsValue && component.value && (
-          <tspan x={lx} dy="1.15em" fontWeight={400} fillOpacity={0.7}>
-            {component.value}
-          </tspan>
-        )}
-      </text>
-      {locked && (
-        <g
-          transform={`translate(${lx + labelW / 2 + 1} ${ly - (label.onBody ? 5 : 9)}) scale(${10 / 24})`}
-          fill="none" strokeLinecap="round" strokeLinejoin="round" pointerEvents="none"
-        >
-          {label.onBody && <g stroke={onBody.stroke} strokeWidth={6}>{LOCK_SHAPE}</g>}
-          <g stroke={label.onBody ? onBody.fill : "var(--component-text)"} strokeWidth={2.6}>{LOCK_SHAPE}</g>
-        </g>
+      {showBody && (
+        <>
+          <PartBody
+            drawing={drawing}
+            outline={isSelected ? "var(--selection-stroke)" : clashing ? CLASH_STROKE : "var(--component-stroke)"}
+            outlineWidth={isSelected ? 0.26 : clashing ? 0.3 : 0.12}
+            fill={isSelected ? "var(--selection-fill)" : "var(--component-fill)"}
+            strokeWidth={isSelected || clashing ? 1.5 : 1}
+            style={{ cursor: toolActive ? undefined : "grab" }}
+            onMouseDown={onMouseDown}
+          />
+          {pins.map(renderPinMarker)}
+        </>
       )}
+      {showLabel && (
+        <>
+          <text
+            className="label-halo stripboard-label-text"
+            x={lx}
+            y={ly}
+            textAnchor="middle" fontSize={11} fontWeight={600}
+            {...(label.onBody ? onBody : offBody)}
+            style={{ cursor: "grab" }}
+            onMouseDown={(e) => handleLabelMouseDown(e, label.x, label.y)}
+          >
+            <tspan ref={labelRef} x={lx}>
+              {component.label}
+            </tspan>
+            {showValues && allowsValue && component.value && (
+              <tspan x={lx} dy="1.15em" fontWeight={400} fillOpacity={0.7}>
+                {component.value}
+              </tspan>
+            )}
+          </text>
+          {locked && (
+            <g
+              transform={`translate(${lx + labelW / 2 + 1} ${ly - (label.onBody ? 5 : 9)}) scale(${10 / 24})`}
+              fill="none" strokeLinecap="round" strokeLinejoin="round" pointerEvents="none"
+            >
+              {label.onBody && <g className="label-halo" strokeWidth={6}>{LOCK_SHAPE}</g>}
+              <g className="stripboard-label-ink" strokeWidth={2.6}>{LOCK_SHAPE}</g>
+            </g>
+          )}
+        </>
+      )}
+      {showPinNames && pins.map(renderPinName)}
     </g>
   );
 }

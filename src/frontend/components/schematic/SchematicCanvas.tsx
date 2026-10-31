@@ -942,10 +942,10 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
   const cursorStyle = panZoom.panning
     ? "grabbing"
     : wireTool
-    ? "crosshair"
-    : isDragging
-    ? "grabbing"
-    : "default";
+      ? "crosshair"
+      : isDragging
+        ? "grabbing"
+        : "default";
 
   const wireStartPos = wireDrawingFrom;
   const selCount = selSize(selection);
@@ -1017,31 +1017,6 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
           />
         ))}
 
-        {/* Junction dots where three or more wire ends, pins or labels meet */}
-        {junctionPoints.map((jp) => {
-          const color = jp.wireId ? (wireColorMap.get(jp.wireId) ?? "var(--junction-dot)") : "var(--junction-dot)";
-          return (
-            <circle
-              key={pointKey(jp.x, jp.y)}
-              cx={jp.x} cy={jp.y} r={2.5}
-              fill={color}
-              pointerEvents="none"
-            />
-          );
-        })}
-
-        {/* Wire ends that touch nothing */}
-        {danglingEnds.map((d) => (
-          <rect
-            key={`d-${pointKey(d.x, d.y)}`}
-            x={d.x - 2.5} y={d.y - 2.5} width={5} height={5}
-            fill="var(--schematic-bg)"
-            stroke={wireColorMap.get(d.wireId) ?? "var(--wire-default)"}
-            strokeWidth={1.2}
-            pointerEvents="none"
-          />
-        ))}
-
         {/* Wire drawing preview — L-shape following mouse direction */}
         {wireStartPos && wirePreview && (() => {
           const sameX = Math.abs(wirePreview.x - wireStartPos.x) < 1;
@@ -1086,16 +1061,40 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
           );
         })()}
 
-        {/* Components */}
+        {/* Component symbols */}
         {sortedComponents.map((comp) => (
           <SchematicComponentBlock
-            key={comp.id}
+            key={`symbol-${comp.id}`}
             component={comp}
             isSelected={selectedCompSet.has(comp.id)}
             onMouseDown={(e) => handleItemMouseDown("components", comp.id, e)}
             onPinMouseDown={handlePinMouseDown}
             getSVGPoint={getSVGPoint}
             readOnly={readOnly}
+            part="symbol"
+          />
+        ))}
+
+        {/* Junction dots where three or more wire ends, pins or labels meet */}
+        {junctionPoints.map((jp) => {
+          const color = jp.wireId ? (wireColorMap.get(jp.wireId) ?? "var(--junction-dot)") : "var(--junction-dot)";
+          return (
+            <circle
+              key={pointKey(jp.x, jp.y)}
+              cx={jp.x} cy={jp.y} r={2.5}
+              fill={color}
+              pointerEvents="none"
+            />
+          );
+        })}
+        {danglingEnds.map((d) => (
+          <rect
+            key={`d-${pointKey(d.x, d.y)}`}
+            x={d.x - 2.5} y={d.y - 2.5} width={5} height={5}
+            fill="var(--schematic-bg)"
+            stroke={wireColorMap.get(d.wireId) ?? "var(--wire-default)"}
+            strokeWidth={1.2}
+            pointerEvents="none"
           />
         ))}
 
@@ -1138,6 +1137,33 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
             pointerEvents="none"
           />
         )}
+
+        {/* Component names and values */}
+        {sortedComponents.map((comp) => (
+          <SchematicComponentBlock
+            key={`labels-${comp.id}`}
+            component={comp}
+            isSelected={selectedCompSet.has(comp.id)}
+            onMouseDown={(e) => handleItemMouseDown("components", comp.id, e)}
+            onPinMouseDown={handlePinMouseDown}
+            getSVGPoint={getSVGPoint}
+            readOnly={readOnly}
+            part="labels"
+          />
+        ))}
+        {/* Component pin names */}
+        {sortedComponents.map((comp) => (
+          <SchematicComponentBlock
+            key={`pin-labels-${comp.id}`}
+            component={comp}
+            isSelected={selectedCompSet.has(comp.id)}
+            onMouseDown={(e) => handleItemMouseDown("components", comp.id, e)}
+            onPinMouseDown={handlePinMouseDown}
+            getSVGPoint={getSVGPoint}
+            readOnly={readOnly}
+            part="pin-labels"
+          />
+        ))}
       </svg>
 
       {/* Selection actions — a single component */}

@@ -118,13 +118,13 @@ export default function SchematicNetLabel({
       {/* Name, kept upright */}
       {showName && !editing && (
         <text
+          className="label-halo"
           x={tp.x} y={tp.y}
           fontSize={13}
           fontWeight={600}
           textAnchor={tp.anchor}
           dominantBaseline={tp.baseline}
           fill={isSelected ? "var(--symbol-stroke-selected)" : "var(--component-text)"}
-          stroke="var(--schematic-bg)"
           strokeWidth={3}
           strokeLinejoin="round"
           style={{ userSelect: "none", paintOrder: "stroke" }}

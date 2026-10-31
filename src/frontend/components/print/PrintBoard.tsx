@@ -27,6 +27,11 @@ interface Props {
 
 const COPPER = "#d9b368";
 const CONFLICT = "#dc2626";
+// Match the board editor's light-mode label styling.
+const LABEL_TEXT = "#171717";
+const PIN_TEXT = "#222";
+const LABEL_HALO = "#e5e5e5";
+const LABEL_HALO_OPACITY = 0.8;
 
 export default function PrintBoard({ variant, showLabels, showPinLabels, color }: Props) {
   const board = useProjectStore((s) => s.board);
@@ -84,6 +89,20 @@ export default function PrintBoard({ variant, showLabels, showPinLabels, color }
       })
     : null;
 
+  // Resolve each placed part once, then paint it in the same layer order the
+  // board editor uses.
+  const placed = components.flatMap((comp) => {
+    const def = resolveComponentDef(comp, componentDefs);
+    const drawing = def && partDrawing(def, comp, (row, col) => holeCenter(row, col), HOLE_SPACING);
+    if (!def || !drawing || !comp.boardPos) return [];
+    // Label where the board editor has it, offset the user dragged included.
+    // The cut sheet is mirrored, so the horizontal part of that offset flips.
+    const labelOff = comp.boardLabelOffset ?? { x: 0, y: 0 };
+    const labelX = mirror ? minX + maxX - drawing.label.x - labelOff.x : drawing.label.x + labelOff.x;
+    const labelY = drawing.label.y + labelOff.y;
+    return [{ comp, def, drawing, labelX, labelY }];
+  });
+
   return (
     <svg
       width={`${(vbW * SCALE).toFixed(2)}mm`}
@@ -94,54 +113,6 @@ export default function PrintBoard({ variant, showLabels, showPinLabels, color }
       {strips}
       {netStrips}
       {holes}
-
-      {components.map((comp) => {
-        const def = resolveComponentDef(comp, componentDefs);
-        // Drawn the way the top side has it. The cut sheet looks at the same
-        // parts from underneath, so there the whole body is flipped instead.
-        const drawing = def && partDrawing(def, comp, (row, col) => holeCenter(row, col), HOLE_SPACING);
-        if (!def || !drawing || !comp.boardPos) return null;
-        const { pins } = drawing;
-        // Label where the board editor has it, offset the user dragged
-        // included. The cut sheet is mirrored, so the horizontal part of that
-        // offset flips with it.
-        const labelOff = comp.boardLabelOffset ?? { x: 0, y: 0 };
-        const labelX = mirror ? minX + maxX - drawing.label.x - labelOff.x : drawing.label.x + labelOff.x;
-        const labelY = drawing.label.y + labelOff.y;
-        return (
-          <g key={comp.id}>
-            <g transform={mirror ? `translate(${minX + maxX} 0) scale(-1 1)` : undefined} opacity={mirror ? 0.45 : undefined}>
-              <PartBody drawing={drawing} mono={!color || mirror} outline={drawing.pieces && color && !mirror ? "#333" : "#000"} outlineWidth={0.14}
-                fill="none" strokeWidth={mirror ? 1.5 : 3} dashed={false} />
-            </g>
-            {pins.map((p, i) => (
-              <circle key={i} cx={colX(p.col)} cy={rowY(p.row)} r={5}
-                fill={mirror ? "none" : (color && holeColor(p.row, p.col)) || "#000"}
-                stroke={color && !mirror ? "#fff" : compStroke} strokeWidth={1.5} />
-            ))}
-            {!mirror && showPinLabels && drawing.pinNames && pins.map((p, i) => {
-              const pinName = def.pins.find((pd) => pd.id === p.pinId)?.name;
-              if (!pinName) return null;
-              return (
-                <text key={`pl${i}`} x={colX(p.col)} y={rowY(p.row) + 7}
-                  textAnchor="middle" dominantBaseline="hanging" fontSize={11} fontWeight={600}
-                  fill="#000" stroke="#fff" strokeWidth={3.5}
-                  paintOrder="stroke" strokeLinejoin="round"
-                  style={{ userSelect: "none" }}>
-                  {pinName}
-                </text>
-              );
-            })}
-            {showLabels && (
-              <text x={labelX} y={labelY} textAnchor="middle" dominantBaseline={drawing.label.onBody ? "central" : undefined} fontSize={16}
-                fontWeight={700} fill={mirror ? "#666" : "#000"}
-                stroke="#fff" strokeWidth={4} paintOrder="stroke" strokeLinejoin="round">
-                {comp.label}
-              </text>
-            )}
-          </g>
-        );
-      })}
 
       {!mirror && (() => {
         // Parallel wires sharing a column/row are shifted into lanes like on
@@ -166,19 +137,47 @@ export default function PrintBoard({ variant, showLabels, showPinLabels, color }
         });
       })()}
 
-      {mirror && board.cuts.map((cut, i) => {
-        const cx = cut.kind === "hole"
-          ? colX(cut.col)
-          : (colX(cut.col) + colX(cut.col + 1)) / 2;
-        const cy = rowY(cut.row);
-        const s = 9;
-        return (
-          <g key={`cut${i}`} stroke={color ? CONFLICT : "#000"} strokeWidth={mirror ? 5 : 4} strokeLinecap="round">
-            <line x1={cx - s} y1={cy - s} x2={cx + s} y2={cy + s} />
-            <line x1={cx - s} y1={cy + s} x2={cx + s} y2={cy - s} />
+      {/* Component bodies and pins */}
+      {placed.map(({ comp, drawing }) => (
+        <g key={comp.id}>
+          <g transform={mirror ? `translate(${minX + maxX} 0) scale(-1 1)` : undefined} opacity={mirror ? 0.45 : undefined}>
+            <PartBody drawing={drawing} mono={!color || mirror} outline={drawing.pieces && color && !mirror ? "#333" : "#000"} outlineWidth={0.14}
+              fill="none" strokeWidth={mirror ? 1.5 : 3} dashed={false} />
           </g>
-        );
-      })}
+          {drawing.pins.map((p, i) => (
+            <circle key={i} cx={colX(p.col)} cy={rowY(p.row)} r={5}
+              fill={mirror ? "none" : (color && holeColor(p.row, p.col)) || "#000"}
+              stroke={color && !mirror ? "#fff" : compStroke} strokeWidth={1.5} />
+          ))}
+        </g>
+      ))}
+
+      {/* Component names and values */}
+      {showLabels && placed.map(({ comp, drawing, labelX, labelY }) => (
+        <text key={`label-${comp.id}`} x={labelX} y={labelY} textAnchor="middle"
+          dominantBaseline={drawing.label.onBody ? "central" : undefined} fontSize={16}
+          fontWeight={600} fill={mirror ? "#666" : LABEL_TEXT}
+          stroke={LABEL_HALO} strokeOpacity={LABEL_HALO_OPACITY} strokeWidth={4.4} paintOrder="stroke" strokeLinejoin="round">
+          {comp.label}
+        </text>
+      ))}
+
+      {/* Pin names */}
+      {!mirror && showPinLabels && placed.map(({ comp, def, drawing }) => (
+        drawing.pinNames && drawing.pins.map((p, i) => {
+          const pinName = def.pins.find((pd) => pd.id === p.pinId)?.name;
+          if (!pinName) return null;
+          return (
+            <text key={`pin-${comp.id}-${p.pinId}-${i}`} x={colX(p.col)} y={rowY(p.row) + 7}
+              textAnchor="middle" dominantBaseline="hanging" fontSize={11}
+              fill={PIN_TEXT} stroke={LABEL_HALO} strokeOpacity={LABEL_HALO_OPACITY} strokeWidth={3}
+              paintOrder="stroke" strokeLinejoin="round"
+              style={{ userSelect: "none" }}>
+              {pinName}
+            </text>
+          );
+        })
+      ))}
 
       {(() => {
         const ox = colX(0);
@@ -192,6 +191,20 @@ export default function PrintBoard({ variant, showLabels, showPinLabels, color }
           </g>
         );
       })()}
+
+      {mirror && board.cuts.map((cut, i) => {
+        const cx = cut.kind === "hole"
+          ? colX(cut.col)
+          : (colX(cut.col) + colX(cut.col + 1)) / 2;
+        const cy = rowY(cut.row);
+        const s = 9;
+        return (
+          <g key={`cut${i}`} stroke={color ? CONFLICT : "#000"} strokeWidth={mirror ? 5 : 4} strokeLinecap="round">
+            <line x1={cx - s} y1={cy - s} x2={cx + s} y2={cy + s} />
+            <line x1={cx - s} y1={cy + s} x2={cx + s} y2={cy - s} />
+          </g>
+        );
+      })}
     </svg>
   );
 }

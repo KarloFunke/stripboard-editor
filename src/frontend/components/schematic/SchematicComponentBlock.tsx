@@ -14,7 +14,7 @@ interface Props {
   onPinMouseDown?: (componentId: string, pinId: string, e: React.MouseEvent) => void;
   getSVGPoint?: (e: React.MouseEvent) => { x: number; y: number };
   readOnly?: boolean;
-  part?: "all" | "symbol" | "labels";
+  part?: "all" | "symbol" | "pin-labels" | "labels";
 }
 
 export default function SchematicComponentBlock({
@@ -53,8 +53,9 @@ export default function SchematicComponentBlock({
   const def = resolveComponentDef(component, componentDefs);
   if (!def) return null;
   const allowsValue = def.hasValue ?? false;
-  const showSymbol = part !== "labels";
-  const showLabels = part !== "symbol";
+  const showSymbol = part === "all" || part === "symbol";
+  const showPinLabels = part === "all" || part === "pin-labels";
+  const showLabels = part === "all" || part === "labels";
 
   const rotation = component.schematicRotation ?? 0;
   const mirrored = component.schematicMirrored ?? false;
@@ -194,6 +195,61 @@ export default function SchematicComponentBlock({
         />
       )}
 
+      {showPinLabels && (
+        <>
+          {/* Pin names paint above every body, wire, and component label. */}
+          <SymbolRenderer
+            symbolId={def.symbol}
+            rotation={rotation}
+            mirrored={mirrored}
+            selected={isSelected}
+            onPinLabelClick={readOnly || editingPinId ? undefined : handlePinLabelClick}
+            pinNames={pinNames}
+            pinLabelOffsets={component.pinLabelOffsets ?? {}}
+            onPinLabelDrag={readOnly ? undefined : (pinId, offset) => {
+              if (!pinLabelSnapshotPushed.current) {
+                pushSnapshot();
+                pinLabelSnapshotPushed.current = true;
+              }
+              updatePinLabelOffset(component.id, pinId, offset);
+            }}
+            onPinLabelDragEnd={readOnly ? undefined : () => { pinLabelSnapshotPushed.current = false; }}
+            labelsLocked={labelsLocked}
+            labelsOnly
+            showPinLabels={!editingPinId}
+          />
+
+          {/* Inline pin name editing overlay */}
+          {editingPinId && (() => {
+            const pinPositions = getRotatedPinPositions(def.symbol, rotation, mirrored);
+            const pinPos = pinPositions.find((p) => p.pinId === editingPinId);
+            if (!pinPos) return null;
+            return (
+              <foreignObject
+                x={pinPos.x - 30}
+                y={pinPos.y - 10}
+                width={60}
+                height={20}
+              >
+                <input
+                  autoFocus
+                  value={editPinValue}
+                  onChange={(e) => setEditPinValue(e.target.value)}
+                  onBlur={commitPinName}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") commitPinName();
+                    if (e.key === "Escape") setEditingPinId(null);
+                  }}
+                  className="w-full bg-white dark:bg-neutral-800 border border-[#113768] dark:border-[#5b9bd5] rounded px-1 text-[9px] text-center text-neutral-900 dark:text-neutral-100 outline-none"
+                  onClick={(e) => e.stopPropagation()}
+                  onMouseDown={(e) => e.stopPropagation()}
+                />
+              </foreignObject>
+            );
+          })()}
+        </>
+      )}
+
       {showLabels && (
         <>
           {/* Leader line from component center to label (when label is offset) */}
@@ -211,13 +267,13 @@ export default function SchematicComponentBlock({
           {/* Label */}
           {!editingLabel && (
             <text
+              className="label-halo"
               x={labelX}
               y={labelY}
               textAnchor="middle"
               fontSize={12}
               fontWeight={600}
               fill="var(--component-text)"
-              stroke="var(--schematic-bg)"
               strokeWidth={3}
               strokeLinejoin="round"
               style={{ cursor: "grab", userSelect: "none", paintOrder: "stroke" }}
@@ -239,29 +295,6 @@ export default function SchematicComponentBlock({
               )}
             </text>
           )}
-
-          {/* Pin names are painted separately from the symbol, so they sit
-              above every body and wire like the other labels. */}
-          <SymbolRenderer
-            symbolId={def.symbol}
-            rotation={rotation}
-            mirrored={mirrored}
-            selected={isSelected}
-            onPinLabelClick={readOnly || editingPinId ? undefined : handlePinLabelClick}
-            pinNames={pinNames}
-            pinLabelOffsets={component.pinLabelOffsets ?? {}}
-            onPinLabelDrag={readOnly ? undefined : (pinId, offset) => {
-              if (!pinLabelSnapshotPushed.current) {
-                pushSnapshot();
-                pinLabelSnapshotPushed.current = true;
-              }
-              updatePinLabelOffset(component.id, pinId, offset);
-            }}
-            onPinLabelDragEnd={readOnly ? undefined : () => { pinLabelSnapshotPushed.current = false; }}
-            labelsLocked={labelsLocked}
-            labelsOnly
-            showPinLabels={!editingPinId}
-          />
 
           {/* Editing overlays render after the labels so they stay on top. */}
           {editingLabel && (
@@ -305,35 +338,6 @@ export default function SchematicComponentBlock({
               </div>
             </foreignObject>
           )}
-
-          {/* Inline pin name editing overlay */}
-          {editingPinId && (() => {
-            const pinPositions = getRotatedPinPositions(def.symbol, rotation, mirrored);
-            const pinPos = pinPositions.find((p) => p.pinId === editingPinId);
-            if (!pinPos) return null;
-            return (
-              <foreignObject
-                x={pinPos.x - 30}
-                y={pinPos.y - 10}
-                width={60}
-                height={20}
-              >
-                <input
-                  autoFocus
-                  value={editPinValue}
-                  onChange={(e) => setEditPinValue(e.target.value)}
-                  onBlur={commitPinName}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") commitPinName();
-                    if (e.key === "Escape") setEditingPinId(null);
-                  }}
-                  className="w-full bg-white dark:bg-neutral-800 border border-[#113768] dark:border-[#5b9bd5] rounded px-1 text-[9px] text-center text-neutral-900 dark:text-neutral-100 outline-none"
-                  onClick={(e) => e.stopPropagation()}
-                  onMouseDown={(e) => e.stopPropagation()}
-                />
-              </foreignObject>
-            );
-          })()}
         </>
       )}
     </g>
