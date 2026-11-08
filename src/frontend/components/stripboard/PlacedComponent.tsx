@@ -37,6 +37,7 @@ export default function PlacedComponent({ component, isSelected, clashing = fals
   const { netAssignments } = useBoardView();
   const nets = useProjectStore((s) => s.nets);
   const updateBoardLabelOffset = useProjectStore((s) => s.updateBoardLabelOffset);
+  const labelsLocked = useProjectStore((s) => s.labelMovement === false);
   const showValues = useProjectStore((s) => s.showValuesOnBoard);
   // With a tool up, a click belongs to the tool and the cursor says so
   const toolActive = useProjectStore((s) => s.boardTool !== "select");
@@ -51,6 +52,12 @@ export default function PlacedComponent({ component, isSelected, clashing = fals
   }, [locked, component.label]);
 
   const handleLabelMouseDown = (e: React.MouseEvent, defaultX: number, defaultY: number) => {
+    // Locked labels belong to the part: the press moves the component rather
+    // than dragging the label on its own.
+    if (labelsLocked) {
+      onMouseDown(e);
+      return;
+    }
     // the right button pans the board, from anywhere
     if (readOnly || e.button !== 0) return;
     e.stopPropagation();

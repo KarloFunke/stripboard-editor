@@ -71,6 +71,7 @@ const SETTING_NAMES: Record<string, string> = {
   notes: "Notes",
   wiring: "Wiring rules",
   showValuesOnBoard: "Values on the board",
+  labelMovement: "Label movement",
   partSpacing: "Part spacing",
   drilledCutsOnly: "Drilled cuts only",
   allowStanding: "Standing parts",

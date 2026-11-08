@@ -17,6 +17,8 @@ interface SymbolRendererProps {
   pinLabelOffsets?: Record<string, { x: number; y: number }>; // per-pin label position offsets
   onPinLabelDrag?: (pinId: string, offset: { x: number; y: number }) => void;
   onPinLabelDragEnd?: () => void;
+  labelsLocked?: boolean;
+  labelsOnly?: boolean;
   showPinLabels?: boolean;
   scale?: number;
 }
@@ -26,10 +28,10 @@ interface SymbolRendererProps {
  */
 function rotatePoint(x: number, y: number, rotation: 0 | 90 | 180 | 270): { x: number; y: number } {
   switch (rotation) {
-    case 90:  return { x: -y, y: x };
+    case 90: return { x: -y, y: x };
     case 180: return { x: -x, y: -y };
     case 270: return { x: y, y: -x };
-    default:  return { x, y };
+    default: return { x, y };
   }
 }
 
@@ -120,6 +122,7 @@ function getPinLabelProps(
 }
 
 let _suppressPinLabelClick = false;
+let _pinLabelDown: { x: number; y: number } | null = null;
 
 export default function SymbolRenderer({
   symbolId,
@@ -134,6 +137,8 @@ export default function SymbolRenderer({
   pinLabelOffsets = {},
   onPinLabelDrag,
   onPinLabelDragEnd,
+  labelsLocked = false,
+  labelsOnly = false,
   showPinLabels = true,
   scale = 1,
 }: SymbolRendererProps) {
@@ -145,59 +150,63 @@ export default function SymbolRenderer({
 
   return (
     <g transform={`scale(${scale})`}>
-      {/* Body and stubs (mirrored then rotated as a group) */}
-      <g transform={`rotate(${rotation})${mirrored ? " scale(-1,1)" : ""}`}>
-        {def.bodyPaths.map((path, i) => (
-          <path
-            key={`body-${i}`}
-            d={path.d}
-            fill={path.fill === "currentColor" ? strokeColor : (path.fill ?? "none")}
-            stroke={path.stroke ?? strokeColor}
-            strokeWidth={strokeWidth}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        ))}
+      {!labelsOnly && (
+        <>
+          {/* Body and stubs (mirrored then rotated as a group) */}
+          <g transform={`rotate(${rotation})${mirrored ? " scale(-1,1)" : ""}`}>
+            {def.bodyPaths.map((path, i) => (
+              <path
+                key={`body-${i}`}
+                d={path.d}
+                fill={path.fill === "currentColor" ? strokeColor : (path.fill ?? "none")}
+                stroke={path.stroke ?? strokeColor}
+                strokeWidth={strokeWidth}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            ))}
 
-        {/* Extra elements (arrows, body labels) — NOT counter-rotated, they're part of the symbol */}
-        {def.extraElements?.map((el, i) => {
-          if (el.type === "line") {
-            return (
-              <line
-                key={`extra-${i}`}
-                x1={el.props.x1 as number} y1={el.props.y1 as number}
-                x2={el.props.x2 as number} y2={el.props.y2 as number}
-                stroke={strokeColor} strokeWidth={1.2} strokeLinecap="round"
-              />
-            );
-          }
-          if (el.type === "circle") {
-            return (
-              <circle
-                key={`extra-${i}`}
-                cx={el.props.cx as number} cy={el.props.cy as number}
-                r={el.props.r as number}
-                fill={el.props.fill as string ?? "none"}
-                stroke={strokeColor} strokeWidth={el.props.strokeWidth as number ?? 1.5}
-              />
-            );
-          }
-          if (el.type === "text") {
-            return (
-              <text
-                key={`extra-${i}`}
-                x={el.props.x as number} y={el.props.y as number}
-                fontSize={el.props.fontSize as number}
-                textAnchor={el.props.textAnchor as "start" | "middle" | "end"}
-                fill={strokeColor} style={{ userSelect: "none" }}
-              >
-                {el.props.children as string}
-              </text>
-            );
-          }
-          return null;
-        })}
-      </g>
+            {/* Extra elements (arrows, body labels) — NOT counter-rotated, they're part of the symbol */}
+            {def.extraElements?.map((el, i) => {
+              if (el.type === "line") {
+                return (
+                  <line
+                    key={`extra-${i}`}
+                    x1={el.props.x1 as number} y1={el.props.y1 as number}
+                    x2={el.props.x2 as number} y2={el.props.y2 as number}
+                    stroke={strokeColor} strokeWidth={1.2} strokeLinecap="round"
+                  />
+                );
+              }
+              if (el.type === "circle") {
+                return (
+                  <circle
+                    key={`extra-${i}`}
+                    cx={el.props.cx as number} cy={el.props.cy as number}
+                    r={el.props.r as number}
+                    fill={el.props.fill as string ?? "none"}
+                    stroke={strokeColor} strokeWidth={el.props.strokeWidth as number ?? 1.5}
+                  />
+                );
+              }
+              if (el.type === "text") {
+                return (
+                  <text
+                    key={`extra-${i}`}
+                    x={el.props.x as number} y={el.props.y as number}
+                    fontSize={el.props.fontSize as number}
+                    textAnchor={el.props.textAnchor as "start" | "middle" | "end"}
+                    fill={strokeColor} style={{ userSelect: "none" }}
+                  >
+                    {el.props.children as string}
+                  </text>
+                );
+              }
+              return null;
+            })}
+          </g>
+        </>
+      )}
 
       {/* Pin connection points and labels (NOT inside the rotation group — positioned in world space) */}
       {def.pins.map((pin) => {
@@ -208,29 +217,33 @@ export default function SymbolRenderer({
 
         return (
           <g key={`pin-${pin.pinId}`}>
-            {/* Connection point */}
-            <circle
-              cx={rEnd.x} cy={rEnd.y}
-              r={2.5}
-              fill={hasNet ? color : "var(--hole-fill)"}
-              stroke={hasNet ? color : "var(--pin-text)"}
-              strokeWidth={1.5}
-              style={{ cursor: onPinMouseDown ? "pointer" : "default" }}
-              onMouseDown={(e) => {
-                e.stopPropagation();
-                onPinMouseDown?.(pin.pinId, e);
-              }}
-            />
-            {/* Hit area: small enough that a one-grid wire between two pins stays clickable */}
-            <circle
-              cx={rEnd.x} cy={rEnd.y}
-              r={5} fill="transparent"
-              style={{ cursor: onPinMouseDown ? "pointer" : "default" }}
-              onMouseDown={(e) => {
-                e.stopPropagation();
-                onPinMouseDown?.(pin.pinId, e);
-              }}
-            />
+            {!labelsOnly && (
+              <>
+                {/* Connection point */}
+                <circle
+                  cx={rEnd.x} cy={rEnd.y}
+                  r={2.5}
+                  fill={hasNet ? color : "var(--hole-fill)"}
+                  stroke={hasNet ? color : "var(--pin-text)"}
+                  strokeWidth={1.5}
+                  style={{ cursor: onPinMouseDown ? "pointer" : "default" }}
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    onPinMouseDown?.(pin.pinId, e);
+                  }}
+                />
+                {/* Hit area: small enough that a one-grid wire between two pins stays clickable */}
+                <circle
+                  cx={rEnd.x} cy={rEnd.y}
+                  r={5} fill="transparent"
+                  style={{ cursor: onPinMouseDown ? "pointer" : "default" }}
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    onPinMouseDown?.(pin.pinId, e);
+                  }}
+                />
+              </>
+            )}
             {/* Pin label — dynamically positioned based on stub direction */}
             {showPinLabels && !def.hidePinLabels && (() => {
               const lp = getPinLabelProps(pin.labelPos ?? pin.stubEnd, pin.side, rotation, mirrored, def.pinLabelOffset);
@@ -250,9 +263,14 @@ export default function SymbolRenderer({
                   style={{
                     userSelect: "none",
                     paintOrder: "stroke",
-                    cursor: onPinLabelDrag ? "grab" : onPinLabelClick ? "text" : "default",
+                    cursor: onPinLabelDrag || labelsLocked ? "grab" : onPinLabelClick ? "text" : "default",
                   }}
                   onClick={(e) => {
+                    if (labelsLocked) {
+                      const down = _pinLabelDown;
+                      _pinLabelDown = null;
+                      if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) > 3) return;
+                    }
                     if (_suppressPinLabelClick) {
                       _suppressPinLabelClick = false;
                       return;
@@ -263,6 +281,12 @@ export default function SymbolRenderer({
                     }
                   }}
                   onMouseDown={(e) => {
+                    // Locked: let the mousedown through to the component, which
+                    // starts a drag of the part rather than of the label.
+                    if (labelsLocked) {
+                      _pinLabelDown = { x: e.clientX, y: e.clientY };
+                      return;
+                    }
                     if (onPinLabelClick) e.stopPropagation();
                     if (onPinLabelDrag) {
                       e.stopPropagation();

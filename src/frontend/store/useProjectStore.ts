@@ -170,6 +170,7 @@ interface ProjectActions {
   updateLabel: (id: string, label: string) => void;
   updateComponentValue: (id: string, value: string) => void;
   setShowValuesOnBoard: (show: boolean) => void;
+  setLabelMovement: (value: boolean) => void;
   setAutoSave: (autoSave: boolean) => void;
   updatePinName: (componentId: string, pinId: string, newName: string) => void;
   updateComponentFootprint: (componentId: string, override: FootprintOverride) => void;
@@ -378,6 +379,7 @@ const initialProject: Project = {
     wires: [],
   },
   showValuesOnBoard: false,
+  labelMovement: true,
   autoSave: false,
 };
 
@@ -560,6 +562,7 @@ function prepareProjectState(data: Project) {
       ...(data.board?.pattern ? { pattern: data.board.pattern } : {}),
     },
     showValuesOnBoard: data.showValuesOnBoard ?? false,
+    labelMovement: data.labelMovement ?? true,
     autoSave: data.autoSave ?? false,
     spanOverrides: data.spanOverrides,
     clearanceOverrides: data.clearanceOverrides,
@@ -739,6 +742,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     get().pushSnapshot();
     set({ showValuesOnBoard: show });
   },
+
+  setLabelMovement: (value) => set({ labelMovement: value, isDirty: true }),
 
   // Persisted project preference; marks dirty so the toggle itself gets saved.
   setAutoSave: (autoSave) => set({ autoSave, isDirty: true }),
@@ -989,29 +994,29 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set((s) => {
       const before = boardView(s.components, s.componentDefs, s.netAssignments).components.find((c) => c.id === id);
       return {
-      // A part new to the board brings the cuts it needs under its body
-      ...(before && !before.boardPos
-        ? { board: { ...s.board, cuts: cutsWithPart(s, s.board.cuts, { ...before, boardPos: pos }) } }
-        : {}),
-      components: onBoard(s, (view) => view.map((c) => {
-        if (c.id !== id) return c;
-        const def = resolveComponentDef(c, s.componentDefs);
-        // For flexible components, initialize flexibleEndPos on first placement
-        let flexEnd = c.flexibleEndPos;
-        if (def?.flexible && !flexEnd && def.pins.length >= 2) {
-          flexEnd = {
-            row: pos.row + def.pins[1].offsetRow,
-            col: pos.col + def.pins[1].offsetCol,
-          };
-        }
-        return { ...c, boardPos: pos, flexibleEndPos: flexEnd };
-      })),
-      ...bumpBoardEdits(s),
-      // First placement of a part = the circuit growing, not a correction
-      ...(before?.boardPos
-        ? {}
-        : { boardAddsSinceAutoLayout: (s.boardAddsSinceAutoLayout ?? 0) + 1 }),
-    };
+        // A part new to the board brings the cuts it needs under its body
+        ...(before && !before.boardPos
+          ? { board: { ...s.board, cuts: cutsWithPart(s, s.board.cuts, { ...before, boardPos: pos }) } }
+          : {}),
+        components: onBoard(s, (view) => view.map((c) => {
+          if (c.id !== id) return c;
+          const def = resolveComponentDef(c, s.componentDefs);
+          // For flexible components, initialize flexibleEndPos on first placement
+          let flexEnd = c.flexibleEndPos;
+          if (def?.flexible && !flexEnd && def.pins.length >= 2) {
+            flexEnd = {
+              row: pos.row + def.pins[1].offsetRow,
+              col: pos.col + def.pins[1].offsetCol,
+            };
+          }
+          return { ...c, boardPos: pos, flexibleEndPos: flexEnd };
+        })),
+        ...bumpBoardEdits(s),
+        // First placement of a part = the circuit growing, not a correction
+        ...(before?.boardPos
+          ? {}
+          : { boardAddsSinceAutoLayout: (s.boardAddsSinceAutoLayout ?? 0) + 1 }),
+      };
     });
   },
 
@@ -1081,11 +1086,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       components: s.components.map((c) =>
         c.id === id
           ? {
-              ...c,
-              boardExcluded: excluded,
-              // Unplacing clears the lock: it refers to a board position
-              ...(excluded ? { boardPos: null, flexibleEndPos: undefined, locked: undefined, offBoard: undefined, offBoardPackage: undefined, leads: undefined, leadLabelOffsets: undefined, boardLabelOffset: c.offBoard ? undefined : c.boardLabelOffset, rotation: c.offBoard ? 0 : c.rotation } : {}),
-            }
+            ...c,
+            boardExcluded: excluded,
+            // Unplacing clears the lock: it refers to a board position
+            ...(excluded ? { boardPos: null, flexibleEndPos: undefined, locked: undefined, offBoard: undefined, offBoardPackage: undefined, leads: undefined, leadLabelOffsets: undefined, boardLabelOffset: c.offBoard ? undefined : c.boardLabelOffset, rotation: c.offBoard ? 0 : c.rotation } : {}),
+          }
           : c
       ),
       ...(excluded ? { board: { ...s.board, cuts: cutsWithoutParts(s, [id]) } } : {}),
@@ -1190,8 +1195,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       const new2Col = new1Col - p;
       // Bounds check
       if (new1Row < 0 || new1Col < 0 || new2Row < 0 || new2Col < 0 ||
-          new1Row >= s.board.rows || new1Col >= s.board.cols ||
-          new2Row >= s.board.rows || new2Col >= s.board.cols) {
+        new1Row >= s.board.rows || new1Col >= s.board.cols ||
+        new2Row >= s.board.rows || new2Col >= s.board.cols) {
         return;
       }
       get().pushSnapshot();
@@ -1208,7 +1213,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const newRotation = ((comp.rotation + 90) % 360) as Component["rotation"];
     const bounds = getComponentBounds(def, comp.boardPos, newRotation);
     if (bounds.minRow < 0 || bounds.minCol < 0 ||
-        bounds.maxRow >= s.board.rows || bounds.maxCol >= s.board.cols) {
+      bounds.maxRow >= s.board.rows || bounds.maxCol >= s.board.cols) {
       return;
     }
     get().pushSnapshot();
@@ -1733,6 +1738,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       wiring: s.wiring,
       board: s.board,
       showValuesOnBoard: s.showValuesOnBoard,
+      labelMovement: s.labelMovement,
       autoSave: s.autoSave,
       spanOverrides: s.spanOverrides,
       clearanceOverrides: s.clearanceOverrides,
@@ -1789,7 +1795,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     wiring: "touch",
     board: { rows: 20, cols: 20, cuts: [], wires: [] },
     showValuesOnBoard: false,
-      autoSave: false,
+    labelMovement: true,
+    autoSave: false,
     spanOverrides: undefined,
     clearanceOverrides: undefined,
     drilledCutsOnly: undefined,

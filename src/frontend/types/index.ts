@@ -281,6 +281,9 @@ export interface Project {
   wiring?: "classic" | "touch";
   board: Board;
   showValuesOnBoard?: boolean;
+  // Component labels and pin names can be dragged away from their part.
+  // On unless explicitly false; dragging one moves the component instead.
+  labelMovement?: boolean;
   autoSave?: boolean; // per-project preference: continuously save on every change
   // Legacy per-type auto-layout config from before parts had real packages.
   // No longer used: the package now decides spans and body size. Read once
