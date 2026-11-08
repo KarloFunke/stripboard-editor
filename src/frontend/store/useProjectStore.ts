@@ -268,6 +268,8 @@ interface ProjectActions {
   setWirePlacementFrom: (pos: BoardPosition) => void;
   setTrayDragComponentId: (id: string | null) => void;
   setHighlightedNetId: (id: string | null) => void;
+  setHighlightedPartId: (id: string | null) => void;
+  clearHighlight: () => void;
   setActiveEditor: (editor: "schematic" | "stripboard") => void;
   toggleSchematicWireDrawMode: () => void;
   setSchematicWireDrawing: (from: { x: number; y: number } | null) => void;
@@ -296,6 +298,9 @@ interface UIState {
   wirePlacementFrom: BoardPosition | null;
   trayDragComponentId: string | null;
   highlightedNetId: string | null;
+  // A part picked in either editor and shown in both; a net and a part are
+  // never highlighted at once
+  highlightedPartId: string | null;
   // What a click on the board means: "wire" starts and ends link wires,
   // "cut" places and removes cuts, "select" touches neither. Not saved: it is
   // a working mode, not a property of the project.
@@ -304,6 +309,10 @@ interface UIState {
   // Outline parts whose real bodies collide. A display choice, not saved.
   showOverlaps: boolean;
   setShowOverlaps: (value: boolean) => void;
+  // Show the highlighted part or net in both editors, the rest dimmed. A
+  // display choice, not saved.
+  showHighlights: boolean;
+  setShowHighlights: (value: boolean) => void;
   schematicWireDrawMode: boolean;
   schematicWireDrawingFrom: { x: number; y: number } | null;
   schematicWireDirection: "horizontal-first" | "vertical-first" | null; // locked on first significant mouse move
@@ -599,8 +608,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   wirePlacementFrom: null,
   trayDragComponentId: null,
   highlightedNetId: null,
+  highlightedPartId: null,
   boardTool: "select",
   showOverlaps: true,
+  showHighlights: true,
   schematicWireDrawMode: false,
   schematicWireDrawingFrom: null,
   schematicWireDirection: null,
@@ -1678,10 +1689,13 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   setWirePlacementFrom: (pos) => set({ wirePlacementFrom: pos }),
 
   setTrayDragComponentId: (id) => set({ trayDragComponentId: id }),
-  setHighlightedNetId: (id) => set({ highlightedNetId: id }),
+  setHighlightedNetId: (id) => set(id ? { highlightedNetId: id, highlightedPartId: null } : { highlightedNetId: null }),
+  setHighlightedPartId: (id) => set(id ? { highlightedPartId: id, highlightedNetId: null } : { highlightedPartId: null }),
+  clearHighlight: () => set({ highlightedNetId: null, highlightedPartId: null }),
 
   setBoardTool: (tool) => set({ boardTool: tool, wirePlacementFrom: null }),
   setShowOverlaps: (value) => set({ showOverlaps: value }),
+  setShowHighlights: (value) => set({ showHighlights: value }),
   setActiveEditor: (editor) => set({ activeEditor: editor }),
   toggleSchematicWireDrawMode: () => set((s) => ({
     schematicWireDrawMode: !s.schematicWireDrawMode,

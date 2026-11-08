@@ -148,6 +148,11 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
   const pushSnapshot = useProjectStore((s) => s.pushSnapshot);
   const transact = useProjectStore((s) => s.transact);
   const highlightedNetId = useProjectStore((s) => s.highlightedNetId);
+  const highlightedPartId = useProjectStore((s) => s.highlightedPartId);
+  const setHighlightedNetId = useProjectStore((s) => s.setHighlightedNetId);
+  const setHighlightedPartId = useProjectStore((s) => s.setHighlightedPartId);
+  const clearHighlight = useProjectStore((s) => s.clearHighlight);
+  const showHighlights = useProjectStore((s) => s.showHighlights);
 
   // The wire tool is active either in wire mode or while a wire started from
   // a pin in select mode is being drawn.
@@ -308,7 +313,18 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
     return { junctionPoints: junctions, danglingEnds: dangling };
   }, [schematicWires, pinPoints, netLabels]);
 
-  const activeNetId = highlightedNetId ?? hoverNetId;
+  const activeNetId = showHighlights ? highlightedNetId ?? hoverNetId : null;
+
+  // A part or net picked in either editor: the rest of the sheet steps back,
+  // more gently than the board, so the drawing stays readable
+  // (parts work out their own part of this, see SchematicComponentBlock)
+  const focus = useMemo(() => {
+    if (!showHighlights) return null;
+    if (highlightedPartId && components.some((c) => c.id === highlightedPartId)) return { net: null };
+    if (highlightedNetId && nets.some((n) => n.id === highlightedNetId)) return { net: highlightedNetId };
+    return null;
+  }, [showHighlights, highlightedPartId, highlightedNetId, components, nets]);
+  const dimOf = (onFocus: boolean) => (focus && !onFocus ? 0.5 : undefined);
 
   // ── Coordinates ───────────────────────────────────────
 
@@ -573,7 +589,8 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
       // Escape: cancel the pending segment, then clear selection, then leave wire mode
       if (key === "Escape") {
         if (drawing) { endDrawing(); return; }
-        if (selSize(selection) > 0) { applySelection(EMPTY_SEL); return; }
+        if (selSize(selection) > 0) { applySelection(EMPTY_SEL); clearHighlight(); return; }
+        if (showHighlights && (highlightedNetId || highlightedPartId)) { clearHighlight(); return; }
         if (wireDrawMode) { toggleWireDrawMode(); return; }
         return;
       }
@@ -636,7 +653,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [readOnly, selection, components, schematicWires, netLabels, drawing, wireDrawMode, endArrowSession, applySelection, copySelection, pasteClipboard, endDrawing, toggleWireDrawMode, placeSegment, stepBack, rotateSelection, toggleExcludeSelection, placeLabel, cursorOrCenter, deleteSelection, pushSnapshot, beginSchematicMove, moveSchematicItems]);
+  }, [readOnly, selection, components, schematicWires, netLabels, drawing, wireDrawMode, endArrowSession, applySelection, copySelection, pasteClipboard, endDrawing, toggleWireDrawMode, placeSegment, stepBack, rotateSelection, toggleExcludeSelection, placeLabel, cursorOrCenter, deleteSelection, pushSnapshot, beginSchematicMove, moveSchematicItems, highlightedNetId, highlightedPartId, clearHighlight, showHighlights]);
 
   // ── Mouse ─────────────────────────────────────────────
 
@@ -656,6 +673,15 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
     }
     const next = mode === "add" || selHas(selection, kind, id) ? selWith(selection, kind, id, "add") : selWith(selection, kind, id, "replace");
     applySelection(next);
+    // A plain click also shows the part, or the net of a wire or label, in both editors
+    if (mode === "replace") {
+      if (kind === "components") setHighlightedPartId(id);
+      else {
+        const net = kind === "wires" ? wireNetIdMap.get(id) : labelNetMap.get(id)?.netId;
+        if (net) setHighlightedNetId(net);
+        else clearHighlight();
+      }
+    }
 
     beginSchematicMove(next.components, next.wires, next.labels);
     const pt = getSVGPoint(e);
@@ -668,7 +694,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
       sel: next,
     };
     setIsDragging(true);
-  }, [readOnly, wireTool, endArrowSession, selection, applySelection, beginSchematicMove, getSVGPoint]);
+  }, [readOnly, wireTool, endArrowSession, selection, applySelection, beginSchematicMove, getSVGPoint, wireNetIdMap, labelNetMap, setHighlightedPartId, setHighlightedNetId, clearHighlight]);
 
   /** Mousedown on a pin end: start or finish a wire (any mode) */
   const handlePinMouseDown = useCallback((componentId: string, pinId: string, e: React.MouseEvent) => {
@@ -790,7 +816,10 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
     const x1 = Math.min(rect.startX, rect.currentX), x2 = Math.max(rect.startX, rect.currentX);
     const y1 = Math.min(rect.startY, rect.currentY), y2 = Math.max(rect.startY, rect.currentY);
     if (x2 - x1 <= MIN_RECT_SIZE && y2 - y1 <= MIN_RECT_SIZE) {
-      if (rect.mode === "replace") applySelection(EMPTY_SEL);
+      if (rect.mode === "replace") {
+        applySelection(EMPTY_SEL);
+        clearHighlight();
+      }
       return true;
     }
     // Dragged left to right: only what the box fully encloses. Right to
@@ -818,7 +847,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
     }
     applySelection(rect.mode === "replace" ? picked : selUnion(selection, picked));
     return true;
-  }, [selectionRect, components, componentDefs, schematicWires, netLabels, selection, applySelection]);
+  }, [selectionRect, components, componentDefs, schematicWires, netLabels, selection, applySelection, clearHighlight]);
 
   const endDrag = useCallback(() => {
     const drag = dragRef.current;
@@ -1005,8 +1034,8 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
 
         {/* Schematic wires */}
         {schematicWires.map((wire) => (
+          <g key={wire.id} opacity={dimOf(!!focus?.net && wireNetIdMap.get(wire.id) === focus.net)}>
           <SchematicWireLine
-            key={wire.id}
             wire={wire}
             color={wireColorMap.get(wire.id)}
             isSelected={selection.wires.includes(wire.id)}
@@ -1015,6 +1044,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
             onMouseEnter={readOnly || isDragging || drawing ? undefined : () => setHoverNetId(wireNetIdMap.get(wire.id) ?? null)}
             onMouseLeave={() => setHoverNetId(null)}
           />
+          </g>
         ))}
 
         {/* Junction dots where three or more wire ends, pins or labels meet */}
@@ -1103,8 +1133,8 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
         {netLabels.map((label) => {
           const info = labelNetMap.get(label.id);
           return (
+            <g key={label.id} opacity={dimOf(!!focus?.net && info?.netId === focus.net)}>
             <SchematicNetLabel
-              key={label.id}
               label={label}
               color={info?.color}
               isSelected={selection.labels.includes(label.id)}
@@ -1121,6 +1151,7 @@ export default function SchematicCanvas({ readOnly = false }: { readOnly?: boole
               }}
               onCancelEdit={() => setEditingLabelId(null)}
             />
+            </g>
           );
         })}
 

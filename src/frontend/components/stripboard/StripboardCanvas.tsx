@@ -39,7 +39,7 @@ import {
   getGroupForSegment,
   getGroupForWire,
 } from "./connectivity";
-import { StripSegment } from "./stripSegments";
+import { StripSegment, findSegmentIndex } from "./stripSegments";
 import { bodyStyle, bellyPath, dipNotch, usbPort } from "./componentGlyphs";
 import { defaultPackageId, packageOptions } from "./packageBodies";
 import PlacedComponent, { suppressNextCanvasClick } from "./PlacedComponent";
@@ -116,6 +116,11 @@ export default function StripboardCanvas({
   const cancelWirePlacement = useProjectStore((s) => s.cancelWirePlacement);
   const trayDragComponentId = useProjectStore((s) => s.trayDragComponentId);
   const highlightedNetId = useProjectStore((s) => s.highlightedNetId);
+  const highlightedPartId = useProjectStore((s) => s.highlightedPartId);
+  const setHighlightedNetId = useProjectStore((s) => s.setHighlightedNetId);
+  const setHighlightedPartId = useProjectStore((s) => s.setHighlightedPartId);
+  const clearHighlight = useProjectStore((s) => s.clearHighlight);
+  const showHighlights = useProjectStore((s) => s.showHighlights);
   const setFlexibleEndPos = useProjectStore((s) => s.setFlexibleEndPos);
   const insertBoardLine = useProjectStore((s) => s.insertBoardLine);
   const deleteBoardLine = useProjectStore((s) => s.deleteBoardLine);
@@ -128,6 +133,38 @@ export default function StripboardCanvas({
   const nets = useProjectStore((s) => s.nets);
 
   const { segments, connectivity } = useStripSegments();
+
+  // A net or part picked in either editor stays bright and the rest of the
+  // board dims, so it stands out on a faint screen too: the strips it sits
+  // on, and for a net the parts and wires on it
+  const focus = useMemo(() => {
+    if (!showHighlights) return null;
+    // an off-board part is here as its pads, or the connector its wires arrive at
+    const picked = highlightedPartId
+      ? components.filter((c) => c.boardPos && (c.id === highlightedPartId || (isLead(c) && c.leadOf.componentId === highlightedPartId)))
+      : [];
+    const net = highlightedNetId && nets.some((n) => n.id === highlightedNetId) ? highlightedNetId : null;
+    if (picked.length === 0 && !net) return null;
+    const segs = new Set<number>();
+    const parts = new Set<string>();
+    if (picked.length > 0) {
+      for (const part of picked) {
+        parts.add(part.id);
+        const def = resolveComponentDef(part, componentDefs);
+        if (def) for (const p of getComponentPinPositions(part, def)) segs.add(findSegmentIndex(segments, p.row, p.col));
+      }
+    } else {
+      segments.forEach((seg, i) => {
+        if ((getGroupForSegment(connectivity, i)?.netIds ?? seg.netIds).includes(net!)) segs.add(i);
+      });
+      for (const c of components) {
+        const def = c.boardPos && resolveComponentDef(c, componentDefs);
+        if (def && getComponentPinPositions(c, def).some((p) => segs.has(findSegmentIndex(segments, p.row, p.col)))) parts.add(c.id);
+      }
+    }
+    const wires = new Set(net ? board.wires.filter((w) => getGroupForWire(connectivity, w.id)?.netIds.includes(net)).map((w) => w.id) : []);
+    return { segs, parts, wires };
+  }, [showHighlights, highlightedPartId, highlightedNetId, components, componentDefs, nets, segments, connectivity, board.wires]);
 
   // Overlapping straight wires on one column (or row) get perpendicular
   // lane offsets so parallel runs stay individually visible. Wires that
@@ -451,6 +488,9 @@ export default function StripboardCanvas({
           setWireMousePos(null);
         } else if (selCount(selection) > 0) {
           applySelection({ comps: [], wires: [], cuts: [] });
+          clearHighlight();
+        } else if (showHighlights && (highlightedNetId || highlightedPartId)) {
+          clearHighlight();
         } else {
           setBoardTool("select");
         }
@@ -522,7 +562,7 @@ export default function StripboardCanvas({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [readOnly, wirePlacementFrom, cancelWirePlacement, selection, selectedId, selectedIds, selectedWireIds, selectedCuts, rotateComponent, moveComponentsOnBoard, refitBodyCuts, pushSnapshot, computeBoardSelectionBounds, board.rows, board.cols, components, setBoardLock, boardTool, setBoardTool, bodyCutsOf, applySelection, deleteSelection]);
+  }, [readOnly, wirePlacementFrom, cancelWirePlacement, selection, selectedId, selectedIds, selectedWireIds, selectedCuts, rotateComponent, moveComponentsOnBoard, refitBodyCuts, pushSnapshot, computeBoardSelectionBounds, board.rows, board.cols, components, setBoardLock, boardTool, setBoardTool, bodyCutsOf, applySelection, deleteSelection, highlightedNetId, highlightedPartId, clearHighlight, showHighlights]);
 
 
   const getSVGPoint = useCallback((e: React.MouseEvent | React.DragEvent) => {
@@ -649,6 +689,12 @@ export default function StripboardCanvas({
 
   // ── On-board component dragging ─────────────────────────
 
+  // A pad picks the off-board part it stands for, as the schematic knows it
+  const partOf = useCallback((id: string) => {
+    const c = components.find((x) => x.id === id);
+    return c && isLead(c) ? c.leadOf.componentId : id;
+  }, [components]);
+
   const handleComponentMouseDown = useCallback(
     (componentId: string, e: React.MouseEvent) => {
       if (readOnly) return;
@@ -662,6 +708,7 @@ export default function StripboardCanvas({
       // With a tool up a press on a part can still drag it, but a plain click
       // is the tool's, so nothing gets selected.
       const press = boardTool === "select" ? pressSelect(e, { comp: componentId }) : { next: selection, drag: true };
+      if (boardTool === "select" && selMode(e) === "replace") setHighlightedPartId(partOf(componentId));
       if (!press.drag) {
         // the click that follows would otherwise toggle it right back
         markDragComplete();
@@ -690,7 +737,7 @@ export default function StripboardCanvas({
         multi: isMulti,
       });
     },
-    [readOnly, boardTool, bodyCutsOf, components, board.rows, board.cols, getSVGPoint, selection, pressSelect, startGroupDrag, markDragComplete]
+    [readOnly, boardTool, bodyCutsOf, components, board.rows, board.cols, getSVGPoint, selection, pressSelect, startGroupDrag, markDragComplete, setHighlightedPartId, partOf]
   );
 
   // Pressed on a wire: the run between its ends moves the wire, an end moves
@@ -1093,16 +1140,25 @@ export default function StripboardCanvas({
           : null;
         if (compId) {
           pressSelect(e, { comp: compId });
+          if (selMode(e) === "replace") setHighlightedPartId(partOf(compId));
           return;
         }
       }
 
-      if (selMode(e) === "replace") applySelection({ comps: [], wires: [], cuts: [] });
+      if (selMode(e) === "replace") {
+        applySelection({ comps: [], wires: [], cuts: [] });
+        // a click on a strip shows its net in both editors
+        const i = hole ? findSegmentIndex(segments, hole.row, hole.col) : -1;
+        const net = i >= 0 ? (getGroupForSegment(connectivity, i)?.netIds ?? segments[i].netIds)[0] : undefined;
+        if (net) setHighlightedNetId(net);
+        else clearHighlight();
+      }
     },
     [
       readOnly, getSVGPoint, board, placeCut, removeCut, boardTool, cutBlocked, cutTargetAt, wireEndBlocked,
       wirePlacementFrom, setWirePlacementFrom, cancelWirePlacement, addWire,
       shouldSuppressClick, pressSelect, applySelection, findComponentAtHole,
+      segments, connectivity, setHighlightedNetId, setHighlightedPartId, clearHighlight, partOf,
     ]
   );
 
@@ -1205,8 +1261,7 @@ export default function StripboardCanvas({
             const color = getSegmentColor(seg, i);
             const group = getGroupForSegment(connectivity, i);
             const hasNets = group ? group.netIds.length > 0 : seg.netIds.length > 0;
-            const segNetIds = group ? group.netIds : seg.netIds;
-            const isHighlighted = highlightedNetId !== null && segNetIds.includes(highlightedNetId);
+            const lit = !focus || focus.segs.has(i);
 
             // A hole-cut drills out the hole: its isolated single-hole segment
             // draws no copper, and the neighbouring strips run up to the hole so
@@ -1241,18 +1296,18 @@ export default function StripboardCanvas({
 
             return (
               <g key={`seg-${i}`}>
-                {(isHighlighted || group?.hasConflict) && (
+                {group?.hasConflict && lit && (
                   <rect
                     {...rect(hlLo, hlHi, STRIP_HEIGHT * 2)}
-                    fill={group?.hasConflict ? STRIP_CONFLICT_COLOR : color}
+                    fill={STRIP_CONFLICT_COLOR}
                     opacity={0.3}
                     rx={2}
                   />
                 )}
                 <rect
-                  {...rect(lo, hi, STRIP_HEIGHT)}
-                  fill={color}
-                  opacity={isHighlighted ? 0.9 : group?.hasConflict ? 0.8 : hasNets ? 0.62 : 0.55}
+                  {...rect(lo, hi, focus && lit ? STRIP_HEIGHT * 1.6 : STRIP_HEIGHT)}
+                  fill={lit ? color : `var(--strip-dim, ${color})`}
+                  opacity={!lit ? 0.25 : focus ? 0.9 : group?.hasConflict ? 0.8 : hasNets ? 0.62 : 0.55}
                   rx={1}
                 />
               </g>
@@ -1341,8 +1396,8 @@ export default function StripboardCanvas({
                 };
               }
               return (
+                <g key={comp.id} opacity={focus && !focus.parts.has(comp.id) ? 0.35 : undefined}>
                 <PlacedComponent
-                  key={comp.id}
                   component={renderComp}
                   isSelected={comp.id === selectedId || selectedIds.includes(comp.id)}
                   clashing={clashing.has(comp.id)}
@@ -1360,6 +1415,7 @@ export default function StripboardCanvas({
                     setFlexPinDrag({ componentId: comp.id, pinId });
                   } : undefined}
                 />
+                </g>
               );
             })}
 
@@ -1368,7 +1424,7 @@ export default function StripboardCanvas({
             const { color, isConflict } = getWireColor(wire.id);
             const isSelected = selectedWireIds.includes(wire.id);
             return (
-              <g key={wire.id}>
+              <g key={wire.id} opacity={focus && !focus.wires.has(wire.id) ? 0.35 : undefined}>
                 {isSelected && (
                   <line
                     x1={holeCenter(wire.from.row, wire.from.col).x}

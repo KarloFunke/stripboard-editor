@@ -45,6 +45,8 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
   const noWireStacking = useProjectStore((s) => s.noWireStacking);
   const showOverlaps = useProjectStore((s) => s.showOverlaps);
   const setShowOverlaps = useProjectStore((s) => s.setShowOverlaps);
+  const showHighlights = useProjectStore((s) => s.showHighlights);
+  const setShowHighlights = useProjectStore((s) => s.setShowHighlights);
   const allowStanding = useProjectStore((s) => s.allowStanding);
   const permWorkers = useProjectStore((s) => s.permWorkers);
   const isActive = useProjectStore((s) => s.activeEditor === "stripboard");
@@ -448,6 +450,13 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
                   title: "Outline in red any parts whose real bodies run into each other",
                   checked: showOverlaps,
                   onChange: setShowOverlaps,
+                },
+                {
+                  key: "highlights",
+                  label: "highlights",
+                  title: "Show the part or net you click, or pick in the net list, in both editors and dim the rest",
+                  checked: showHighlights,
+                  onChange: setShowHighlights,
                 },
               ]}
             />

@@ -20,6 +20,9 @@
   --strip-color: #D4A853;
   --strip-conflict: #dc2626;
   --board-fill: #f0e6d4;
+  /* strips off a highlighted net or part: on a light board a faded net colour
+     still reads as a net, so they turn neutral. Dark mode keeps the colour. */
+  --strip-dim: #9a9080;
   --board-edge: #d8c8ab;
   --component-stroke: #a3a3a3;
   --component-fill: rgba(255, 255, 255, 0.85);
@@ -53,6 +56,7 @@
   --strip-color: #c9a43a;
   --strip-conflict: #ef4444;
   --board-fill: #2a241c;
+  --strip-dim: initial;
   --board-edge: #3d3426;
   --component-stroke: #777;
   --component-fill: rgba(35, 35, 35, 0.9);

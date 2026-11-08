@@ -35,6 +35,22 @@ export default function SchematicComponentBlock({
   const updatePinLabelOffset = useProjectStore((s) => s.updatePinLabelOffset);
   const pushSnapshot = useProjectStore((s) => s.pushSnapshot);
   const wireDrawMode = useProjectStore((s) => s.schematicWireDrawMode);
+  // A part or net picked in either editor: this part is it, is on it, or
+  // steps back with the rest of the sheet. Read here rather than passed in,
+  // so every place that draws a piece of the part agrees.
+  const focus = useProjectStore((s) => {
+    if (!s.showHighlights) return "none";
+    if (s.highlightedPartId && s.components.some((c) => c.id === s.highlightedPartId)) {
+      return s.highlightedPartId === component.id ? "picked" : "dim";
+    }
+    const net = s.highlightedNetId;
+    if (net && s.nets.some((n) => n.id === net)) {
+      return s.netAssignments.some((a) => a.componentId === component.id && a.netId === net) ? "none" : "dim";
+    }
+    return "none";
+  });
+  const highlighted = focus === "picked";
+  const dimmed = focus === "dim";
 
   const [editingLabel, setEditingLabel] = useState(false);
   const [editLabelValue, setEditLabelValue] = useState("");
@@ -161,7 +177,7 @@ export default function SchematicComponentBlock({
   return (
     <g
       transform={`translate(${component.schematicPos.x}, ${component.schematicPos.y})`}
-      style={{ cursor: "grab", opacity: component.boardExcluded ? 0.45 : 1 }}
+      style={{ cursor: "grab", opacity: (component.boardExcluded ? 0.45 : 1) * (dimmed ? 0.5 : 1) }}
       onMouseDown={onMouseDown}
     >
       {/* Leader line from component center to label (when label is offset) */}
@@ -209,6 +225,7 @@ export default function SchematicComponentBlock({
         rotation={rotation}
         mirrored={mirrored}
         selected={isSelected}
+        highlighted={highlighted}
         pinColors={pinColors}
         onPinMouseDown={handlePinMouseDown}
         onPinLabelClick={readOnly || editingPinId ? undefined : handlePinLabelClick}

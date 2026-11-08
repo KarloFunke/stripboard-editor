@@ -8,6 +8,8 @@ interface SymbolRendererProps {
   rotation?: 0 | 90 | 180 | 270;
   mirrored?: boolean;
   selected?: boolean;
+  // picked in either editor: drawn in copper, a little heavier
+  highlighted?: boolean;
   pinColors?: Record<string, string>; // pinId → net color
   onPinMouseDown?: (pinId: string, e: React.MouseEvent) => void;
   onPinLabelClick?: (pinId: string, e: React.MouseEvent) => void;
@@ -124,6 +126,7 @@ export default function SymbolRenderer({
   rotation = 0,
   mirrored = false,
   selected = false,
+  highlighted = false,
   pinColors = {},
   onPinMouseDown,
   onPinLabelClick,
@@ -137,8 +140,8 @@ export default function SymbolRenderer({
   const def = getSymbolDef(symbolId);
   if (!def) return null;
 
-  const strokeColor = selected ? "var(--symbol-stroke-selected)" : "var(--symbol-stroke)";
-  const strokeWidth = selected ? 2 : 1.5;
+  const strokeColor = selected ? "var(--symbol-stroke-selected)" : highlighted ? "var(--copper)" : "var(--symbol-stroke)";
+  const strokeWidth = selected ? 2 : highlighted ? 2.5 : 1.5;
 
   return (
     <g transform={`scale(${scale})`}>
