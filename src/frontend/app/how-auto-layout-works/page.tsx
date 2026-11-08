@@ -272,8 +272,8 @@ export default function AutoLayoutGuidePage() {
             everything that is wired off the board on its edges.
           </P>
           <figure className="my-6">
-            <img src="/guitar-pedal-off-board.png" alt="The guitar pedal benchmark circuit laid out by the layouter: a compact board with three straight link wires, drilled cuts and the solder pads for off-board parts on its edges" width={1765} height={991} className="w-full h-auto rounded border border-neutral-200 dark:hidden" />
-            <img src="/guitar-pedal-off-board-dark.png" alt="The guitar pedal benchmark circuit laid out by the layouter, dark mode" width={1765} height={991} className="w-full h-auto rounded border border-neutral-700 hidden dark:block" />
+            <img src="/guitar-pedal-off-board.png" alt="The guitar pedal benchmark circuit laid out by the layouter: a compact board with three straight link wires, drilled cuts and the solder pads for off-board parts on its edges" width={1398} height={1395} className="w-full h-auto rounded border border-neutral-200 dark:hidden" />
+            <img src="/guitar-pedal-off-board-dark.png" alt="The guitar pedal benchmark circuit laid out by the layouter, dark mode" width={1398} height={1395} className="w-full h-auto rounded border border-neutral-700 hidden dark:block" />
             <figcaption className="mt-2 text-xs text-neutral-500 dark:text-neutral-400 leading-snug">
               The pots and the switch sit on the case of a pedal, not on the board, so each of their pins is a solder pad for a
               wire. The same goes for the jacks and the supply.
@@ -622,6 +622,19 @@ export default function AutoLayoutGuidePage() {
             score, but it points the same way: on the whole, the layouter builds boards that work, are tight and are clean.
           </P>
           <P>
+            To finish, one of my own benchmark circuits, built to see how far it goes: a 3-bit flash ADC. It has 96 parts: 85 on the board, among them 56 resistors, 22
+            transistors and two quad op amps, plus ten LEDs and a pot wired off it. That makes 241 connected pins on 66 nets.
+            At the Very thorough setting the layouter took about six minutes for it and came back with a 44 by 41 board, 43
+            link wires, all of them straight, and 69 cuts, all of them drilled.
+          </P>
+          <figure className="my-6">
+            <img src="/3-bit-flash-adc.png" alt="A 3-bit flash ADC laid out by the layouter: a 44 by 41 stripboard with 85 parts, two quad op amps, 43 straight link wires, drilled cuts and solder pads for ten LEDs and a pot on its edges" width={1819} height={1711} className="w-full h-auto rounded border border-neutral-200 dark:hidden" />
+            <img src="/3-bit-flash-adc-dark.png" alt="A 3-bit flash ADC laid out by the layouter, dark mode" width={1819} height={1711} className="w-full h-auto rounded border border-neutral-700 hidden dark:block" />
+            <figcaption className="mt-2 text-xs text-neutral-500 dark:text-neutral-400 leading-snug">
+              A 3-bit flash ADC: 241 connected pins on 66 nets, laid out in about six minutes at the Very thorough setting.
+            </figcaption>
+          </figure>
+          <P>
             Refer to the <Link href="/guide" className="text-[var(--copper)] hover:underline">quick guide</Link> for the buttons
             and settings. If you build something with it, or it does something odd, the{" "}
             <Link href="/feedback" className="text-[var(--copper)] hover:underline">feedback page</Link> is the place to contact me if you like.
@@ -688,10 +701,11 @@ export default function AutoLayoutGuidePage() {
             </figcaption>
           </figure>
           <figure className="my-6">
-            <img src="/guitar-pedal-off-board.png" alt="Automatically generated stripboard layout of the guitar-pedal benchmark circuit from arXiv 2512.04910: a compact stripboard with drilled strip cuts and only vertical link wires" width={1765} height={991} className="w-full h-auto rounded border border-neutral-200 dark:hidden" />
-            <img src="/guitar-pedal-off-board-dark.png" alt="Automatically generated stripboard layout of the guitar-pedal benchmark circuit from arXiv 2512.04910, dark mode" width={1765} height={991} className="w-full h-auto rounded border border-neutral-700 hidden dark:block" />
+            <img src="/guitar-pedal-off-board.png" alt="Automatically generated stripboard layout of the guitar-pedal benchmark circuit from arXiv 2512.04910: a compact stripboard with drilled strip cuts and only vertical link wires" width={1398} height={1395} className="w-full h-auto rounded border border-neutral-200 dark:hidden" />
+            <img src="/guitar-pedal-off-board-dark.png" alt="Automatically generated stripboard layout of the guitar-pedal benchmark circuit from arXiv 2512.04910, dark mode" width={1398} height={1395} className="w-full h-auto rounded border border-neutral-700 hidden dark:block" />
             <figcaption className="mt-2 text-xs text-neutral-500 dark:text-neutral-400 leading-snug">
               The guitar pedal benchmark circuit from Li&apos;s paper, laid out by this site&apos;s layouter, with the three pots and the switch wired off the board.
+              Settings: drilled cuts only, no stacked wires, extra room between parts, Very thorough effort, about 7 seconds.
             </figcaption>
           </figure>
           <P>

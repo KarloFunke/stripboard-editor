@@ -7,7 +7,7 @@ import { LAST_UPDATE_DATE } from "@/data/agentDocs";
 const PAGES: [path: string, lastModified: string, changeFrequency: "monthly" | "weekly" | "yearly", priority: number][] = [
   ["", "2026-09-22", "monthly", 1],
   ["/guide", "2026-11-08", "monthly", 0.8],
-  ["/how-auto-layout-works", "2026-09-21", "monthly", 0.7],
+  ["/how-auto-layout-works", "2026-11-08", "monthly", 0.7],
   ["/how-branches-work", "2026-10-26", "monthly", 0.7],
   ["/updates", LAST_UPDATE_DATE, "weekly", 0.6],
   ["/privacy", "2026-07-23", "yearly", 0.3],
