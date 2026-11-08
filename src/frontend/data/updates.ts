@@ -11,6 +11,7 @@ export const UPDATES: Update[] = [
     date: "2026-11-08",
     items: [
       "More board types: TriPad, solderable breadboards and ElectroCookie boards, plus a board editor for any other board. Keep your own boards in your library, just like custom parts.",
+      "Click a part, wire or strip to highlight it in both the schematic and on the board.",
     ],
   },
   {

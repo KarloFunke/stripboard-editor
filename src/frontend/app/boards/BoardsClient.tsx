@@ -99,7 +99,7 @@ export default function BoardsClient() {
       <main className="max-w-4xl mx-auto w-full px-4 py-8">
         <h1 className="font-mono text-xl font-semibold mb-1">My boards</h1>
         <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-6">
-          Boards of your own, for boards the editor does not know. A project keeps its own copy; when you change a board
+          Your custom boards. A project keeps its own copy; when you change a board
           here, you choose whether the copies in your projects follow.
         </p>
 

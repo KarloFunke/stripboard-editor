@@ -285,7 +285,7 @@ export default function DashboardClient({
               >
                 <span className="text-sm text-neutral-600 dark:text-neutral-400">
                   {boardCount === null || boardCount === 0
-                    ? "Boards of your own, for boards the editor does not know"
+                    ? "Your custom boards"
                     : `${boardCount} ${boardCount === 1 ? "board" : "boards"} in your library, usable in all your projects`}
                 </span>
                 <span className="text-sm text-[#113768] dark:text-[#5b9bd5]">Manage boards →</span>
