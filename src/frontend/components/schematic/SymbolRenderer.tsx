@@ -270,6 +270,9 @@ export default function SymbolRenderer({
                       const down = _pinLabelDown;
                       _pinLabelDown = null;
                       if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) > 3) return;
+                      // opened on the release already, see onMouseDown
+                      if (onPinLabelClick) e.stopPropagation();
+                      return;
                     }
                     if (_suppressPinLabelClick) {
                       _suppressPinLabelClick = false;
@@ -284,7 +287,19 @@ export default function SymbolRenderer({
                     // Locked: let the mousedown through to the component, which
                     // starts a drag of the part rather than of the label.
                     if (labelsLocked) {
-                      _pinLabelDown = { x: e.clientX, y: e.clientY };
+                      const start = { x: e.clientX, y: e.clientY };
+                      _pinLabelDown = start;
+                      // The press selects the part, which then draws last and
+                      // so moves in the page; the browser may drop the click
+                      // after that, so the name opens on the release
+                      if (onPinLabelClick) {
+                        const up = (me: MouseEvent) => {
+                          window.removeEventListener("mouseup", up);
+                          if (me.button !== 0 || Math.hypot(me.clientX - start.x, me.clientY - start.y) > 3) return;
+                          onPinLabelClick(pin.pinId, e);
+                        };
+                        window.addEventListener("mouseup", up);
+                      }
                       return;
                     }
                     if (onPinLabelClick) e.stopPropagation();

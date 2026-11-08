@@ -62,7 +62,7 @@ const COLLECTIONS = new Set(["componentDefs", "components", "nets", "netAssignme
 // Records about the project and its last auto-layout, not design decisions:
 // they follow the board that is kept, never conflict
 const BOOKKEEPING = new Set([
-  "version", "name", "autoSave", "autoLayoutUsed", "boardEditsSinceAutoLayout", "autoLayoutRuns", "autoLayoutLastAt",
+  "version", "name", "autoSave", "labelMovement", "autoLayoutUsed", "boardEditsSinceAutoLayout", "autoLayoutRuns", "autoLayoutLastAt",
   "autoLayoutLastQuality", "autoLayoutVersion", "autoLayoutLastBoards", "autoLayoutLastOrderings",
   "autoLayoutLastDrilled", "boardAddsSinceAutoLayout", "v5RunS",
 ]);
@@ -71,7 +71,6 @@ const SETTING_NAMES: Record<string, string> = {
   notes: "Notes",
   wiring: "Wiring rules",
   showValuesOnBoard: "Values on the board",
-  labelMovement: "Label movement",
   partSpacing: "Part spacing",
   drilledCutsOnly: "Drilled cuts only",
   allowStanding: "Standing parts",

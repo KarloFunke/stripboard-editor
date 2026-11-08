@@ -115,9 +115,31 @@ export default function SchematicComponentBlock({
     }
 
     e.stopPropagation();
+    // locked labels open on the release instead, see handleLockedLabelDown
+    if (labelsLocked) return;
+    openLabelEditor();
+  };
+
+  const openLabelEditor = () => {
     setEditLabelValue(component.label);
     setEditValueValue(component.value ?? "");
     setEditingLabel(true);
+  };
+
+  // A locked label passes its press on to the part, which selects it and
+  // draws it last. That moves it in the page between press and release, and
+  // the browser may then drop the click (often on flags), so the editor
+  // opens on the release.
+  const handleLockedLabelDown = (e: React.MouseEvent) => {
+    const start = { x: e.clientX, y: e.clientY };
+    lockedLabelDown.current = start;
+    const up = (me: MouseEvent) => {
+      window.removeEventListener("mouseup", up);
+      if (readOnly || wireDrawMode || me.button !== 0) return;
+      if (Math.hypot(me.clientX - start.x, me.clientY - start.y) > 3) return;
+      openLabelEditor();
+    };
+    window.addEventListener("mouseup", up);
   };
 
   const commitLabel = () => {
@@ -239,9 +261,7 @@ export default function SchematicComponentBlock({
               strokeLinejoin="round"
               style={{ cursor: "grab", userSelect: "none", paintOrder: "stroke" }}
               onClick={handleLabelClick}
-              onMouseDown={labelsLocked
-                ? (e) => { lockedLabelDown.current = { x: e.clientX, y: e.clientY }; }
-                : handleLabelDragStart}
+              onMouseDown={labelsLocked ? handleLockedLabelDown : handleLabelDragStart}
             >
               <tspan x={labelX}>{component.label}</tspan>
               {allowsValue && component.value && (
