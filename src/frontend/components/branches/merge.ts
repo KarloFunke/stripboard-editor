@@ -291,17 +291,26 @@ function mergeComponents(base: Project, target: Project, source: Project, boardM
 
 function mergeBoard(base: Board, target: Board, source: Board, mode: BoardChoice, ctx: Ctx): Board {
   if (mode !== "combine") return structuredClone(mode === "target" ? target : source);
-  const size = ["rows", "cols", "lockedRows", "lockedCols"];
+  const size = ["rows", "cols", "lockedRows", "lockedCols", "pattern"];
   const sid = "board-size";
-  const sizes = mergeFields(pick(base as unknown as Obj, size), pick(target as unknown as Obj, size), pick(source as unknown as Obj, size), size, ctx.side(sid));
-  if (sizes.conflicting.length > 0) {
+  const group = (b: Board) => pick(b as unknown as Obj, size);
+  let sizes = mergeFields(group(base), group(target), group(source), size, ctx.side(sid));
+  if (!deepEqual(base.pattern, target.pattern) || !deepEqual(base.pattern, source.pattern)) {
+    // Another board comes with its own size: the two are one choice
+    const whole = mergeFields({ board: group(base) }, { board: group(target) }, { board: group(source) }, ["board"], ctx.side(sid));
+    sizes = { value: whole.value.board as Obj, conflicting: whole.conflicting.length > 0 ? ["pattern"] : [] };
+  }
+  if (sizes.conflicting.includes("pattern")) {
+    ctx.conflicts.push({ id: sid, area: "board", label: "Board", detail: "a different board on both branches" });
+  } else if (sizes.conflicting.length > 0) {
     ctx.conflicts.push({ id: sid, area: "board", label: "Board size", detail: "changed differently on both branches" });
   }
   const cuts = mergeList("cut", "board", base.cuts, target.cuts, source.cuts, cutKey,
     (c) => `Cut at row ${c.row + 1}, column ${c.col + 1}`, ctx);
   const wires = mergeList("board-wire", "board", base.wires, target.wires, source.wires, wireKey,
     (w) => `Wire ${w.from.row + 1}:${w.from.col + 1} to ${w.to.row + 1}:${w.to.col + 1}`, ctx);
-  return { ...target, ...(sizes.value as Partial<Board>), cuts, wires };
+  // what the merge left out (plain stripboard, an unlocked size) stays out
+  return { ...(omit(target as unknown as Obj, size) as unknown as Board), ...(sizes.value as Partial<Board>), cuts, wires };
 }
 
 function mergeSettings(base: Project, target: Project, source: Project, boardMode: BoardChoice, ctx: Ctx): Obj {
@@ -367,7 +376,12 @@ export function describeChanges(base: Project, source: Project, withBoard: boole
     if (moved.length) lines.push(`Parts moved on the board: ${names(moved)}`);
     tally("Cuts", count(base.board.cuts, source.board.cuts, cutKey));
     tally("Board wires", count(base.board.wires, source.board.wires, wireKey));
-    if (base.board.rows !== source.board.rows || base.board.cols !== source.board.cols) {
+    const boardName = (b: Board) => b.pattern?.name ?? "Stripboard";
+    if (!deepEqual(base.board.pattern, source.board.pattern)) {
+      lines.push(boardName(base.board) === boardName(source.board)
+        ? `Board: ${boardName(source.board)} changed`
+        : `Board: ${boardName(base.board)} to ${boardName(source.board)}`);
+    } else if (base.board.rows !== source.board.rows || base.board.cols !== source.board.cols) {
       lines.push(`Board size: ${base.board.cols} x ${base.board.rows} to ${source.board.cols} x ${source.board.rows}`);
     }
     const locks = (b: Board) => `${b.lockedRows ? "rows" : ""}${b.lockedCols ? "cols" : ""}`;

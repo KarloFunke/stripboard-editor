@@ -71,6 +71,42 @@ export function nearestCutTarget(
   return gap >= 0 && gap < cols - 1 ? { row, col: gap, kind: "between" } : null;
 }
 
+/**
+ * The same for a board with a pattern, where copper may run down a column as
+ * well: the nearest place a cut can go, of those the board has copper for.
+ */
+export function nearestPatternCut(svgX: number, svgY: number, fits: (cut: Cut) => boolean): Cut | null {
+  const rowFloat = (svgY - BOARD_PADDING) / HOLE_SPACING;
+  const colFloat = (svgX - BOARD_PADDING) / HOLE_SPACING;
+  const row = Math.round(rowFloat);
+  const col = Math.round(colFloat);
+  const candidates: Cut[] = [];
+  for (let r = row - 1; r <= row + 1; r++) {
+    for (let c = col - 1; c <= col + 1; c++) {
+      candidates.push({ row: r, col: c, kind: "hole" }, { row: r, col: c, kind: "between" }, { row: r, col: c, kind: "below" });
+    }
+  }
+  let best: Cut | null = null;
+  let bestDist = HOLE_SPACING * 0.75;
+  for (const cut of candidates) {
+    const p = cutPoint(cut);
+    const dist = Math.hypot(p.x - svgX, p.y - svgY);
+    if (dist < bestDist && fits(cut)) {
+      best = cut;
+      bestDist = dist;
+    }
+  }
+  return best;
+}
+
+/** Where a cut sits: on its hole, or halfway to the next hole right or below. */
+export function cutPoint(cut: Cut): { x: number; y: number } {
+  return holeCenter(
+    cut.row + (cut.kind === "below" ? 0.5 : 0),
+    cut.col + (cut.kind === "hole" || cut.kind === "below" ? 0 : 0.5),
+  );
+}
+
 /** Get the bounding box max row/col for a component def (pins + body cells) */
 function getDefMaxExtents(def: ComponentDef): { maxRow: number; maxCol: number } {
   const allRows = def.pins.map((p) => p.offsetRow);

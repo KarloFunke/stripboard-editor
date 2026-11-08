@@ -35,7 +35,7 @@ from .branches import (
     readable, ungz, version as branch_version,
 )
 from .migrations_data.pipeline import migrate_to_current
-from .models import Branch, BranchMerge, Project, Feedback, LayoutRating, UserPart
+from .models import Branch, BranchMerge, Project, Feedback, LayoutRating, UserBoard, UserPart
 from .serializers import (
     HTML_TAG_PATTERN,
     ProjectListSerializer,
@@ -68,6 +68,7 @@ from .user_parts import (
     MAX_PARTS_PER_USER, apply_to_project, found_in_projects, link_copies, linked_copies, placed_count,
     stored_part, validate_part,
 )
+from . import user_boards
 
 _log = logging.getLogger(__name__)
 
@@ -776,6 +777,125 @@ def user_part_usage(request, part_id):
                 "edit_uuid": str(branch.project.edit_uuid), "name": branch.project.name, "placed": 0,
             })
             entry["placed"] = max(entry["placed"], placed_count(branch.data, {d.get("id") for d in copies}))
+    return Response(list(out.values()))
+
+
+# ── The user's own boards ───────────────────────────────
+
+
+def _board_json(b):
+    return {"id": str(b.id), "board": b.board, "rev": b.rev, "updated_at": b.updated_at}
+
+
+def _boards_full():
+    return Response(
+        {
+            "error": f"Your library is full ({user_boards.MAX_BOARDS_PER_USER} boards). Delete a board to make room.",
+            "code": "library_full",
+        },
+        status=status.HTTP_403_FORBIDDEN,
+    )
+
+
+@cache_control(private=True, no_store=True)
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def user_boards_list(request):
+    boards = UserBoard.objects.filter(owner=request.user)
+    if request.method == "GET":
+        out = [_board_json(b) for b in boards]
+        # With ?usage=1 each board says how many projects are on a linked
+        # copy. It reads every project of the user, so only the boards page asks.
+        if request.query_params.get("usage"):
+            used = {}
+            for branch in _owned_branches(request.user):
+                for row in out:
+                    if user_boards.is_linked(branch.data, row["id"]):
+                        used.setdefault(row["id"], set()).add(branch.project_id)
+            for row in out:
+                row["used_in"] = len(used.get(row["id"], ()))
+        return Response(out)
+
+    board = request.data.get("board")
+    error = user_boards.validate_board(board)
+    if error:
+        return Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
+    if boards.count() >= user_boards.MAX_BOARDS_PER_USER:
+        return _boards_full()
+    created = UserBoard.objects.create(owner=request.user, board=user_boards.stored_board(board))
+    return Response(_board_json(created), status=status.HTTP_201_CREATED)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def user_boards_import(request):
+    """Adds every board of an exported boards file as a new library board."""
+    boards = request.data.get("boards")
+    if not isinstance(boards, list) or not boards:
+        return Response({"error": "The file holds no boards"}, status=status.HTTP_400_BAD_REQUEST)
+    for i, board in enumerate(boards):
+        error = user_boards.validate_board(board)
+        if error:
+            return Response({"error": f"Board {i + 1}: {error}"}, status=status.HTTP_400_BAD_REQUEST)
+    if UserBoard.objects.filter(owner=request.user).count() + len(boards) > user_boards.MAX_BOARDS_PER_USER:
+        return _boards_full()
+    created = UserBoard.objects.bulk_create(
+        [UserBoard(owner=request.user, board=user_boards.stored_board(b)) for b in boards]
+    )
+    return Response([_board_json(b) for b in created], status=status.HTTP_201_CREATED)
+
+
+@api_view(["PUT", "DELETE"])
+@permission_classes([IsAuthenticated])
+def user_board_detail(request, board_id):
+    try:
+        user_board = UserBoard.objects.get(id=board_id, owner=request.user)
+    except UserBoard.DoesNotExist:
+        return Response({"error": "Board not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == "DELETE":
+        # Projects keep their copy; its link just leads nowhere now
+        user_board.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    board = request.data.get("board")
+    error = user_boards.validate_board(board)
+    if error:
+        return Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
+    board = user_boards.stored_board(board)
+    # The branch open in the editor puts the change on itself and saves it,
+    # as for parts (user_part_detail)
+    skip_branch = str(request.data.get("skip_branch") or "")
+    updated = set()
+    with transaction.atomic():
+        user_board.board = board
+        user_board.rev += 1
+        user_board.save()
+        if request.data.get("update_projects"):
+            for branch in _owned_branches(request.user).select_for_update():
+                if str(branch.id) == skip_branch:
+                    continue
+                if user_boards.apply_to_project(branch.data, str(user_board.id), board, user_board.rev):
+                    branch.save(update_fields=["data", "updated_at"])
+                    updated.add(branch.project_id)
+    return Response({**_board_json(user_board), "updated_projects": len(updated)})
+
+
+@cache_control(private=True, no_store=True)
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def user_board_usage(request, board_id):
+    """The owner's projects on a linked copy of the board, and how many parts
+    are placed on it (by the branch with the most)."""
+    if not UserBoard.objects.filter(id=board_id, owner=request.user).exists():
+        return Response({"error": "Board not found"}, status=status.HTTP_404_NOT_FOUND)
+    out = {}
+    for branch in _owned_branches(request.user):
+        if user_boards.is_linked(branch.data, str(board_id)):
+            entry = out.setdefault(branch.project_id, {
+                "edit_uuid": str(branch.project.edit_uuid), "name": branch.project.name, "placed": 0,
+            })
+            entry["placed"] = max(entry["placed"], user_boards.placed_count(branch.data))
     return Response(list(out.values()))
 
 

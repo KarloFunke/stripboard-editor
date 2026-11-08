@@ -214,10 +214,12 @@ export interface BoardPosition {
 // A break in the copper strip on the given row.
 // kind "between" (default/absent): severs between hole col and col+1.
 // kind "hole": drilled-out hole at col, isolating it from both neighbours.
+// kind "below": severs between hole row and row+1, on copper that runs down
+// a column (only boards with a pattern have that).
 export interface Cut {
   row: number;
   col: number;
-  kind?: "between" | "hole";
+  kind?: "between" | "hole" | "below";
 }
 
 export interface Wire {
@@ -235,6 +237,21 @@ export interface Board {
   lockedCols?: boolean;
   cuts: Cut[];
   wires: Wire[];
+  // The board's copper when it is not plain stripboard (every row one strip)
+  pattern?: BoardPattern;
+}
+
+// A board's own copper: which holes it has and which of them are joined.
+// `map` is described in components/stripboard/boardPattern.ts; the board's
+// rows and cols always match it.
+export interface BoardPattern {
+  name: string;
+  // The built-in board this is, so the picker can tell
+  builtin?: string;
+  map: string[];
+  // Like a custom part: a copy of a board in the user's library, linked to
+  // it until the copy is edited on its own
+  library?: { id: string; rev: number };
 }
 
 // ── Project (top-level, serializable to JSON) ──────────

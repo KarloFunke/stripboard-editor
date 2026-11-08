@@ -22,12 +22,12 @@ function analyse(board: Board, components: Component[], defs: ComponentDef[], as
     return last.out;
   }
   const segments = computeStripSegments(board, components, defs, assignments);
-  const connectivity = computeConnectivity(segments, board.wires);
+  const connectivity = computeConnectivity(segments, board.wires, board);
   const out = {
     segments,
     connectivity,
     conflictCount: connectivity.filter((g) => g.hasConflict).length,
-    incompleteNets: checkNetCompleteness(nets, assignments, segments, connectivity, components, defs),
+    incompleteNets: checkNetCompleteness(nets, assignments, segments, connectivity, components, defs, board),
   };
   last = { board, components, defs, assignments, nets, out };
   return out;

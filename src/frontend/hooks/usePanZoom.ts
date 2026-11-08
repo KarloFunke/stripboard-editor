@@ -218,9 +218,16 @@ export function usePanZoom(initialZoom = 1, home: { x: number; y: number } = ORI
     setState((prev) => ({ ...prev, panX: x - width / 2 / prev.zoom, panY: y - height / 2 / prev.zoom }));
   }, []);
 
+  /** Zoom and scroll so the rectangle fills a view of viewW x viewH, centred */
+  const fitTo = useCallback((x: number, y: number, w: number, h: number, viewW: number, viewH: number) => {
+    const zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.min(viewW / w, viewH / h)));
+    setState({ zoom, panX: x + w / 2 - viewW / 2 / zoom, panY: y + h / 2 - viewH / 2 / zoom });
+  }, []);
+
   return {
     ...state,
     panning,
+    fitTo,
     screenToSvg,
     getViewBox,
     handleWheel,

@@ -16,6 +16,9 @@ import ResizableSidebar from "./ResizableSidebar";
 import { track } from "@/lib/track";
 import { LockIcon, UnlockIcon } from "./canvas/SelectionActionBar";
 import ViewMenu from "./stripboard/ViewMenu";
+import BoardPicker from "./stripboard/BoardPicker";
+import { offHoles } from "./stripboard/boardPattern";
+import { builtinOf, snapCols } from "@/data/boards";
 
 const PHASE_LABELS = {
   arrange: "Arranging parts",
@@ -49,6 +52,18 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
   const showValuesOnBoard = useProjectStore((s) => s.showValuesOnBoard);
   const setShowValuesOnBoard = useProjectStore((s) => s.setShowValuesOnBoard);
   const [editFootprintId, setEditFootprintId] = useState<string | null>(null);
+  // A board with a pattern keeps the size it was made with, unless it is
+  // bought in any size; then its columns go a whole step at a time, and a
+  // number being typed waits until it is done
+  const sized = board.pattern ? builtinOf(board.pattern) : undefined;
+  const resizable = !board.pattern || !!sized?.resizable;
+  const colStep = sized?.resizable?.colStep ?? 1;
+  const [colsDraft, setColsDraft] = useState<string | null>(null);
+  const applyCols = (text: string) => {
+    setColsDraft(null);
+    const n = parseInt(text);
+    if (sized && n > 0 && snapCols(sized, n) !== board.cols) setBoardSize(board.rows, snapCols(sized, n));
+  };
   const applyAutoLayout = useProjectStore((s) => s.applyAutoLayout);
   const setHighlightedNetId = useProjectStore((s) => s.setHighlightedNetId);
   const [autoFinishMsg, setAutoFinishMsg] = useState<string | null>(null);
@@ -318,7 +333,9 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
   const allNetsUsed = allPlaced && boardComponents.every((c) =>
     netAssignments.some((a) => a.componentId === c.id)
   );
-  const allDone = allPlaced && allNetsUsed && conflictCount === 0 && incompleteNets.length === 0;
+  // pins and wire ends where a board with a pattern has no hole
+  const offHoleCount = offHoles(board, components, componentDefs).length;
+  const allDone = allPlaced && allNetsUsed && conflictCount === 0 && incompleteNets.length === 0 && offHoleCount === 0;
 
   // Status indicator for the header
   let statusText = "";
@@ -328,6 +345,9 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
     statusColor = "text-green-600 dark:text-green-400";
   } else if (conflictCount > 0) {
     statusText = `${conflictCount} conflict${conflictCount > 1 ? "s" : ""}`;
+    statusColor = "text-red-600";
+  } else if (offHoleCount > 0) {
+    statusText = `${offHoleCount} ${offHoleCount > 1 ? "pins and ends" : "pin or end"} without a hole`;
     statusColor = "text-red-600";
   }
 
@@ -347,6 +367,8 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
         </div>
         {!readOnly && (
           <div className="flex items-center gap-4 font-mono text-sm font-normal text-neutral-600 dark:text-neutral-400">
+            <BoardPicker disabled={!!autoProgress} />
+            {resizable && <>
             <div className="flex items-center gap-1.5">
               <span>Rows:</span>
               <input
@@ -357,7 +379,7 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
                 onChange={(e) => setBoardSize(Math.max(1, parseInt(e.target.value) || 1), board.cols)}
                 className="w-[4.5rem] border border-neutral-300 dark:border-neutral-600 rounded px-2 py-1 text-sm text-neutral-900 dark:text-neutral-100 dark:bg-neutral-800 outline-none focus:border-blue-400 text-center"
               />
-              <button
+              {!board.pattern && <button
                 onClick={() => setBoardDimLock("rows", !board.lockedRows)}
                 title={board.lockedRows
                   ? "Row count is locked: auto-layout keeps exactly this many rows. Click to let it choose freely."
@@ -367,19 +389,38 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
                   : "border-neutral-300 dark:border-neutral-600 text-neutral-400 dark:text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-700"}`}
               >
                 {board.lockedRows ? LockIcon : UnlockIcon}
-              </button>
+              </button>}
             </div>
             <div className="flex items-center gap-1.5">
               <span>Cols:</span>
-              <input
-                type="number"
-                min={1}
-                max={100}
-                value={board.cols}
-                onChange={(e) => setBoardSize(board.rows, Math.max(1, parseInt(e.target.value) || 1))}
-                className="w-[4.5rem] border border-neutral-300 dark:border-neutral-600 rounded px-2 py-1 text-sm text-neutral-900 dark:text-neutral-100 dark:bg-neutral-800 outline-none focus:border-blue-400 text-center"
-              />
-              <button
+              {sized ? (
+                <input
+                  type="number"
+                  min={colStep}
+                  max={100}
+                  step={colStep}
+                  value={colsDraft ?? board.cols}
+                  title={`${sized.name} comes in steps of ${colStep} columns`}
+                  onChange={(e) => {
+                    // the arrows step a whole pad at once; a typed number waits
+                    if (Math.abs(parseInt(e.target.value) - board.cols) === colStep) applyCols(e.target.value);
+                    else setColsDraft(e.target.value);
+                  }}
+                  onBlur={(e) => applyCols(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && applyCols((e.target as HTMLInputElement).value)}
+                  className="w-[4.5rem] border border-neutral-300 dark:border-neutral-600 rounded px-2 py-1 text-sm text-neutral-900 dark:text-neutral-100 dark:bg-neutral-800 outline-none focus:border-blue-400 text-center"
+                />
+              ) : (
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={board.cols}
+                  onChange={(e) => setBoardSize(board.rows, Math.max(1, parseInt(e.target.value) || 1))}
+                  className="w-[4.5rem] border border-neutral-300 dark:border-neutral-600 rounded px-2 py-1 text-sm text-neutral-900 dark:text-neutral-100 dark:bg-neutral-800 outline-none focus:border-blue-400 text-center"
+                />
+              )}
+              {!board.pattern && <button
                 onClick={() => setBoardDimLock("cols", !board.lockedCols)}
                 title={board.lockedCols
                   ? "Column count is locked: auto-layout keeps exactly this many columns. Click to let it choose freely."
@@ -389,8 +430,9 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
                   : "border-neutral-300 dark:border-neutral-600 text-neutral-400 dark:text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-700"}`}
               >
                 {board.lockedCols ? LockIcon : UnlockIcon}
-              </button>
+              </button>}
             </div>
+            </>}
             <ViewMenu
               items={[
                 {
@@ -421,7 +463,8 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
           ) : (
             <ResizableSidebar defaultWidth={200} minWidth={140} maxWidth={360}>
               <div className="flex flex-col h-full overflow-hidden border-r border-neutral-200 dark:border-neutral-700">
-                <div className="flex-shrink-0 px-2.5 py-2.5 border-b border-neutral-200 dark:border-neutral-700 font-mono text-sm">
+                {/* auto-layout knows plain stripboard only */}
+                {!board.pattern && <div className="flex-shrink-0 px-2.5 py-2.5 border-b border-neutral-200 dark:border-neutral-700 font-mono text-sm">
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => handleAutoLayout()}
@@ -452,7 +495,7 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
                     </div>
                   </div>
                   {autoProgress && <AutoProgressBar label={autoProgress.label} frac={autoProgress.frac} eta={autoProgress.eta} />}
-                </div>
+                </div>}
                 <div className="flex-1 min-h-0">
                   <ComponentTray />
                 </div>
@@ -464,7 +507,7 @@ export default function StripboardEditor({ readOnly = false, hideSidebar = false
           <StripboardCanvas
             readOnly={readOnly}
             onEditFootprint={setEditFootprintId}
-            onAutoLayoutSelection={readOnly ? undefined : (ids) => handleAutoLayout(ids)}
+            onAutoLayoutSelection={readOnly || board.pattern ? undefined : (ids) => handleAutoLayout(ids)}
           />
         </div>
       </div>

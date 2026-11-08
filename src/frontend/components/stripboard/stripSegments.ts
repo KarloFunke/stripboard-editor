@@ -2,11 +2,15 @@ import { pinKey } from "./keys";
 import { Board, Component, ComponentDef, NetAssignment } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { getComponentPinPositions } from "./boardLayout";
+import { copperOf } from "./boardPattern";
 
 export interface StripSegment {
   row: number;
   startCol: number;
   endCol: number; // inclusive
+  // Copper running down a column (a board with a pattern): it covers rows
+  // row..endRow of the one column startCol === endCol
+  endRow?: number;
   netIds: string[];
 }
 
@@ -17,7 +21,7 @@ export function findSegmentIndex(
   col: number
 ): number {
   return segments.findIndex(
-    (s) => s.row === row && col >= s.startCol && col <= s.endCol
+    (s) => row >= s.row && row <= (s.endRow ?? s.row) && col >= s.startCol && col <= s.endCol
   );
 }
 
@@ -50,6 +54,8 @@ export function computeStripSegments(
     if (!cutsByRow.has(cut.row)) cutsByRow.set(cut.row, []);
     cutsByRow.get(cut.row)!.push(cut);
   }
+
+  if (board.pattern) return patternSegments(board, pinsByRow);
 
   const segments: StripSegment[] = [];
 
@@ -94,4 +100,67 @@ export function computeStripSegments(
   }
 
   return segments;
+}
+
+/**
+ * The copper of a board with a pattern, as straight runs: along a row, down
+ * a column, and a hole no copper leaves on its own. Where copper turns a
+ * corner, the two runs share that place. A run may pass places with no hole.
+ */
+function patternSegments(
+  board: Board,
+  pinsByRow: Map<number, { col: number; netId: string | undefined }[]>
+): StripSegment[] {
+  const { rows, cols } = board;
+  const copper = copperOf(board.pattern!.map);
+  const drilled = new Set<number>();
+  const cutRight = new Set<number>();
+  const cutDown = new Set<number>();
+  for (const cut of board.cuts) {
+    const at = cut.row * cols + cut.col;
+    (cut.kind === "hole" ? drilled : cut.kind === "below" ? cutDown : cutRight).add(at);
+  }
+  const right = (i: number) => copper.right[i] === 1 && !cutRight.has(i) && !drilled.has(i) && !drilled.has(i + 1);
+  const down = (i: number) => copper.down[i] === 1 && !cutDown.has(i) && !drilled.has(i) && !drilled.has(i + cols);
+  // a pin where the board has no hole touches no copper
+  const netsIn = (row: number, from: number, to: number, into: Set<string>) => {
+    for (const pin of pinsByRow.get(row) ?? []) {
+      if (pin.col >= from && pin.col <= to && pin.netId !== undefined && copper.hole[row * cols + pin.col]) into.add(pin.netId);
+    }
+  };
+
+  // Down the columns first: a hole on such a run is no lone pad
+  const onRun = new Uint8Array(rows * cols);
+  const columns: StripSegment[] = [];
+  for (let col = 0; col < cols; col++) {
+    for (let row = 0; row < rows - 1; row++) {
+      if (!down(row * cols + col)) continue;
+      let end = row + 1;
+      while (end < rows - 1 && down(end * cols + col)) end++;
+      const nets = new Set<string>();
+      for (let r = row; r <= end; r++) {
+        onRun[r * cols + col] = 1;
+        netsIn(r, col, col, nets);
+      }
+      columns.push({ row, startCol: col, endCol: col, endRow: end, netIds: [...nets] });
+      row = end;
+    }
+  }
+
+  const segments: StripSegment[] = [];
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      const i = row * cols + col;
+      if (!copper.hole[i] && !right(i)) continue;
+      let end = col;
+      while (end < cols - 1 && right(row * cols + end)) end++;
+      if (end > col || !onRun[i]) {
+        const nets = new Set<string>();
+        netsIn(row, col, end, nets);
+        segments.push({ row, startCol: col, endCol: end, netIds: [...nets] });
+      }
+      col = end;
+    }
+  }
+  return [...segments, ...columns];
 }

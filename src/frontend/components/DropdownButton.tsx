@@ -24,6 +24,8 @@ export default function DropdownButton({
   label,
   title,
   align = "right",
+  disabled,
+  className = "",
   buttonClassName,
   menuClassName,
   children,
@@ -32,6 +34,9 @@ export default function DropdownButton({
   label: ReactNode;
   title?: string;
   align?: "left" | "right";
+  disabled?: boolean;
+  /** Classes of the wrapper around trigger and menu */
+  className?: string;
   /** Trigger classes, as a function when the open state changes their look */
   buttonClassName: string | ((open: boolean) => string);
   menuClassName: string;
@@ -51,9 +56,10 @@ export default function DropdownButton({
   }, [open]);
 
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} className={`relative ${className}`}>
       <button
         onClick={() => setOpen((o) => !o)}
+        disabled={disabled}
         title={title}
         aria-expanded={open}
         className={typeof buttonClassName === "function" ? buttonClassName(open) : buttonClassName}

@@ -1,4 +1,5 @@
 import {
+  Board,
   Net,
   NetAssignment,
   Component,
@@ -8,6 +9,7 @@ import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { getComponentPinPositions } from "./boardLayout";
 import { StripSegment, findSegmentIndex } from "./stripSegments";
 import { ConnectedGroup } from "./connectivity";
+import { hasHole } from "./boardPattern";
 
 export interface PinInfo {
   componentLabel: string;
@@ -34,14 +36,18 @@ function findGroupIndex(
   );
 }
 
-/** Check which nets are incomplete (pins not all connected) */
+/**
+ * Check which nets are incomplete (pins not all connected). On a board with
+ * a pattern (`board`), a pin where it has no hole is connected to nothing.
+ */
 export function checkNetCompleteness(
   nets: Net[],
   netAssignments: NetAssignment[],
   segments: StripSegment[],
   connectivity: ConnectedGroup[],
   components: Component[],
-  componentDefs: ComponentDef[]
+  componentDefs: ComponentDef[],
+  board?: Board
 ): IncompleteNet[] {
   const result: IncompleteNet[] = [];
 
@@ -85,6 +91,11 @@ export function checkNetCompleteness(
       const pinPositions = getComponentPinPositions(comp, def);
       const pinPos = pinPositions.find((p) => p.pinId === assignment.pinId);
       if (!pinPos) continue;
+
+      if (board?.pattern && !hasHole(board, pinPos.row, pinPos.col)) {
+        groupPins.set(-1 - groupPins.size, [pinInfo]);
+        continue;
+      }
 
       // Find which segment and group
       const segIdx = findSegmentIndex(segments, pinPos.row, pinPos.col);

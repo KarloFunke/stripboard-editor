@@ -35,6 +35,15 @@ Rows and columns can be inserted or deleted at any position. Footprints are
 editable: the grid and pin positions of ICs and connectors can be matched to a
 physical part.
 
+**Board types.** Besides plain stripboard: TriPad (strips cut into pieces of
+three holes), solderable breadboards in half and full size, and ElectroCookie
+snappable boards (quarter, half, whole). A graphical board editor draws any
+other board: copper links in any direction, missing holes, and area copy,
+rotate and mirror. Custom boards live in a per-user library like custom parts,
+shareable as a file, with edits carried into every project on that board.
+Pins without a hole are flagged and connect nothing. Auto-layout works on plain
+stripboard only.
+
 **True-size packages.** Every part is drawn as its real package at true size,
 and each part lets you pick the package you actually have — a 1/4 W or 1/2 W
 resistor, TO-92 or TO-220. The package sets the body, how far apart the pins

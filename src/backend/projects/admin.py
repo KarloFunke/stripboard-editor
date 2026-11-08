@@ -4,7 +4,7 @@ from django.db.models import F, Max, Q
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 from django.utils.html import format_html
-from .models import Project, PowChallenge, Feedback, FeedbackReply, LayoutRating, UserPart
+from .models import Project, PowChallenge, Feedback, FeedbackReply, LayoutRating, UserBoard, UserPart
 
 
 @admin.register(Project)
@@ -157,3 +157,26 @@ class FeedbackAdmin(admin.ModelAdmin):
     @admin.display(description="New", boolean=True)
     def unseen(self, obj):
         return obj.staff_last_seen is None or obj.last_user_msg > obj.staff_last_seen
+
+
+@admin.register(UserBoard)
+class UserBoardAdmin(admin.ModelAdmin):
+    list_display = ["board_name", "owner", "size", "rev", "created_at", "updated_at"]
+    list_filter = ["created_at"]
+    search_fields = ["owner__username", "board__name"]
+    readonly_fields = ["id", "created_at", "updated_at"]
+    raw_id_fields = ["owner"]
+
+    def _board(self, obj):
+        return obj.board if isinstance(obj.board, dict) else {}
+
+    @admin.display(description="Name")
+    def board_name(self, obj):
+        return self._board(obj).get("name") or "-"
+
+    @admin.display(description="Size")
+    def size(self, obj):
+        board_map = self._board(obj).get("map")
+        if not isinstance(board_map, list) or not board_map:
+            return "-"
+        return f"{(len(board_map) + 1) // 2} x {(len(board_map[0]) + 1) // 2}"

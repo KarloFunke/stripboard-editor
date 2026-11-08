@@ -8,6 +8,12 @@ export interface Update {
 
 export const UPDATES: Update[] = [
   {
+    date: "2026-11-08",
+    items: [
+      "More board types: TriPad, solderable breadboards and ElectroCookie boards, plus a board editor for any other board. Keep your own boards in your library, just like custom parts.",
+    ],
+  },
+  {
     date: "2026-10-26",
     items: [
       "Version control for projects: try an idea on a branch, keep it up to date with main and merge it back with a review of every change.",
@@ -170,6 +176,5 @@ export const UPDATES: Update[] = [
 ];
 
 export const PLANNED: string[] = [
-  "Support for more board types than plain parallel strips, such as breadboard-style stripboard.",
   "Net list import, the other half of the KiCad compatibility: bring a circuit in from an EDA tool and lay it out on stripboard. Export is already available.",
 ];

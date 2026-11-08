@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import type { PreviewData } from "@/lib/api";
-import type { Component, ComponentDef, Net, NetAssignment, Wire, Cut } from "@/types";
+import type { Board, BoardPattern, Component, ComponentDef, Net, NetAssignment, Wire, Cut } from "@/types";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { DEFAULT_COMPONENTS } from "@/data/defaultComponents";
 import { getComponentBounds, getFlexibleBounds } from "./stripboard/boardLayout";
@@ -10,6 +10,7 @@ import { computeWireLaneOffsets } from "./stripboard/wireLanes";
 import { expandOffBoard } from "./stripboard/offBoard";
 import { rigidBody } from "./stripboard/partGeometry";
 import { StaticPart } from "./stripboard/partDrawing";
+import { hasHole, joinsDown, joinsRight } from "./stripboard/boardPattern";
 
 const HOLE_SP = 12; // compact spacing for preview
 const HOLE_R = 2;
@@ -32,7 +33,7 @@ export default function StripboardPreview({ data, maxWidth = 280, maxHeight = 16
     const nets = (data.nets ?? []) as unknown as Net[];
     // Off-board parts show up as the pads or connector their wires arrive at
     const { components, netAssignments } = expandOffBoard(stored, componentDefs, (data.netAssignments ?? []) as unknown as NetAssignment[]);
-    const board = data.board as unknown as { rows?: number; cols?: number; wires?: Wire[]; cuts?: Cut[] };
+    const board = data.board as unknown as { rows?: number; cols?: number; wires?: Wire[]; cuts?: Cut[]; pattern?: BoardPattern };
     const wires = (board.wires ?? []) as unknown as Wire[];
     const cuts = (board.cuts ?? []) as unknown as Cut[];
 
@@ -86,10 +87,33 @@ export default function StripboardPreview({ data, maxWidth = 280, maxHeight = 16
     // Lane shifts for parallel wires, scaled to the compact hole pitch
     const laneOffsets = computeWireLaneOffsets(wires, 1.5);
 
+    // The copper in view: whole rows on plain stripboard, the straight runs
+    // of a board with a pattern, and only the holes the board has
+    const shape: Board = { rows: board.rows ?? 30, cols: board.cols ?? 25, cuts: [], wires: [], pattern: board.pattern };
+    const copper: { from: [number, number]; to: [number, number] }[] = [];
+    const holes: [number, number][] = [];
+    for (let r = minRow; r <= maxRow; r++) {
+      if (!board.pattern) copper.push({ from: [r, minCol], to: [r, maxCol] });
+      for (let c = minCol; c <= maxCol; c++) {
+        if (hasHole(shape, r, c)) holes.push([r, c]);
+        if (!board.pattern) continue;
+        if (c < maxCol && joinsRight(shape, r, c) && (c === minCol || !joinsRight(shape, r, c - 1))) {
+          let end = c + 1;
+          while (end < maxCol && joinsRight(shape, r, end)) end++;
+          copper.push({ from: [r, c], to: [r, end] });
+        }
+        if (r < maxRow && joinsDown(shape, r, c) && (r === minRow || !joinsDown(shape, r - 1, c))) {
+          let end = r + 1;
+          while (end < maxRow && joinsDown(shape, end, c)) end++;
+          copper.push({ from: [r, c], to: [end, c] });
+        }
+      }
+    }
+
     return {
       placed, componentDefs, nets, netAssignments,
       minRow, maxRow, minCol, maxCol, rows, cols,
-      svgW, svgH, hx, hy, visibleWires, visibleCuts, laneOffsets,
+      svgW, svgH, hx, hy, visibleWires, visibleCuts, laneOffsets, copper, holes,
     };
   }, [data]);
 
@@ -97,8 +121,7 @@ export default function StripboardPreview({ data, maxWidth = 280, maxHeight = 16
 
   const {
     placed, componentDefs, nets, netAssignments,
-    minRow, minCol, rows, cols,
-    svgW, svgH, hx, hy, visibleWires, visibleCuts, laneOffsets,
+    svgW, svgH, hx, hy, visibleWires, visibleCuts, laneOffsets, copper, holes,
   } = preview;
 
   // Scale to fit within maxWidth/maxHeight
@@ -114,15 +137,17 @@ export default function StripboardPreview({ data, maxWidth = 280, maxHeight = 16
       className="font-sans rounded border border-neutral-200 dark:border-neutral-700 bg-[var(--board-fill)]"
     >
       {/* Strips */}
-      {Array.from({ length: rows }, (_, ri) => {
-        const row = minRow + ri;
+      {copper.map(({ from, to }, i) => {
+        const x1 = Math.min(hx(from[1]), hx(to[1]));
+        const y1 = Math.min(hy(from[0]), hy(to[0]));
+        const along = from[0] === to[0];
         return (
           <rect
-            key={`s-${ri}`}
-            x={hx(minCol) - HOLE_SP * 0.3}
-            y={hy(row) - STRIP_H / 2}
-            width={(cols - 1) * HOLE_SP + HOLE_SP * 0.6}
-            height={STRIP_H}
+            key={`s-${i}`}
+            x={along ? x1 - HOLE_SP * 0.3 : x1 - STRIP_H / 2}
+            y={along ? y1 - STRIP_H / 2 : y1 - HOLE_SP * 0.3}
+            width={along ? hx(to[1]) - hx(from[1]) + HOLE_SP * 0.6 : STRIP_H}
+            height={along ? STRIP_H : hy(to[0]) - hy(from[0]) + HOLE_SP * 0.6}
             fill="var(--strip-color)"
             opacity={0.55}
             rx={0.5}
@@ -131,26 +156,24 @@ export default function StripboardPreview({ data, maxWidth = 280, maxHeight = 16
       })}
 
       {/* Holes */}
-      {Array.from({ length: rows }, (_, ri) =>
-        Array.from({ length: cols }, (_, ci) => (
-          <circle
-            key={`h-${ri}-${ci}`}
-            cx={hx(minCol + ci)}
-            cy={hy(minRow + ri)}
-            r={HOLE_R}
-            fill="var(--hole-fill)"
-            stroke="var(--hole-stroke)"
-            strokeWidth={0.3}
-          />
-        ))
-      )}
+      {holes.map(([row, col]) => (
+        <circle
+          key={`h-${row}-${col}`}
+          cx={hx(col)}
+          cy={hy(row)}
+          r={HOLE_R}
+          fill="var(--hole-fill)"
+          stroke="var(--hole-stroke)"
+          strokeWidth={0.3}
+        />
+      ))}
 
       {/* Cuts */}
       {visibleCuts.map((cut, i) => {
-        const cx = cut.kind === "hole"
+        const cx = cut.kind === "hole" || cut.kind === "below"
           ? hx(cut.col)
           : (hx(cut.col) + hx(cut.col + 1)) / 2;
-        const cy = hy(cut.row);
+        const cy = cut.kind === "below" ? (hy(cut.row) + hy(cut.row + 1)) / 2 : hy(cut.row);
         const s = 2;
         return (
           <g key={`cut-${i}`}>

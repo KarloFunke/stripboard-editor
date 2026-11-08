@@ -158,6 +158,15 @@ export default function GuidePage() {
           <H3>Rows and columns</H3>
           <UL>
             <li><strong>Right-click</strong> anywhere on the board to insert or delete the row or column there. Deleting unplaces parts that sit on the line; whatever only spans it shrinks.</li>
+            <li>This works on plain stripboard and TriPad, where columns come and go three at a time.</li>
+          </UL>
+
+          <H3>Board types</H3>
+          <UL>
+            <li>The board menu next to <em>Rows</em> picks what you build on: plain stripboard, TriPad, a solderable breadboard (half or full size) or an ElectroCookie snappable board. Auto-layout works on plain stripboard only.</li>
+            <li>Parts can go anywhere on a board. A pin with no hole under it shows a red ring and connects to nothing. Cuts work on any copper, rails included.</li>
+            <li><strong>Edit this board…</strong> and <strong>New board…</strong> open the board editor: paint copper on or off, take holes away, and fill, copy, rotate or mirror an area. Boards other than stripboard and TriPad change size only there.</li>
+            <li>Editing a built-in board makes it this project&apos;s own custom board. With an account, tick <strong>Also save it to my library</strong> to use it in all your projects. <strong>Manage my boards</strong> lists them, shares them as a file, and carries a change into every project on that board.</li>
           </UL>
 
           <H3>Footprints and packages</H3>

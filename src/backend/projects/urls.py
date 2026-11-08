@@ -22,6 +22,10 @@ urlpatterns = [
     path("users/me/parts/adopt/", views.user_parts_adopt, name="user-parts-adopt"),
     path("users/me/parts/<uuid:part_id>/", views.user_part_detail, name="user-part-detail"),
     path("users/me/parts/<uuid:part_id>/usage/", views.user_part_usage, name="user-part-usage"),
+    path("users/me/boards/", views.user_boards_list, name="user-boards"),
+    path("users/me/boards/import/", views.user_boards_import, name="user-boards-import"),
+    path("users/me/boards/<uuid:board_id>/", views.user_board_detail, name="user-board-detail"),
+    path("users/me/boards/<uuid:board_id>/usage/", views.user_board_usage, name="user-board-usage"),
 
     # Auth
     path("auth/register/", views.auth_register, name="auth-register"),

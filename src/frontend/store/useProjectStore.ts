@@ -5,7 +5,9 @@ import {
   FootprintOverride,
   Net,
   NetAssignment,
+  Board,
   BoardPosition,
+  BoardPattern,
   Cut,
   ComponentDef,
   Wire,
@@ -15,13 +17,15 @@ import {
   PROJECT_SCHEMA_VERSION,
 } from "@/types";
 import { DEFAULT_COMPONENTS } from "@/data/defaultComponents";
+import { builtinOf } from "@/data/boards";
 import { spanLimits } from "@/components/stripboard/flexGeometry";
 import { resolveComponentDef } from "@/utils/resolveComponentDef";
 import { GROUP_PIN, boardView, editBoardView, isLead, parseLeadId } from "@/components/stripboard/offBoard";
 import { getComponentBounds, getComponentPinPositions } from "@/components/stripboard/boardLayout";
 import { bodyCuts, missingBodyCuts, sameCut } from "@/components/stripboard/bodyCuts";
 import { collectBoardPins } from "@/components/stripboard/boardPins";
-import { computeStripSegments } from "@/components/stripboard/stripSegments";
+import { computeStripSegments, findSegmentIndex } from "@/components/stripboard/stripSegments";
+import { cutFits, misfits, patternSize } from "@/components/stripboard/boardPattern";
 import { computeConnectivity } from "@/components/stripboard/connectivity";
 import { diffNets, type NetDiff } from "@/components/schematic/netInference";
 import { recalculateNets } from "@/components/schematic/netInference";
@@ -62,7 +66,7 @@ function cutsWithoutParts(s: BoardState, ids: string[]): Cut[] {
   for (const c of boardView(s.components, s.componentDefs, s.netAssignments).components) {
     if (!ids.includes(c.id) && !(isLead(c) && ids.includes(c.leadOf.componentId))) continue;
     const def = resolveComponentDef(c, s.componentDefs);
-    if (def) owned.push(...bodyCuts(s.board.cuts, c, def));
+    if (def) owned.push(...bodyCuts(s.board.cuts, c, def, s.board));
   }
   return owned.length === 0 ? s.board.cuts : s.board.cuts.filter((cut) => !owned.some((o) => sameCut(o, cut)));
 }
@@ -85,9 +89,35 @@ function cutsWithPart(s: BoardState, cuts: Cut[], comp: Component): Cut[] {
     cuts, comp, def,
     (pinId) => view.netAssignments.find((a) => a.componentId === comp.id && a.pinId === pinId)?.netId,
     s.drilledCutsOnly !== false,
-    (row, col) => taken.has(`${row},${col}`)
+    (row, col) => taken.has(`${row},${col}`),
+    s.board
   );
   return missing.length === 0 ? cuts : [...cuts, ...missing];
+}
+
+// A board bought in any size gets its copper cut to the size it now has
+function regrown(board: Board): Board {
+  const sized = board.pattern && builtinOf(board.pattern)?.resizable;
+  return sized ? { ...board, pattern: { ...board.pattern!, map: sized.map(board.rows, board.cols) } } : board;
+}
+
+// What cannot stay on the board leaves it: parts off its edges go back to
+// the unplaced list, wires off them and cuts where it has no copper go. Pins
+// where it has no hole stay, shown as wrong.
+function fitToBoard(s: BoardState): Pick<BoardState, "components" | "board"> {
+  const view = boardView(s.components, s.componentDefs, s.netAssignments);
+  const off = misfits(s.board, view.components, s.componentDefs);
+  if (off.parts.length + off.wires.length + off.cuts.length === 0) return { components: s.components, board: s.board };
+  return {
+    components: onBoard(s, (v) => v.map((c) =>
+      !off.parts.includes(c.id) ? c : isLead(c) ? { ...c, boardPos: null } : { ...c, boardPos: null, flexibleEndPos: undefined, locked: undefined }
+    )),
+    board: {
+      ...s.board,
+      wires: s.board.wires.filter((w) => !off.wires.includes(w.id)),
+      cuts: cutsWithoutParts(s, off.parts).filter((c) => cutFits(s.board, c)),
+    },
+  };
 }
 
 // Projects from before parts had packages carried per-type span and clearance
@@ -203,6 +233,12 @@ interface ProjectActions {
   removeCut: (cut: Cut) => void;
   // Board wires
   setBoardSize: (rows: number, cols: number) => void;
+  // Another board (null: plain stripboard). What does not fit it leaves it.
+  setBoardPattern: (pattern: BoardPattern | null) => void;
+  // After parts were moved on a board with a pattern: cuts left where it
+  // has no copper go, and the parts get the cuts their new place needs.
+  // Folds into the move's snapshot.
+  refitBodyCuts: (ids: string[]) => void;
   setBoardDimLock: (dim: "rows" | "cols", locked: boolean) => void;
   // Free board lines kept between all parts in auto-layout (0 or 1)
   setPartSpacing: (lines: number) => void;
@@ -494,7 +530,7 @@ function prepareProjectState(data: Project) {
   // older editor left stale after a move.
   const netResult = recalculateNets(schematicWires, data.nets ?? [], data.netAssignments ?? [], components, mergedDefs, netLabels);
 
-  return {
+  const state = {
     name: data.name ?? "Untitled Project",
     description: data.description ?? "",
     notes: data.notes ?? "",
@@ -512,6 +548,7 @@ function prepareProjectState(data: Project) {
       wires: data.board?.wires ?? [],
       lockedRows: data.board?.lockedRows,
       lockedCols: data.board?.lockedCols,
+      ...(data.board?.pattern ? { pattern: data.board.pattern } : {}),
     },
     showValuesOnBoard: data.showValuesOnBoard ?? false,
     autoSave: data.autoSave ?? false,
@@ -547,6 +584,12 @@ function prepareProjectState(data: Project) {
     schematicWireDrawingFrom: null,
     schematicWireDirection: null,
   };
+  // A board whose library copy changed elsewhere may have lost copper: cuts
+  // there go. Pins it lost the holes of, or that it shrank away from, stay
+  // and are shown as wrong.
+  return state.board.pattern
+    ? { ...state, board: { ...state.board, cuts: state.board.cuts.filter((c) => cutFits(state.board, c)) } }
+    : state;
 }
 
 export const useProjectStore = create<ProjectStore>((set, get) => ({
@@ -993,9 +1036,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       let newCuts = s.board.cuts;
       if (cutPositions && cutPositions.length > 0) {
         newCuts = newCuts.map((c) => {
-          const match = cutPositions.find(
-            (cp) => cp.row === c.row && cp.col === c.col && (cp.kind === "hole") === (c.kind === "hole")
-          );
+          const match = cutPositions.find((cp) => sameCut(cp, c));
           if (!match) return c;
           return { ...c, row: c.row + deltaRow, col: c.col + deltaCol };
         });
@@ -1199,9 +1240,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       const segs = computeStripSegments(s.board, others, s.componentDefs, s.netAssignments);
       const groups = computeConnectivity(segs, s.board.wires);
       const ambientAt = (row: number, col: number): Set<string> => {
-        const idx = segs.findIndex(
-          (seg) => seg.row === row && col >= seg.startCol && col <= seg.endCol
-        );
+        const idx = findSegmentIndex(segs, row, col);
         if (idx < 0) return new Set();
         const g = groups.find((gr) => gr.segmentIndices.includes(idx));
         return new Set(g ? g.netIds : segs[idx].netIds);
@@ -1349,9 +1388,30 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   setBoardSize: (rows, cols) => {
     get().pushSnapshot();
     set((s) => ({
-      board: { ...s.board, rows, cols },
+      board: regrown({ ...s.board, rows, cols }),
       ...bumpBoardEdits(s),
     }));
+  },
+
+  setBoardPattern: (pattern) => {
+    get().pushSnapshot();
+    set((s) => {
+      const board = { ...s.board, ...(pattern ? patternSize(pattern.map) : {}), pattern: pattern ?? undefined };
+      if (!pattern) delete board.pattern;
+      return { ...fitToBoard({ ...s, board }), ...bumpBoardEdits(s) };
+    });
+  },
+
+  refitBodyCuts: (ids) => {
+    const s = get();
+    if (!s.board.pattern) return;
+    let cuts = s.board.cuts.filter((c) => cutFits(s.board, c));
+    for (const c of boardView(s.components, s.componentDefs, s.netAssignments).components) {
+      if (ids.includes(c.id) && c.boardPos) cuts = cutsWithPart({ ...s, board: { ...s.board, cuts } }, cuts, c);
+    }
+    if (cuts.length !== s.board.cuts.length || cuts.some((c, i) => !sameCut(c, s.board.cuts[i]))) {
+      set({ board: { ...s.board, cuts } });
+    }
   },
 
   setBoardDimLock: (dim, locked) => {
@@ -1432,13 +1492,13 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
             : { row: c.boardPos.row, col: c.boardPos.col + 1 },
         };
       }));
-      const board = {
+      const board = regrown({
         ...s.board,
         rows: s.board.rows + (isRow ? 1 : 0),
         cols: s.board.cols + (isRow ? 0 : 1),
         cuts: s.board.cuts.map((cut) => shiftPos(cut)),
         wires: s.board.wires.map((w) => ({ ...w, from: shiftPos(w.from), to: shiftPos(w.to) })),
-      };
+      });
       return { components, board, isDirty: true, ...bumpBoardEdits(s) };
     });
   },
@@ -1493,13 +1553,13 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
             ? cut.col === at
             : cut.col === at || cut.col === at - 1;
       const wireGone = (w: Wire) => coord(w.from) === at || coord(w.to) === at;
-      const newBoard = {
+      const newBoard = regrown({
         ...s.board,
         rows: s.board.rows - (isRow ? 1 : 0),
         cols: s.board.cols - (isRow ? 0 : 1),
         cuts: s.board.cuts.filter((c) => !cutGone(c)).map((cut) => shiftPos(cut)),
         wires: s.board.wires.filter((w) => !wireGone(w)).map((w) => ({ ...w, from: shiftPos(w.from), to: shiftPos(w.to) })),
-      };
+      });
       return { components, board: newBoard, isDirty: true, ...bumpBoardEdits(s) };
     });
   },
@@ -1517,9 +1577,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set((s) => ({
       board: {
         ...s.board,
-        cuts: s.board.cuts.filter(
-          (c) => !(c.row === cut.row && c.col === cut.col && (c.kind === "hole") === (cut.kind === "hole"))
-        ),
+        cuts: s.board.cuts.filter((c) => !sameCut(c, cut)),
       },
       ...bumpBoardEdits(s),
     }));

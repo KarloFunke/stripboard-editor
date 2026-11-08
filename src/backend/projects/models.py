@@ -99,6 +99,26 @@ class BranchMerge(models.Model):
         return f"{self.source_name} -> {self.target_name}"
 
 
+class UserBoard(models.Model):
+    """A board of the user's own: its name and copper (`{"name", "map"}`, the
+    map as in boardPattern.ts). Like a UserPart, projects hold copies of it
+    that carry `library: {"id", "rev"}`."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name="boards")
+    board = models.JSONField()
+    rev = models.PositiveIntegerField(default=1)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["created_at"]
+        indexes = [models.Index(fields=["owner", "created_at"])]
+
+    def __str__(self):
+        name = self.board.get("name") if isinstance(self.board, dict) else None
+        return f"{name or 'board'} ({self.owner_id})"
+
+
 class LayoutRating(models.Model):
     """A user's 1-5 rating of an auto-layout result, stored with a full snapshot
     of the project as the router left it so the layout can be reopened for

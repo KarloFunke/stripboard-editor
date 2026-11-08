@@ -1,7 +1,13 @@
 // The cuts under a rigid part's body belong to it: a part new to the board
 // brings the ones it needs, and they are told apart by position alone.
+const Module = require("module");
 const path = require("path");
 const OUT = path.join(__dirname, "out");
+const origResolve = Module._resolveFilename;
+Module._resolveFilename = function (request, ...rest) {
+  if (request.startsWith("@/")) request = path.join(OUT, request.slice(2));
+  return origResolve.call(this, request, ...rest);
+};
 const { bodyCuts, missingBodyCuts } = require(path.join(OUT, "components/stripboard/bodyCuts.js"));
 const { DEFAULT_COMPONENTS } = require(path.join(OUT, "data/defaultComponents.js"));
 

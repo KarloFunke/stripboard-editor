@@ -19,6 +19,8 @@ import {
   holeCenter,
   nearestHole,
   nearestCutTarget,
+  nearestPatternCut,
+  cutPoint,
   boardRect,
   getComponentBounds,
   getComponentPinPositions,
@@ -27,6 +29,8 @@ import {
   getFlexibleBounds,
 } from "./boardLayout";
 import { bodyCuts, sameCut } from "./bodyCuts";
+import { copperOf, cutFits, hasHole, joinsDown, joinsRight, offHoles } from "./boardPattern";
+import { builtinOf } from "@/data/boards";
 import { useBoardView } from "@/hooks/useBoardView";
 import { GROUP_PIN, OFF_BOARD_CONNECTIONS, isLead } from "./offBoard";
 import { coveredHoles } from "./flexGeometry";
@@ -129,8 +133,24 @@ export default function StripboardCanvas({
   // lane offsets so parallel runs stay individually visible. Wires that
   // only touch at a shared endpoint keep the same lane.
   const wireLaneOffset = useMemo(() => computeWireLaneOffsets(board.wires, 3.5), [board.wires]);
+  // Columns a board bought in any size comes in steps of, as TriPad's pads
+  const padCols = builtinOf(board.pattern)?.resizable?.colStep;
+  // What sits where the board has no hole, marked as wrong
+  const offHoleMarks = useMemo(() => offHoles(board, components, componentDefs), [board, components, componentDefs]);
+  // Places a board with a pattern has no hole at
+  const missingHoles = useMemo(() => {
+    if (!board.pattern) return [];
+    const copper = copperOf(board.pattern.map);
+    const out: { row: number; col: number }[] = [];
+    for (let row = 0; row < board.rows; row++) {
+      for (let col = 0; col < board.cols; col++) {
+        if (!copper.hole[row * board.cols + col]) out.push({ row, col });
+      }
+    }
+    return out;
+  }, [board.pattern, board.rows, board.cols]);
   // Every strip end asks whether a cut sits next to it
-  const cutKeys = useMemo(() => new Set(board.cuts.map((c) => `${c.kind === "hole" ? "h" : "b"}:${c.row}:${c.col}`)), [board.cuts]);
+  const cutKeys = useMemo(() => new Set(board.cuts.map((c) => `${c.kind === "hole" ? "h" : c.kind === "below" ? "v" : "b"}:${c.row}:${c.col}`)), [board.cuts]);
 
 
   const {
@@ -175,6 +195,7 @@ export default function StripboardCanvas({
   const pushSnapshot = useProjectStore((s) => s.pushSnapshot);
   const removeFromBoard = useProjectStore((s) => s.removeFromBoard);
   const moveComponentsOnBoard = useProjectStore((s) => s.moveComponentsOnBoard);
+  const refitBodyCuts = useProjectStore((s) => s.refitBodyCuts);
   const autoAlignPolarity = useProjectStore((s) => s.autoAlignPolarity);
 
   // A drag gesture (component body or flexible pin) arms this on mousedown and
@@ -230,8 +251,8 @@ export default function StripboardCanvas({
         minCol = Math.min(minCol, w.from.col, w.to.col); maxCol = Math.max(maxCol, w.from.col, w.to.col);
       }
       for (const cut of cuts) {
-        minRow = Math.min(minRow, cut.row); maxRow = Math.max(maxRow, cut.row);
-        minCol = Math.min(minCol, cut.col); maxCol = Math.max(maxCol, cut.col + (cut.kind === "hole" ? 0 : 1));
+        minRow = Math.min(minRow, cut.row); maxRow = Math.max(maxRow, cut.row + (cut.kind === "below" ? 1 : 0));
+        minCol = Math.min(minCol, cut.col); maxCol = Math.max(maxCol, cut.col + (cut.kind === "hole" || cut.kind === "below" ? 0 : 1));
       }
       return { minRow, minCol, maxRow, maxCol };
     },
@@ -246,7 +267,7 @@ export default function StripboardCanvas({
   const [hover, setHover] = useState<Cut | null>(null);
   useEffect(() => setHover(null), [boardTool]);
 
-  // Holes with a component lead in them: they take no wire end and no drill
+  // Holes with a component lead in them: no drill goes there
   const pinHoles = useMemo(() => {
     const holes = new Set<string>();
     for (const comp of components) {
@@ -257,16 +278,18 @@ export default function StripboardCanvas({
     return holes;
   }, [components, componentDefs]);
 
+  // A wire may end on a part's pin, soldered to it, but not in a drilled hole
   const wireEndBlocked = useCallback(
     (hole: { row: number; col: number }) =>
-      pinHoles.has(`${hole.row},${hole.col}`) ||
+      !hasHole(board, hole.row, hole.col) ||
       board.cuts.some((c) => c.kind === "hole" && c.row === hole.row && c.col === hole.col),
-    [pinHoles, board.cuts]
+    [board]
   );
 
   // A hole is cut or holds something, never both
   const cutBlocked = useCallback(
     (cut: Cut) =>
+      !cutFits(board, cut) ||
       cut.kind === "hole" && (
         pinHoles.has(`${cut.row},${cut.col}`) ||
         board.wires.some((w) =>
@@ -274,7 +297,15 @@ export default function StripboardCanvas({
           (w.to.row === cut.row && w.to.col === cut.col)
         )
       ),
-    [pinHoles, board.wires]
+    [pinHoles, board]
+  );
+
+  // The cut a click at this point means: on a board with a pattern only
+  // where it has copper, which may run down a column too
+  const cutTargetAt = useCallback(
+    (x: number, y: number) =>
+      board.pattern ? nearestPatternCut(x, y, (c) => cutFits(board, c)) : nearestCutTarget(x, y, board.rows, board.cols),
+    [board]
   );
 
   // The cuts under these parts' bodies, which travel with them
@@ -285,13 +316,13 @@ export default function StripboardCanvas({
         if (!ids.includes(comp.id)) continue;
         const def = resolveComponentDef(comp, componentDefs);
         if (!def) continue;
-        for (const cut of bodyCuts(board.cuts, comp, def)) {
+        for (const cut of bodyCuts(board.cuts, comp, def, board)) {
           if (!out.some((c) => sameCut(c, cut)) && !except.some((c) => sameCut(c, cut))) out.push(cut);
         }
       }
       return out;
     },
-    [components, componentDefs, board.cuts]
+    [components, componentDefs, board]
   );
 
   // The whole selection in one place. A lone component stays in selectedId,
@@ -444,10 +475,12 @@ export default function StripboardCanvas({
         if (b.minRow + dRow < 0 || b.maxRow + dRow > board.rows - 1) dRow = 0;
         if (b.minCol + dCol < 0 || b.maxCol + dCol > board.cols - 1) dCol = 0;
         if (dRow === 0 && dCol === 0) return; // blocked at the edge
+        const carried = [...selectedCuts, ...bodyCutsOf(moveIds, selectedCuts)];
         // One snapshot per held-key gesture: snapshot on the initial press,
         // keep moving on auto-repeat. One Ctrl+Z reverts the whole nudge.
         if (!e.repeat) pushSnapshot();
-        moveComponentsOnBoard(moveIds, dRow, dCol, selectedWireIds, [...selectedCuts, ...bodyCutsOf(moveIds, selectedCuts)]);
+        moveComponentsOnBoard(moveIds, dRow, dCol, selectedWireIds, carried);
+        refitBodyCuts(moveIds);
         if (selectedCuts.length > 0) {
           setSelectedCuts((prev) =>
             prev.map((c) => ({ ...c, row: c.row + dRow, col: c.col + dCol }))
@@ -489,7 +522,7 @@ export default function StripboardCanvas({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [readOnly, wirePlacementFrom, cancelWirePlacement, selection, selectedId, selectedIds, selectedWireIds, selectedCuts, rotateComponent, moveComponentsOnBoard, pushSnapshot, computeBoardSelectionBounds, board.rows, board.cols, components, setBoardLock, boardTool, setBoardTool, bodyCutsOf, applySelection, deleteSelection]);
+  }, [readOnly, wirePlacementFrom, cancelWirePlacement, selection, selectedId, selectedIds, selectedWireIds, selectedCuts, rotateComponent, moveComponentsOnBoard, refitBodyCuts, pushSnapshot, computeBoardSelectionBounds, board.rows, board.cols, components, setBoardLock, boardTool, setBoardTool, bodyCutsOf, applySelection, deleteSelection]);
 
 
   const getSVGPoint = useCallback((e: React.MouseEvent | React.DragEvent) => {
@@ -823,10 +856,11 @@ export default function StripboardCanvas({
         const hole = nearestHole(pt.x, pt.y, board.rows, board.cols);
         if (!hole || !cutDrag.grabHole) return;
         const { origin, at } = cutDrag;
-        const lastCol = board.cols - (origin.kind === "hole" ? 1 : 2);
+        const lastRow = board.rows - (origin.kind === "below" ? 2 : 1);
+        const lastCol = board.cols - (origin.kind === "hole" || origin.kind === "below" ? 1 : 2);
         const target: Cut = {
           ...origin,
-          row: Math.max(0, Math.min(board.rows - 1, origin.row + hole.row - cutDrag.grabHole.row)),
+          row: Math.max(0, Math.min(lastRow, origin.row + hole.row - cutDrag.grabHole.row)),
           col: Math.max(0, Math.min(lastCol, origin.col + hole.col - cutDrag.grabHole.col)),
         };
         // never onto another cut, nor a drill onto a hole that holds something
@@ -842,7 +876,7 @@ export default function StripboardCanvas({
         const pt = getSVGPoint(e);
         const at = nearestHole(pt.x, pt.y, board.rows, board.cols);
         const next: Cut | null = boardTool === "cut"
-          ? nearestCutTarget(pt.x, pt.y, board.rows, board.cols)
+          ? cutTargetAt(pt.x, pt.y)
           : at && { ...at, kind: "hole" };
         setHover((prev) => (prev && next && sameCut(prev, next) ? prev : next));
       }
@@ -899,21 +933,20 @@ export default function StripboardCanvas({
         return;
       }
 
-      setDragPreviewPos(previewHole);
-
       // Live-update position for instant strip recoloring
       if (dragging.didDrag && previewHole) {
         const comp = components.find((c) => c.id === dragging.componentId);
         if (comp?.boardPos && (previewHole.row !== comp.boardPos.row || previewHole.col !== comp.boardPos.col)) {
-          commitSnapshotOnce();
           const dr = previewHole.row - comp.boardPos.row;
           const dc = previewHole.col - comp.boardPos.col;
+          commitSnapshotOnce();
           moveComponentsOnBoard([dragging.componentId], dr, dc, [], carriedCutsRef.current);
           carriedCutsRef.current = carriedCutsRef.current.map((c) => ({ ...c, row: c.row + dr, col: c.col + dc }));
         }
       }
+      setDragPreviewPos(previewHole);
     },
-    [handlePanMove, dragging, selectionRect, getSVGPoint, board.rows, board.cols, wirePlacementFrom, updateSelectionRect, checkDragThreshold, flexPinDrag, components, componentDefs, placeOnBoard, setFlexibleEndPos, commitSnapshotOnce, moveComponentsOnBoard, boardTool, readOnly, board.wires, board.cuts, wireEndBlocked, cutBlocked, setWireEnds]
+    [handlePanMove, dragging, selectionRect, getSVGPoint, board, wirePlacementFrom, updateSelectionRect, checkDragThreshold, flexPinDrag, components, componentDefs, placeOnBoard, setFlexibleEndPos, commitSnapshotOnce, moveComponentsOnBoard, boardTool, readOnly, wireEndBlocked, cutBlocked, cutTargetAt, setWireEnds]
   );
 
   const handleMouseUp = useCallback(() => {
@@ -976,10 +1009,7 @@ export default function StripboardCanvas({
       // Select cuts within rect
       const selCuts: Cut[] = [];
       for (const cut of board.cuts) {
-        const cutX = cut.kind === "hole"
-          ? holeCenter(cut.row, cut.col).x
-          : (holeCenter(cut.row, cut.col).x + holeCenter(cut.row, cut.col + 1).x) / 2;
-        const cutY = holeCenter(cut.row, cut.col).y;
+        const { x: cutX, y: cutY } = cutPoint(cut);
         if (cutX >= x1 && cutX <= x2 && cutY >= y1 && cutY <= y2) {
           selCuts.push({ ...cut });
         }
@@ -1005,13 +1035,16 @@ export default function StripboardCanvas({
         const movedIds = dragging.multi
           ? multiDragRef.current?.moveIds ?? []
           : [dragging.componentId];
-        if (movedIds.length > 0) autoAlignPolarity(movedIds);
+        if (movedIds.length > 0) {
+          autoAlignPolarity(movedIds);
+          refitBodyCuts(movedIds);
+        }
       }
     }
     setDragging(null);
     setDragPreviewPos(null);
     multiDragRef.current = null;
-  }, [handlePanEnd, dragging, components, componentDefs, board.wires, board.cuts, finalizeSelectionRect, markDragComplete, autoAlignPolarity, flexPinDrag, boardTool, selection, applySelection]);
+  }, [handlePanEnd, dragging, components, componentDefs, board.wires, board.cuts, finalizeSelectionRect, markDragComplete, autoAlignPolarity, refitBodyCuts, flexPinDrag, boardTool, selection, applySelection]);
 
   // ── Canvas click ────────────────────────────────────────
   // A click means what the tool in hand says: a cut, a wire end, or a selection.
@@ -1027,7 +1060,7 @@ export default function StripboardCanvas({
       // Cut tool: the click lands on the nearest cut position, hole or gap,
       // with no dead zone between the two, and through whatever lies on top.
       if (boardTool === "cut") {
-        const target = nearestCutTarget(pt.x, pt.y, board.rows, board.cols);
+        const target = cutTargetAt(pt.x, pt.y);
         if (!target) return;
         const existing = board.cuts.find((c) => sameCut(c, target));
         if (existing) removeCut(existing);
@@ -1067,7 +1100,7 @@ export default function StripboardCanvas({
       if (selMode(e) === "replace") applySelection({ comps: [], wires: [], cuts: [] });
     },
     [
-      readOnly, getSVGPoint, board, placeCut, removeCut, boardTool, cutBlocked, wireEndBlocked,
+      readOnly, getSVGPoint, board, placeCut, removeCut, boardTool, cutBlocked, cutTargetAt, wireEndBlocked,
       wirePlacementFrom, setWirePlacementFrom, cancelWirePlacement, addWire,
       shouldSuppressClick, pressSelect, applySelection, findComponentAtHole,
     ]
@@ -1078,7 +1111,8 @@ export default function StripboardCanvas({
     (e: React.MouseEvent) => {
       const down = rightDownRef.current;
       rightDownRef.current = null;
-      if (readOnly || !down || Math.abs(e.clientX - down.x) + Math.abs(e.clientY - down.y) > 4) return;
+      // a board with a pattern keeps its size, unless it comes in any size
+      if (readOnly || (board.pattern && !padCols) || !down || Math.abs(e.clientX - down.x) + Math.abs(e.clientY - down.y) > 4) return;
       const pt = getSVGPoint(e);
       const r = boardRect(board.rows, board.cols);
       const reach = HOLE_SPACING * 1.4; // takes in the row and column numbers
@@ -1092,7 +1126,7 @@ export default function StripboardCanvas({
         y: e.clientY,
       });
     },
-    [readOnly, getSVGPoint, board.rows, board.cols]
+    [readOnly, getSVGPoint, board.rows, board.cols, board.pattern, padCols]
   );
 
   const getDisplayPos = (comp: typeof components[0]) => {
@@ -1168,8 +1202,6 @@ export default function StripboardCanvas({
 
           {/* Strip segments */}
           {segments.map((seg, i) => {
-            const startCenter = holeCenter(seg.row, seg.startCol);
-            const endCenter = holeCenter(seg.row, seg.endCol);
             const color = getSegmentColor(seg, i);
             const group = getGroupForSegment(connectivity, i);
             const hasNets = group ? group.netIds.length > 0 : seg.netIds.length > 0;
@@ -1179,42 +1211,46 @@ export default function StripboardCanvas({
             // A hole-cut drills out the hole: its isolated single-hole segment
             // draws no copper, and the neighbouring strips run up to the hole so
             // the break lands on it (not in the middle of the strip).
-            const hasHoleCut = (col: number) => cutKeys.has(`h:${seg.row}:${col}`);
-            const hasBetweenCut = (col: number) => cutKeys.has(`b:${seg.row}:${col}`);
-            if (seg.startCol === seg.endCol && hasHoleCut(seg.startCol)) return null;
+            const hasHoleCut = (row: number, col: number) => cutKeys.has(`h:${row}:${col}`);
+            const down = seg.endRow !== undefined;
+            if (!down && seg.startCol === seg.endCol && hasHoleCut(seg.row, seg.startCol)) return null;
             const HOLE_CUT_GAP = HOLE_RADIUS + 1.5;
-            // Only run the strip up to a neighbouring hole-cut when no between-cut
-            // sits in that gap — otherwise the extension would paint over the
-            // between-cut's break.
-            const extendLeft = hasHoleCut(seg.startCol - 1) && !hasBetweenCut(seg.startCol - 1);
-            const extendRight = hasHoleCut(seg.endCol + 1) && !hasBetweenCut(seg.endCol);
-            const leftX = extendLeft
-              ? holeCenter(seg.row, seg.startCol - 1).x + HOLE_CUT_GAP
-              : startCenter.x - HOLE_SPACING * 0.4;
-            const rightX = extendRight
-              ? holeCenter(seg.row, seg.endCol + 1).x - HOLE_CUT_GAP
-              : endCenter.x + HOLE_SPACING * 0.4;
-            const hlLeftX = extendLeft ? leftX : startCenter.x - HOLE_SPACING * 0.5;
-            const hlRightX = extendRight ? rightX : endCenter.x + HOLE_SPACING * 0.5;
+            // The strip runs from `first` to `last` along its row (or down its
+            // column), in steps of `at`: a hole's place on that line
+            const at = (k: number) => (down ? holeCenter(k, seg.startCol).y : holeCenter(seg.row, k).x);
+            const first = down ? seg.row : seg.startCol;
+            const last = down ? seg.endRow! : seg.endCol;
+            const hole = (k: number) => (down ? { row: k, col: seg.startCol } : { row: seg.row, col: k });
+            // Only run the strip up to a neighbouring hole-cut when the copper
+            // goes on to it and no knife cut sits in that gap, which the
+            // extension would paint over
+            const joins = (k: number) => (down ? joinsDown(board, k, seg.startCol) : joinsRight(board, seg.row, k));
+            const knife = (k: number) => cutKeys.has(`${down ? "v" : "b"}:${hole(k).row}:${hole(k).col}`);
+            const extendStart = hasHoleCut(hole(first - 1).row, hole(first - 1).col) && joins(first - 1) && !knife(first - 1);
+            const extendEnd = hasHoleCut(hole(last + 1).row, hole(last + 1).col) && joins(last) && !knife(last);
+            const lo = extendStart ? at(first - 1) + HOLE_CUT_GAP : at(first) - HOLE_SPACING * 0.4;
+            const hi = extendEnd ? at(last + 1) - HOLE_CUT_GAP : at(last) + HOLE_SPACING * 0.4;
+            const hlLo = extendStart ? lo : at(first) - HOLE_SPACING * 0.5;
+            const hlHi = extendEnd ? hi : at(last) + HOLE_SPACING * 0.5;
+            // across the strip: the row's height, or the column's
+            const mid = down ? holeCenter(0, seg.startCol).x : holeCenter(seg.row, 0).y;
+            const rect = (from: number, to: number, width: number) =>
+              down
+                ? { x: mid - width / 2, y: from, width, height: to - from }
+                : { x: from, y: mid - width / 2, width: to - from, height: width };
 
             return (
               <g key={`seg-${i}`}>
                 {(isHighlighted || group?.hasConflict) && (
                   <rect
-                    x={hlLeftX}
-                    y={startCenter.y - STRIP_HEIGHT}
-                    width={hlRightX - hlLeftX}
-                    height={STRIP_HEIGHT * 2}
+                    {...rect(hlLo, hlHi, STRIP_HEIGHT * 2)}
                     fill={group?.hasConflict ? STRIP_CONFLICT_COLOR : color}
                     opacity={0.3}
                     rx={2}
                   />
                 )}
                 <rect
-                  x={leftX}
-                  y={startCenter.y - STRIP_HEIGHT / 2}
-                  width={rightX - leftX}
-                  height={STRIP_HEIGHT}
+                  {...rect(lo, hi, STRIP_HEIGHT)}
                   fill={color}
                   opacity={isHighlighted ? 0.9 : group?.hasConflict ? 0.8 : hasNets ? 0.62 : 0.55}
                   rx={1}
@@ -1269,7 +1305,18 @@ export default function StripboardCanvas({
                     <circle cx={HOLE_SPACING / 2} cy={HOLE_SPACING / 2} r={HOLE_RADIUS} fill="var(--hole-fill)" stroke="var(--hole-stroke)" strokeWidth={0.5} />
                   </pattern>
                 </defs>
-                <rect x={x} y={y} width={board.cols * HOLE_SPACING} height={board.rows * HOLE_SPACING} fill="url(#holes)" />
+                {/* places a board with a pattern has no hole at: whatever lies below shows */}
+                {missingHoles.length > 0 && (
+                  <mask id="missing-holes" maskUnits="userSpaceOnUse" x={x} y={y} width={board.cols * HOLE_SPACING} height={board.rows * HOLE_SPACING}>
+                    <rect x={x} y={y} width={board.cols * HOLE_SPACING} height={board.rows * HOLE_SPACING} fill="white" />
+                    {missingHoles.map(({ row, col }) => {
+                      const c = holeCenter(row, col);
+                      return <circle key={`nh-${row}-${col}`} cx={c.x} cy={c.y} r={HOLE_RADIUS + 1} fill="black" />;
+                    })}
+                  </mask>
+                )}
+                <rect x={x} y={y} width={board.cols * HOLE_SPACING} height={board.rows * HOLE_SPACING} fill="url(#holes)"
+                  mask={missingHoles.length > 0 ? "url(#missing-holes)" : undefined} />
               </>
             );
           })()}
@@ -1378,20 +1425,22 @@ export default function StripboardCanvas({
 
           </g>
 
+          {/* Pins and wire ends where the board has no hole */}
+          {offHoleMarks.map(({ row, col }, i) => {
+            const c = holeCenter(row, col);
+            return <circle key={`oh-${i}`} cx={c.x} cy={c.y} r={HOLE_RADIUS + 4} fill="none" stroke={STRIP_CONFLICT_COLOR} strokeWidth={2.5} pointerEvents="none" />;
+          })}
+
           {/* Cut marks */}
           {board.cuts.map((cut, i) => {
-            const isSelected = selectedCuts.some(
-              (sc) => sc.row === cut.row && sc.col === cut.col && (sc.kind === "hole") === (cut.kind === "hole")
-            );
-            const cutCx = cut.kind === "hole"
-              ? holeCenter(cut.row, cut.col).x
-              : (holeCenter(cut.row, cut.col).x + holeCenter(cut.row, cut.col + 1).x) / 2;
+            const isSelected = selectedCuts.some((sc) => sameCut(sc, cut));
+            const { x: cutCx, y: cutCy } = cutPoint(cut);
             return (
               <g key={`cut-${i}`}>
                 {isSelected && (
                   <circle
                     cx={cutCx}
-                    cy={holeCenter(cut.row, cut.col).y}
+                    cy={cutCy}
                     r={10}
                     fill="var(--selection-stroke)"
                     opacity={0.15}
@@ -1403,7 +1452,7 @@ export default function StripboardCanvas({
                 {!readOnly && boardTool === "select" && (
                   <circle
                     cx={cutCx}
-                    cy={holeCenter(cut.row, cut.col).y}
+                    cy={cutCy}
                     r={8}
                     fill="transparent"
                     style={{ cursor: "move" }}
@@ -1419,8 +1468,8 @@ export default function StripboardCanvas({
           {hover && !hoverBlocked && boardTool === "cut" && (
             board.cuts.some((c) => sameCut(c, hover)) ? (
               <circle
-                cx={holeCenter(hover.row, hover.col).x + (hover.kind === "hole" ? 0 : HOLE_SPACING / 2)}
-                cy={holeCenter(hover.row, hover.col).y}
+                cx={cutPoint(hover).x}
+                cy={cutPoint(hover).y}
                 r={11}
                 fill="none"
                 stroke="var(--cut-stroke)"
@@ -1787,14 +1836,31 @@ export default function StripboardCanvas({
                 top: Math.min(lineMenu.y, window.innerHeight - 230),
               }}
             >
-              {([
-                { axis: "row", label: `Insert row above ${lineMenu.row + 1}`, at: lineMenu.row },
-                { axis: "row", label: `Insert row below ${lineMenu.row + 1}`, at: lineMenu.row + 1 },
-                { axis: "col", label: `Insert column left of ${lineMenu.col + 1}`, at: lineMenu.col, divided: true },
-                { axis: "col", label: `Insert column right of ${lineMenu.col + 1}`, at: lineMenu.col + 1 },
-                { axis: "row", label: `Delete row ${lineMenu.row + 1}`, at: lineMenu.row, remove: true, divided: true },
-                { axis: "col", label: `Delete column ${lineMenu.col + 1}`, at: lineMenu.col, remove: true },
-              ] as { axis: "row" | "col"; label: string; at: number; remove?: boolean; divided?: boolean }[]).map(({ axis, label, at, remove, divided }) => (
+              {(() => {
+                // columns of a board that comes in any size go a whole pad at a time
+                const step = padCols ?? 1;
+                const first = Math.floor(lineMenu.col / step) * step;
+                const cols = step === 1
+                  ? [
+                      { axis: "col", label: `Insert column left of ${lineMenu.col + 1}`, at: lineMenu.col, count: 1, divided: true },
+                      { axis: "col", label: `Insert column right of ${lineMenu.col + 1}`, at: lineMenu.col + 1, count: 1 },
+                    ]
+                  : [
+                      { axis: "col", label: `Insert ${step} columns left of ${first + 1}`, at: first, count: step, divided: true },
+                      { axis: "col", label: `Insert ${step} columns right of ${first + step}`, at: first + step, count: step },
+                    ];
+                return [
+                  { axis: "row", label: `Insert row above ${lineMenu.row + 1}`, at: lineMenu.row, count: 1 },
+                  { axis: "row", label: `Insert row below ${lineMenu.row + 1}`, at: lineMenu.row + 1, count: 1 },
+                  ...cols,
+                  { axis: "row", label: `Delete row ${lineMenu.row + 1}`, at: lineMenu.row, count: 1, remove: true, divided: true },
+                  ...(step === 1
+                    ? [{ axis: "col", label: `Delete column ${lineMenu.col + 1}`, at: lineMenu.col, count: 1, remove: true }]
+                    : board.cols > step
+                      ? [{ axis: "col", label: `Delete columns ${first + 1} to ${first + step}`, at: first, count: step, remove: true }]
+                      : []),
+                ] as { axis: "row" | "col"; label: string; at: number; count: number; remove?: boolean; divided?: boolean }[];
+              })().map(({ axis, label, at, count, remove, divided }) => (
                 <button
                   key={label}
                   className={`block w-full text-left px-3 py-1.5 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-700 ${
@@ -1802,8 +1868,13 @@ export default function StripboardCanvas({
                   } ${divided ? "border-t border-neutral-200 dark:border-neutral-700" : ""}`}
                   title={remove ? "Parts on this line are unplaced; parts and wires spanning it shrink to close the gap" : undefined}
                   onClick={() => {
-                    if (remove) deleteBoardLine(axis, at);
-                    else insertBoardLine(axis, at);
+                    // several lines are one step to undo
+                    transact(() => {
+                      for (let k = 0; k < count; k++) {
+                        if (remove) deleteBoardLine(axis, at);
+                        else insertBoardLine(axis, at);
+                      }
+                    });
                     setLineMenu(null);
                   }}
                 >

@@ -432,6 +432,80 @@ export async function getLibraryPartUsage(id: string): Promise<LibraryPartUsage[
   return res.json();
 }
 
+// ── The user's own boards ────────────────────────────
+
+/** A board as the library keeps it: its name and copper. */
+export interface BoardDesign {
+  name: string;
+  map: string[];
+}
+
+export interface LibraryBoard {
+  id: string;
+  board: BoardDesign;
+  rev: number;
+  updated_at: string;
+  // With { usage: true }: how many projects are on a linked copy
+  used_in?: number;
+}
+
+/** The signed-in user's boards, or null when nobody is signed in. */
+export async function getLibraryBoards(opts: { usage?: boolean } = {}): Promise<LibraryBoard[] | null> {
+  const res = await apiFetch(`/users/me/boards/${opts.usage ? "?usage=1" : ""}`);
+  if (res.status === 401 || res.status === 403) return null;
+  if (!res.ok) throw new Error("Failed to load your boards");
+  return res.json();
+}
+
+export async function createLibraryBoard(board: BoardDesign): Promise<LibraryBoard> {
+  const res = await apiFetch("/users/me/boards/", { method: "POST", body: JSON.stringify({ board }) });
+  if (!res.ok) throw new Error(await libraryError(res, "board-create", "Failed to save the board"));
+  return res.json();
+}
+
+/**
+ * Saves a new version of a library board. With `updateProjects` every
+ * project on a linked copy gets it too, except `skipBranch`, the branch open
+ * in the editor, which puts the change on itself.
+ */
+export async function updateLibraryBoard(
+  id: string,
+  board: BoardDesign,
+  opts: { updateProjects: boolean; skipBranch?: string },
+): Promise<LibraryBoard & { updated_projects: number }> {
+  const res = await apiFetch(`/users/me/boards/${id}/`, {
+    method: "PUT",
+    body: JSON.stringify({ board, update_projects: opts.updateProjects, skip_branch: opts.skipBranch }),
+  });
+  if (!res.ok) throw new Error(await errorText(res, "Failed to save the board"));
+  return res.json();
+}
+
+export async function deleteLibraryBoard(id: string): Promise<void> {
+  const res = await apiFetch(`/users/me/boards/${id}/`, { method: "DELETE" });
+  if (!res.ok) throw new Error("Failed to delete the board");
+}
+
+/** Adds the boards of an exported boards file to the library, all or none. */
+export async function importLibraryBoards(boards: BoardDesign[]): Promise<LibraryBoard[]> {
+  const res = await apiFetch("/users/me/boards/import/", { method: "POST", body: JSON.stringify({ boards }) });
+  if (!res.ok) throw new Error(await libraryError(res, "board-import", "Failed to import the boards"));
+  return res.json();
+}
+
+export interface LibraryBoardUsage {
+  edit_uuid: string;
+  name: string;
+  // parts placed on the project's board
+  placed: number;
+}
+
+export async function getLibraryBoardUsage(id: string): Promise<LibraryBoardUsage[]> {
+  const res = await apiFetch(`/users/me/boards/${id}/usage/`);
+  if (!res.ok) throw new Error("Failed to look up where the board is used");
+  return res.json();
+}
+
 // ── Auth ──────────────────────────────────────────────
 
 export interface User {

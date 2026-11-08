@@ -6,7 +6,8 @@ import { HOLE_SPACING, holeCenter } from "@/components/stripboard/boardLayout";
 import { computeWireLaneOffsets } from "@/components/stripboard/wireLanes";
 import { PartBody, partDrawing } from "@/components/stripboard/partDrawing";
 import { getGroupForSegment, getGroupForWire } from "@/components/stripboard/connectivity";
-import { findSegmentIndex } from "@/components/stripboard/stripSegments";
+import { findSegmentIndex, type StripSegment } from "@/components/stripboard/stripSegments";
+import { hasHole, joinsDown, joinsRight } from "@/components/stripboard/boardPattern";
 import { useStripSegments } from "@/hooks/useStripSegments";
 import { useBoardView } from "@/hooks/useBoardView";
 
@@ -64,22 +65,46 @@ export default function PrintBoard({ variant, showLabels, showPinLabels, color }
   const holes: React.ReactNode[] = [];
   for (let r = 0; r < board.rows; r++) {
     for (let c = 0; c < board.cols; c++) {
+      if (!hasHole(board, r, c)) continue;
       holes.push(
         <circle key={`h${r}-${c}`} cx={colX(c)} cy={rowY(r)} r={4} fill={color ? "#fff" : "none"} stroke={color ? "#8a6d2f" : "#000"} strokeWidth={color ? 0.8 : 1.2} />
       );
     }
   }
 
-  const strips = Array.from({ length: board.rows }, (_, r) => (
-    <line key={`s${r}`} x1={colX(0)} y1={rowY(r)} x2={colX(lastCol)} y2={rowY(r)}
+  // The copper as the board comes, before any cut: every row on plain
+  // stripboard, each straight run of copper on a board with a pattern
+  const copper: { from: [number, number]; to: [number, number] }[] = [];
+  if (!board.pattern) {
+    for (let r = 0; r < board.rows; r++) copper.push({ from: [r, 0], to: [r, lastCol] });
+  } else {
+    for (let r = 0; r < board.rows; r++) {
+      for (let c = 0; c < board.cols; c++) {
+        if (joinsRight(board, r, c) && !joinsRight(board, r, c - 1)) {
+          let end = c + 1;
+          while (joinsRight(board, r, end)) end++;
+          copper.push({ from: [r, c], to: [r, end] });
+        }
+        if (joinsDown(board, r, c) && !joinsDown(board, r - 1, c)) {
+          let end = r + 1;
+          while (joinsDown(board, end, c)) end++;
+          copper.push({ from: [r, c], to: [end, c] });
+        }
+      }
+    }
+  }
+  const strips = copper.map(({ from, to }, i) => (
+    <line key={`s${i}`} x1={colX(from[1])} y1={rowY(from[0])} x2={colX(to[1])} y2={rowY(to[0])}
       stroke={color ? COPPER : "#dddddd"} strokeWidth={color ? 12 : 2} strokeLinecap={color ? "round" : undefined} />
   ));
   // Copper that carries a net, in the net's colour, as the board editor shows it
+  const segEnd = (seg: StripSegment) => (seg.endRow !== undefined ? { row: seg.endRow, col: seg.startCol } : { row: seg.row, col: seg.endCol });
   const netStrips = color && !mirror
     ? segments.map((seg, i) => {
         const c = groupColor(getGroupForSegment(connectivity, i));
         if (!c) return null;
-        return <line key={`n${i}`} x1={colX(seg.startCol)} y1={rowY(seg.row)} x2={colX(seg.endCol)} y2={rowY(seg.row)}
+        const end = segEnd(seg);
+        return <line key={`n${i}`} x1={colX(seg.startCol)} y1={rowY(seg.row)} x2={colX(end.col)} y2={rowY(end.row)}
           stroke={c} strokeWidth={5} strokeLinecap="round" />;
       })
     : null;
@@ -167,10 +192,10 @@ export default function PrintBoard({ variant, showLabels, showPinLabels, color }
       })()}
 
       {mirror && board.cuts.map((cut, i) => {
-        const cx = cut.kind === "hole"
+        const cx = cut.kind === "hole" || cut.kind === "below"
           ? colX(cut.col)
           : (colX(cut.col) + colX(cut.col + 1)) / 2;
-        const cy = rowY(cut.row);
+        const cy = cut.kind === "below" ? (rowY(cut.row) + rowY(cut.row + 1)) / 2 : rowY(cut.row);
         const s = 9;
         return (
           <g key={`cut${i}`} stroke={color ? CONFLICT : "#000"} strokeWidth={mirror ? 5 : 4} strokeLinecap="round">

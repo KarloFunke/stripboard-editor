@@ -15,7 +15,7 @@ const TOOLS: CanvasTool<BoardTool>[] = [
     id: "wire",
     name: "Wire",
     shortcut: "W",
-    title: "Wire: click a hole to start a link wire and another to end it. Wires already there are ignored, so several can share a hole.",
+    title: "Wire: click a hole to start a link wire and another to end it. A hole may hold a part's pin or other wires already, so a wire can be soldered to a pin.",
     icon: toolIcon(<><circle cx="5" cy="18" r="2.2" /><circle cx="19" cy="6" r="2.2" /><path d="M6.6 16.4L17.4 7.6" /></>),
   },
   {

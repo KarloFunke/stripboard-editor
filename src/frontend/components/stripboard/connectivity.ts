@@ -1,5 +1,6 @@
-import { Wire } from "@/types";
+import { Board, Wire } from "@/types";
 import { StripSegment, findSegmentIndex } from "./stripSegments";
+import { hasHole } from "./boardPattern";
 
 // ── Union-Find ─────────────────────────────────────────
 
@@ -47,10 +48,14 @@ export interface ConnectedGroup {
   hasConflict: boolean;
 }
 
-/** Compute connected groups of strip segments bridged by wires */
+/**
+ * Compute connected groups of strip segments bridged by wires. On a board
+ * with a pattern (`board`), a wire with an end where it has no hole joins nothing.
+ */
 export function computeConnectivity(
   segments: StripSegment[],
-  wires: Wire[]
+  wires: Wire[],
+  board?: Board
 ): ConnectedGroup[] {
   const n = segments.length;
   if (n === 0) return [];
@@ -58,7 +63,24 @@ export function computeConnectivity(
   const uf = new UnionFind(n);
   const wireSegmentMap: { wireId: string; fromIdx: number; toIdx: number }[] = [];
 
+  // Copper that turns a corner is a run along a row and one down a column
+  // sharing a hole: one piece of copper
+  if (segments.some((s) => s.endRow !== undefined)) {
+    const claimed = new Map<string, number>();
+    segments.forEach((s, i) => {
+      for (let row = s.row; row <= (s.endRow ?? s.row); row++) {
+        for (let col = s.startCol; col <= s.endCol; col++) {
+          const key = `${row},${col}`;
+          const other = claimed.get(key);
+          if (other === undefined) claimed.set(key, i);
+          else uf.union(other, i);
+        }
+      }
+    });
+  }
+
   for (const wire of wires) {
+    if (board?.pattern && (!hasHole(board, wire.from.row, wire.from.col) || !hasHole(board, wire.to.row, wire.to.col))) continue;
     const fromIdx = findSegmentIndex(segments, wire.from.row, wire.from.col);
     const toIdx = findSegmentIndex(segments, wire.to.row, wire.to.col);
     if (fromIdx >= 0 && toIdx >= 0) {

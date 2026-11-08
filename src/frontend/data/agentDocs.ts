@@ -180,6 +180,14 @@ Schematics drawn before the "touching means connected" rule set follow the rules
 ### Rows and columns
 
 - Right-click anywhere on the board to insert or delete the row or column there. Deleting unplaces parts sitting on that line; parts that merely span it shrink.
+- This works on plain stripboard and TriPad, where columns are inserted and deleted three at a time.
+
+### Board types
+
+- The board menu next to Rows picks the board: plain stripboard, TriPad (strips cut into pieces of three holes), a solderable breadboard (half or full size, 5-hole strips with rails along both edges) or an ElectroCookie snappable board (quarter, half or whole). Auto-layout works on plain stripboard only.
+- Parts can go anywhere on a board. A pin with no hole under it shows a red ring and connects to nothing. Cuts work on any copper, rails included.
+- **Edit this board…** and **New board…** open the board editor: paint copper on or off, take holes away, and fill, clear, copy, paste, rotate or mirror an area. Boards other than stripboard and TriPad change size only in the editor.
+- Editing a built-in board makes it the project's own custom board. With an account, "Also save it to my library" keeps it for all projects. **Manage my boards** (the /boards page) lists library boards, imports and exports them as a JSON file, and carries a change into every project on that board.
 
 ### Footprints and packages
 

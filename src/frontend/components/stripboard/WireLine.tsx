@@ -1,7 +1,10 @@
 "use client";
 
 import { Wire } from "@/types";
-import { holeCenter, STRIP_CONFLICT_COLOR } from "./boardLayout";
+import { HOLE_SPACING, holeCenter, STRIP_CONFLICT_COLOR } from "./boardLayout";
+
+// As large as the grip on a flexible part's leg
+const END_HIT_RADIUS = HOLE_SPACING * 0.35;
 
 export type WirePart = "from" | "to" | "whole";
 
@@ -55,9 +58,9 @@ export default function WireLine({ wire, color, isConflict, offset, onGrab, onCl
       />
       <circle cx={from.x + dx} cy={from.y + dy} r={4.5} fill={strokeColor} pointerEvents="none" />
       <circle cx={to.x + dx} cy={to.y + dy} r={4.5} fill={strokeColor} pointerEvents="none" />
-      {/* An end on its own: drag it to another hole */}
-      <circle cx={from.x + dx} cy={from.y + dy} r={6.5} fill="transparent" style={quiet ? undefined : { cursor: "grab" }} onMouseDown={grab("from")} />
-      <circle cx={to.x + dx} cy={to.y + dy} r={6.5} fill="transparent" style={quiet ? undefined : { cursor: "grab" }} onMouseDown={grab("to")} />
+      {/* An end on its own: drag it to another hole, as a flexible part's leg */}
+      <circle cx={from.x + dx} cy={from.y + dy} r={END_HIT_RADIUS} fill="transparent" style={quiet ? undefined : { cursor: "grab" }} onMouseDown={grab("from")} />
+      <circle cx={to.x + dx} cy={to.y + dy} r={END_HIT_RADIUS} fill="transparent" style={quiet ? undefined : { cursor: "grab" }} onMouseDown={grab("to")} />
     </g>
   );
 }

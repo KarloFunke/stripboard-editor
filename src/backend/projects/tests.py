@@ -17,7 +17,7 @@ from projects.migrations_data.ic_unification import (
 from projects.migrations_data.optocoupler_v4 import migrate_optocoupler_v4
 from projects.migrations_data.pipeline import CURRENT_SCHEMA_VERSION, migrate_to_current
 from projects.migrations_data.schematic_v3 import SCHEMA_VERSION as V3, decide_wiring, migrate_schematic_v3
-from projects.models import Branch, Project, UserPart
+from projects.models import Branch, Project, UserBoard, UserPart
 
 
 def _main(project):
@@ -1530,3 +1530,118 @@ class PartLibraryBranchTests(TestCase):
         self.assertEqual(names, {"main": "Relay 2", "b": "Relay", "c": "Relay 2"})
         usage = client.get(f"/api/users/me/parts/{part.id}/usage/").json()
         self.assertEqual([u["name"] for u in usage], ["P"], "one entry per project")
+
+
+def _board(name="Strips of three", rows=2, cols=3):
+    """A board of `rows` strips of `cols` holes."""
+    hole_line = "-".join(["o"] * cols)
+    link_line = " ".join([" "] * cols)
+    board_map = []
+    for r in range(rows):
+        board_map.append(hole_line)
+        if r < rows - 1:
+            board_map.append(link_line)
+    return {"name": name, "map": board_map}
+
+
+class BoardLibraryTests(TestCase):
+    """The per-user board library: storage, validation, limits, ownership,
+    and carrying an edit into the projects on a linked copy."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("boards", password="x" * 64)
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def _post(self, board):
+        return self.client.post("/api/users/me/boards/", data=json.dumps({"board": board}), content_type="application/json")
+
+    def _project_on(self, board_id, rev=1, name="P"):
+        board = _board()
+        pattern = {**board, "library": {"id": board_id, "rev": rev}}
+        comp = {"id": "r1", "defId": "def-resistor", "boardPos": {"row": 0, "col": 0}}
+        data = _design(components=[comp], board={"rows": 2, "cols": 3, "cuts": [], "wires": [], "pattern": pattern})
+        return Project.create_with_main(data, owner=self.user, name=name)
+
+    def test_create_list_delete(self):
+        res = self._post({**_board(), "library": {"id": "x", "rev": 4}, "builtin": "tripad"})
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual(res.json()["board"], _board(), "the library keeps only the name and the copper")
+        board_id = res.json()["id"]
+        self.assertEqual([b["id"] for b in self.client.get("/api/users/me/boards/").json()], [board_id])
+        self.assertEqual(self.client.delete(f"/api/users/me/boards/{board_id}/").status_code, 204)
+        self.assertEqual(self.client.get("/api/users/me/boards/").json(), [])
+
+    def test_requires_login_and_ownership(self):
+        self.assertIn(Client().get("/api/users/me/boards/").status_code, (401, 403))
+        other = User.objects.create_user("other", password="x" * 64)
+        theirs = UserBoard.objects.create(owner=other, board=_board())
+        self.assertEqual(self.client.delete(f"/api/users/me/boards/{theirs.id}/").status_code, 404)
+        self.assertEqual(self.client.get(f"/api/users/me/boards/{theirs.id}/usage/").status_code, 404)
+
+    def test_rejects_boards_the_editor_cannot_show(self):
+        bad = [
+            {"name": "x"},
+            {**_board(), "name": ""},
+            {**_board(), "name": "n" * 81},
+            {**_board(), "map": []},
+            {**_board(), "map": ["o-o", " "]},
+            {**_board(), "map": ["o-o", "  ", "o-o"]},
+            {**_board(), "map": ["o-x"]},
+            {**_board(), "map": ["o-o", "-  ", "o-o"]},
+            {**_board(), "map": [". ."]},
+            {**_board(), "map": [7]},
+            _board(rows=101, cols=1),
+        ]
+        for board in bad:
+            self.assertEqual(self._post(board).status_code, 400, board)
+        self.assertEqual(self._post({**_board(), "map": ["o-o", "|  ", "o ."]}).status_code, 201)
+
+    def test_library_limit(self):
+        UserBoard.objects.bulk_create([UserBoard(owner=self.user, board=_board()) for _ in range(200)])
+        res = self._post(_board())
+        self.assertEqual(res.status_code, 403)
+        self.assertEqual(res.json()["code"], "library_full")
+
+    def test_import_is_all_or_nothing(self):
+        url = "/api/users/me/boards/import/"
+        res = self.client.post(url, content_type="application/json", data=json.dumps({"boards": [_board(), {"name": "x"}]}))
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("Board 2", res.json()["error"])
+        self.assertEqual(UserBoard.objects.count(), 0)
+        res = self.client.post(url, content_type="application/json", data=json.dumps({"boards": [_board("A"), _board("B")]}))
+        self.assertEqual([b["board"]["name"] for b in res.json()], ["A", "B"])
+
+    def test_update_reaches_linked_projects_on_request(self):
+        board = UserBoard.objects.create(owner=self.user, board=_board())
+        linked = self._project_on(str(board.id))
+        unlinked = Project.create_with_main(_design(), owner=self.user, name="Plain")
+        url = f"/api/users/me/boards/{board.id}/"
+        bigger = _board(name="Bigger", rows=3, cols=5)
+        res = self.client.put(url, content_type="application/json", data=json.dumps({"board": bigger}))
+        self.assertEqual((res.json()["rev"], res.json()["updated_projects"]), (2, 0))
+        self.assertEqual(_main(linked)["board"]["pattern"]["name"], "Strips of three", "without update_projects nothing moves")
+        res = self.client.put(url, content_type="application/json", data=json.dumps({"board": bigger, "update_projects": True}))
+        self.assertEqual(res.json()["updated_projects"], 1)
+        data = _main(linked)
+        self.assertEqual((data["board"]["rows"], data["board"]["cols"]), (3, 5))
+        self.assertEqual(data["board"]["pattern"], {**bigger, "library": {"id": str(board.id), "rev": 3}})
+        self.assertEqual(data["components"][0]["boardPos"], {"row": 0, "col": 0}, "the editor fits parts when it opens the project")
+        self.assertNotIn("pattern", _main(unlinked)["board"])
+
+    def test_update_skips_the_open_branch_and_usage_counts_projects(self):
+        board = UserBoard.objects.create(owner=self.user, board=_board())
+        project = self._project_on(str(board.id))
+        purl = f"/api/projects/{project.edit_uuid}"
+        b = self.client.post(f"{purl}/branches/", content_type="application/json",
+                             data=json.dumps({"name": "b", "from": str(project.main_branch_id)})).json()["branch"]
+        res = self.client.put(f"/api/users/me/boards/{board.id}/", content_type="application/json", data=json.dumps({
+            "board": _board(name="New"), "update_projects": True, "skip_branch": b}))
+        self.assertEqual(res.json()["updated_projects"], 1)
+        names = {x.name: x.data["board"]["pattern"]["name"] for x in project.branches.all()}
+        self.assertEqual(names, {"main": "New", "b": "Strips of three"})
+        usage = self.client.get(f"/api/users/me/boards/{board.id}/usage/").json()
+        self.assertEqual(usage, [{"edit_uuid": str(project.edit_uuid), "name": "P", "placed": 1}])
+        listed = self.client.get("/api/users/me/boards/?usage=1").json()
+        self.assertEqual(listed[0]["used_in"], 1)
+

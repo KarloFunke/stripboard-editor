@@ -4,6 +4,7 @@ import { useRef, useState, useEffect } from "react";
 import { PROJECT_SCHEMA_VERSION } from "@/types";
 import { useRouter } from "next/navigation";
 import { useLibraryStore } from "@/store/useLibraryStore";
+import { useBoardLibraryStore } from "@/store/useBoardLibraryStore";
 import { useProjectStore } from "@/store/useProjectStore";
 import { getMe, logout, claimProject, migrateProjectData, type User } from "@/lib/api";
 import { track } from "@/lib/track";
@@ -118,6 +119,7 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
     setUser(u);
     setShowAuth(null);
     useLibraryStore.getState().load();
+    useBoardLibraryStore.getState().load();
     (async () => {
       if (editUuid) {
         try { await claimProject(editUuid); } catch { /* already owned or not claimable */ }
@@ -132,6 +134,7 @@ export default function ProjectToolbar({ editUuid, viewUuid, onSave, saving, las
     await logout();
     setUser(null);
     useLibraryStore.getState().load();
+    useBoardLibraryStore.getState().load();
     setLogoutFlash(true);
     setTimeout(() => setLogoutFlash(false), 1500);
     router.refresh();
