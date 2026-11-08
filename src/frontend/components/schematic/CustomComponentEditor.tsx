@@ -155,17 +155,8 @@ export default function CustomComponentEditor({ editing, libraryOnly = false, in
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<{ part: ComponentDef; usage: LibraryPartUsage[] } | null>(null);
 
-  // The preview zooms to whatever was drawn, pin names included
   const previewRef = useRef<SVGGElement>(null);
   const [previewBox, setPreviewBox] = useState("-100 -80 200 160");
-  useLayoutEffect(() => {
-    const b = previewRef.current?.getBBox();
-    if (!b) return;
-    const w = Math.max(b.width + 24, 200);
-    const h = Math.max(b.height + 24, 160);
-    const box = `${b.x + b.width / 2 - w / 2} ${b.y + b.height / 2 - h / 2} ${w} ${h}`;
-    setPreviewBox((prev) => (prev === box ? prev : box));
-  });
 
   const rows = grid.length;
   const cols = grid[0]?.length ?? 1;
@@ -432,9 +423,8 @@ export default function CustomComponentEditor({ editing, libraryOnly = false, in
       await task();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong");
-    } finally {
-      setBusy(false);
     }
+    setBusy(false);
   }
 
   /** A new library part made from this project's part, which then links to it. */
@@ -504,16 +494,33 @@ export default function CustomComponentEditor({ editing, libraryOnly = false, in
   // ── Preview ───────────────────────────────────────────
 
   let previewSymbol: string;
+  let drawn: string;
   const previewNames: Record<string, string> = {};
   if (mode === "grid") {
     previewSymbol = `custom-footprint-${PREVIEW_ID}`;
-    registerCustomSymbol(PREVIEW_ID, { ...createFootprintSymbol(gridPins, cols, rows), symbolId: previewSymbol });
+    const symbol = { ...createFootprintSymbol(gridPins, cols, rows), symbolId: previewSymbol };
+    registerCustomSymbol(PREVIEW_ID, symbol);
     for (const p of gridPins) previewNames[p.id] = p.name;
+    drawn = JSON.stringify(symbol);
   } else {
     const preview = partDef(bodySpec(PREVIEW_ID));
     previewSymbol = preview.symbol;
     for (const p of preview.pins) previewNames[p.id] = p.name;
+    drawn = JSON.stringify(preview);
   }
+
+  // The preview zooms to whatever was drawn, pin names included. Measured
+  // only when the drawing changes: text can measure a little differently at
+  // each zoom (seen on Windows), and measuring after every render then
+  // zoomed back and forth until React gave up and the page crashed
+  useLayoutEffect(() => {
+    const b = previewRef.current?.getBBox();
+    if (!b) return;
+    const w = Math.max(b.width + 24, 200);
+    const h = Math.max(b.height + 24, 160);
+    const box = `${b.x + b.width / 2 - w / 2} ${b.y + b.height / 2 - h / 2} ${w} ${h}`;
+    setPreviewBox((prev) => (prev === box ? prev : box));
+  }, [drawn]);
 
   const svgWidth = cols * (CELL_SIZE + CELL_GAP) + GRID_PADDING * 2;
   const svgHeight = rows * (CELL_SIZE + CELL_GAP) + GRID_PADDING * 2;
@@ -659,7 +666,8 @@ export default function CustomComponentEditor({ editing, libraryOnly = false, in
                     className="w-full h-48 border border-neutral-200 dark:border-neutral-700 rounded bg-[var(--schematic-bg)]"
                   >
                     <g ref={previewRef}>
-                      <SymbolRenderer symbolId={previewSymbol} pinNames={previewNames} showPinLabels />
+                      {/* keyed by the drawing: the grid preview keeps one symbol id, so a memoized lookup by id would show an old drawing */}
+                      <SymbolRenderer key={drawn} symbolId={previewSymbol} pinNames={previewNames} showPinLabels />
                     </g>
                   </svg>
                 </div>
